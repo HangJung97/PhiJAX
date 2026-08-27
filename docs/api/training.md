@@ -2,6 +2,7 @@
 
 `Trainer` is host-side orchestration. Numerical updates remain in a pure compiled train step, while callbacks, module
 hooks, logging, checkpoint scheduling, graceful interruption, and batch placement remain outside `jax.jit`.
+See [Trainer and module hooks](hooks.md) for the complete fit, prediction, exception, and teardown order.
 
 ## State and steps
 

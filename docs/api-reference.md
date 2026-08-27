@@ -5,7 +5,7 @@ These focused pages generate signatures from PhiJAX's Google-style source docstr
 ## Core computation
 
 - [PhiModule](api/module.md): module ownership, prediction, metrics, and lifecycle hooks.
-- [Models](api/models.md): initialization contracts, MLP architecture, layers, features, and summaries.
+- [Models](api/models.md): custom initialization contracts, MLP, Modified MLP, PirateNet, layers, and summaries.
 - [Derivatives](api/derivatives.md): selective coordinate Jacobian and Hessian-diagonal utilities.
 - [Equations](api/equations.md): fidelity, boundary, Burgers, Cartesian, polar, and spherical residuals.
 - [Objectives](api/objectives.md): residual groups, scalar reduction, protocols, and composition.
@@ -16,6 +16,7 @@ These focused pages generate signatures from PhiJAX's Google-style source docstr
 - [Data](api/data.md): DataModules, immutable pools, samplers, batch sources, placement, IO, and artifacts.
 - [Trainer and state](api/training.md): compiled steps, precision, device strategies, plans, and lifecycle ownership.
 - [Callbacks](api/callbacks.md): contexts, prediction writing, stopping, progress, summaries, and checkpoints.
+- [Hooks and lifecycle](api/hooks.md): exact fit, prediction, exception, interruption, and teardown ordering.
 - [Checkpointing](api/checkpointing.md): Orbax persistence, manifests, complete resume, and weights-only loading.
 - [Loggers](api/loggers.md): console, CSV, TensorBoard, W&B, and logger collections.
 - [Evaluation](api/evaluation.md): evaluator contracts, metric primitives, and host-only output writers.

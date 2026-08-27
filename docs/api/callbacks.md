@@ -5,6 +5,9 @@ functions, and numerical model changes should use explicit module hook return va
 
 ## Contexts and hook order
 
+The complete dispatch sequence and extension-point guidance are documented in
+[Trainer and module hooks](hooks.md).
+
 ```text
 setup
 on_fit_start
@@ -21,8 +24,8 @@ on_predict_start
   on_predict_epoch_end
 on_predict_end
 
-on_postprocessing_start
-on_postprocessing_end
+on_postprocessing_start  project-owned orchestration only
+on_postprocessing_end    project-owned orchestration only
 on_exception
 teardown
 ```

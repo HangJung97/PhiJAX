@@ -58,7 +58,8 @@ from phijax.callbacks import EarlyStopping, ModelCheckpoint, RichModelSummary, R
 from phijax.data import HostPool, NamedBatchSource, PhiDataModule, create_sampler
 from phijax.evaluation import EvaluationResult, RegressionEvaluator
 from phijax.equations import burgers_1d, polar_navier_stokes, residual_equation
-from phijax.models import MLP, apply_mlp, initialize_mlp
+from phijax.models import MLP, ModifiedMLP, PirateNet, build_mlp, build_modified_mlp, build_pirate_net
+from phijax.models import initialize_nnx_model
 from phijax.objectives import CompositeObjective, ResidualTerm
 from phijax.training import OrbaxCheckpointIO
 from phijax.utils import RankedLogger, resolve_seed, seed_everything

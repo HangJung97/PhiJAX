@@ -17,6 +17,23 @@ configs, and application DataModules.
 > **Beta API:** PhiJAX `0.1.0b1` establishes the first supported public contracts. Minor API changes may still occur
 > before `1.0`; checkpoint compatibility is enforced within the producing PhiJAX major/minor line.
 
+## Why PhiJAX?
+
+JAX provides powerful building blocks for automatic differentiation, vectorization, compilation, and accelerator
+execution. PhiJAX builds on them with the structure needed to develop reproducible and maintainable PINN experiments:
+
+- selective coordinate derivatives and reusable PDE, boundary, and data-fidelity equations;
+- named objective terms with static, gradient-norm, and exact-NTK loss balancing;
+- standard MLP, gated Modified MLP, and adaptive-residual PirateNet architectures with a custom NNX adapter;
+- explicit model, optimizer, balancer, and PRNG state for reproducible compiled updates;
+- familiar, Lightning-inspired lifecycles for trainers, modules, DataModules, callbacks, loggers, and checkpoints; and
+- scientific data preparation on the CPU, automatic batch placement by the Trainer, and prediction files with a
+  stable, versioned format.
+
+PhiJAX preserves JAX's functional model and transparent transformations while taking care of the orchestration shared
+by most PINN applications. Hydra is available as an optional integration, so the core Trainer API remains independent
+of any configuration framework.
+
 ## Installation
 
 PhiJAX requires Python 3.12 or newer. Python 3.12, 3.13, and 3.14 are covered by CI.
@@ -48,22 +65,6 @@ pip install "phijax[cuda13,wandb,tensorboard]"
 ```
 
 Replace `cuda13` with `cuda12` for a CUDA 12 environment; do not install both CUDA extras together.
-
-## Why PhiJAX?
-
-JAX provides powerful building blocks for automatic differentiation, vectorization, compilation, and accelerator
-execution. PhiJAX builds on them with the structure needed to develop reproducible and maintainable PINN experiments:
-
-- selective coordinate derivatives and reusable PDE, boundary, and data-fidelity equations;
-- named objective terms with static, gradient-norm, and exact-NTK loss balancing;
-- explicit model, optimizer, balancer, and PRNG state for reproducible compiled updates;
-- familiar, Lightning-inspired lifecycles for trainers, modules, DataModules, callbacks, loggers, and checkpoints; and
-- scientific data preparation on the CPU, automatic batch placement by the Trainer, and prediction files with a
-  stable, versioned format.
-
-PhiJAX preserves JAX's functional model and transparent transformations while taking care of the orchestration shared
-by most PINN applications. Hydra is available as an optional integration, so the core Trainer API remains independent
-of any configuration framework.
 
 ## Core workflow
 

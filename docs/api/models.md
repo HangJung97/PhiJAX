@@ -3,6 +3,68 @@
 PhiJAX supplies Flax NNX models but equations and objectives consume only a pure explicit-state callable. Split models
 before regular `jax.jit` use and pass their graph definition through a closure or partial callable.
 
+## Custom NNX architectures
+
+`initialize_nnx_model` adapts any initialized Flax NNX module to :class:`phijax.models.InitializedModel`. Users only
+define the architecture and an application-level factory that supplies its explicit initialization key:
+
+```python
+import jax
+import jax.numpy as jnp
+from flax import nnx
+
+from phijax.models import InitializedModel, initialize_nnx_model
+from phijax.training import PrecisionPolicy
+
+
+class CoordinateNetwork(nnx.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        *,
+        compute_dtype: object = jnp.float32,
+        parameter_dtype: object = jnp.float32,
+        output_dtype: object = jnp.float32,
+        rngs: nnx.Rngs,
+    ) -> None:
+        self.output_dtype = output_dtype
+        self.output = nnx.Linear(
+            input_dim,
+            output_dim,
+            dtype=compute_dtype,
+            param_dtype=parameter_dtype,
+            rngs=rngs,
+        )
+
+    def __call__(self, inputs: jax.Array) -> jax.Array:
+        return self.output(inputs).astype(self.output_dtype)
+
+
+def build_coordinate_network(
+    key: jax.Array,
+    input_dim: int,
+    output_dim: int,
+    *,
+    precision: str | PrecisionPolicy | None = None,
+    **model_kwargs: object,
+) -> InitializedModel:
+    policy = PrecisionPolicy.from_name(precision or "32-true")
+    resolved_kwargs = policy.apply_model_dtype_defaults(model_kwargs)
+    model = CoordinateNetwork(input_dim, output_dim, rngs=nnx.Rngs(params=key), **resolved_kwargs)
+    return initialize_nnx_model(
+        model,
+        example_inputs=jnp.zeros((1, input_dim), dtype=policy.derivative_dtype),
+    )
+```
+
+The returned application merges the captured static graph with explicit state for each call, so it remains compatible
+with JAX transformations and PhiJAX equations without requiring a framework base architecture or registry.
+`apply_model_dtype_defaults()` is optional: use it when the custom constructor exposes `parameter_dtype`,
+`compute_dtype`, and `output_dtype`. Explicit entries in `model_kwargs` override the selected policy.
+
+::: phijax.models.initialize_nnx_model
+
 ## MLP transformation order
 
 The built-in MLP applies optional operations in this order:
@@ -20,7 +82,7 @@ input normalization
 `dropout_key`.
 
 ```yaml
-_target_: phijax.models.initialize_mlp
+_target_: phijax.models.build_mlp
 _partial_: true
 input_dim: 2
 output_dim: 1
@@ -31,11 +93,83 @@ input_norm: true
 
 ::: phijax.models.MLP
 
-::: phijax.models.initialize_mlp
-
 ::: phijax.models.build_mlp
 
-::: phijax.models.apply_mlp
+## Modified MLP
+
+`ModifiedMLP` follows the gated architecture introduced for mitigating gradient-flow pathologies in PINNs. It creates
+two shallow coordinate encodings, `U` and `V`, then uses each activated hidden layer as an element-wise interpolation
+gate between them:
+
+```text
+U = activation(dense_u(features))
+V = activation(dense_v(features))
+H = activation(dense(H))
+H = H * U + (1 - H) * V
+```
+
+The architecture supports the same normalization, periodic-feature, Fourier-feature, output-name, precision, weight
+normalization, and random weight-factorization policies as the standard MLP where applicable. It follows
+[Wang, Teng, and Perdikaris (2021)](https://doi.org/10.1137/20M1318043).
+
+```yaml
+_target_: phijax.models.build_modified_mlp
+_partial_: true
+input_dim: 2
+output_dim: 1
+hidden_dim: 256
+num_layers: 4
+activation: tanh
+input_norm: true
+```
+
+::: phijax.models.ModifiedMLP
+
+::: phijax.models.build_modified_mlp
+
+## PirateNet
+
+`PirateNet` implements the Physics-Informed Residual Adaptive Network from
+[Wang et al. (2024)](https://www.jmlr.org/papers/v25/24-0313.html). Each block contains three dense layers, two
+modified-MLP gates, and a trainable scalar `alpha`:
+
+```text
+nonlinear = gated_three_layer_block(features, U, V)
+features = alpha * nonlinear + (1 - alpha) * features
+```
+
+The default `alpha=0` makes every block an exact identity at initialization. Training can then increase its effective
+depth by learning each coefficient. Random Fourier features are enabled by default and must produce exactly
+`hidden_dim` features; with PhiJAX's paired feature convention, the default uses `embed_dim=hidden_dim/2` sampled
+frequencies. Random weight factorization can be enabled independently.
+
+The factory implements the adaptive architecture and standard Glorot initialization. The paper's optional
+physics-informed least-squares initialization of the final layer is data-dependent and is not performed implicitly by
+the model factory.
+
+```yaml
+_target_: phijax.models.build_pirate_net
+_partial_: true
+input_dim: 2
+output_dim: 1
+hidden_dim: 256
+num_blocks: 4
+activation: tanh
+nonlinearity: 0.0
+input_norm: true
+fourier_features_kwargs:
+  scale: 1.0
+weight_factorization: true
+weight_factorization_kwargs:
+  mean: 0.5
+  std: 0.1
+```
+
+::: phijax.models.PirateBlock
+
+::: phijax.models.PirateNet
+
+::: phijax.models.build_pirate_net
 
 ## Layers
 

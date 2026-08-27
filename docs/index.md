@@ -9,6 +9,8 @@ projects that own them.
 - [Data](guides/datasets.md): implement a `PhiDataModule`, immutable host pools, and explicit-key batch sources.
 - [Equations and objectives](guides/objectives.md): compose differentiable residuals into named scalar losses.
 - [Loss balancers](guides/balancers.md): implement static or adaptive functional loss weighting.
+- [Models](api/models.md): use MLP, Modified MLP, PirateNet, or adapt a custom Flax NNX architecture.
+- [Hooks and lifecycle](api/hooks.md): choose module and callback extension points from the exact Trainer call order.
 - [API overview](api/index.md): supported imports, common types, conventions, and stability policy.
 - [API map](api-reference.md): focused reference pages generated from source docstrings.
 
