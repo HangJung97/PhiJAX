@@ -83,11 +83,21 @@ class PeriodicFeatures(nnx.Module):
 
 
 class RandomFourierFeatures(nnx.Module):
-    """Map coordinates to paired cosine and sine random Fourier features.
+    """Map coordinates to paired cosine and sine Fourier features through a trainable random projection.
+
+    The mapping `x -> [cos(xB), sin(xB)]` is related to random Fourier features for approximating shift-invariant
+    kernels and to Fourier feature mappings for reducing the spectral bias of coordinate networks. PhiJAX samples `B`
+    from a Gaussian distribution and stores it as a trainable :class:`nnx.Param`; classical random Fourier features
+    instead keep the sampled projection fixed.
 
     Attributes:
         compute_dtype: Data type used for projection and trigonometric operations.
         kernel: Trainable Gaussian frequency matrix with shape `[input_dim, embed_dim]`.
+
+    References:
+        Rahimi, A. and Recht, B. (2007). Random Features for Large-Scale Kernel Machines. NeurIPS.
+        Tancik, M. et al. (2020). Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional
+            Domains. NeurIPS.
     """
 
     def __init__(
@@ -133,13 +143,21 @@ class RandomFourierFeatures(nnx.Module):
 
 
 class FactorizedDense(nnx.Module):
-    """Apply a random weight-factorized affine transform, `W = diag(g) V`.
+    """Apply a random weight-factorized affine transform, `W = V diag(g)`.
+
+    Each output channel has a learned positive scale `g_i` and direction vector `v_i`. With PhiJAX's dense weight
+    layout `[input_dim, output_dim]`, scaling output columns gives `W = V diag(g)`. This is the transpose-layout
+    equivalent of the commonly written `W = diag(g) V` for `[output_dim, input_dim]` weights.
 
     Attributes:
         compute_dtype: Data type used for affine computation.
         g: Trainable positive scale vector with shape `[output_dim]`.
         v: Trainable direction matrix with shape `[input_dim, output_dim]`.
         bias: Optional trainable additive bias with shape `[output_dim]`.
+
+    References:
+        Wang, S., Wang, H., Seidman, J. H., and Perdikaris, P. (2022). Random Weight Factorization Improves the Training
+            of Continuous Neural Representations. arXiv:2210.01274.
     """
 
     def __init__(

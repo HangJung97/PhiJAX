@@ -44,6 +44,11 @@ Exact NTK balancing computes a pointwise squared parameter-Jacobian norm, averag
 normalizes loss weights by those means. Named streams are evaluated sequentially. `kernel_chunk_size=1` minimizes peak
 memory; `None` fully vectorizes over samples.
 
+The method is motivated by the empirical NTK analysis and adaptive PINN loss weighting in
+[Wang, Yu, and Perdikaris (2022)](https://doi.org/10.1016/j.jcp.2021.110768). PhiJAX uses the mean-diagonal rule
+`lambda_i = mean_j(mu_j) / mu_i`, applies optional moving-average smoothing, and computes one named residual stream at
+a time to limit peak memory.
+
 ::: phijax.balancers.exact_ntk_trace
 
 ::: phijax.balancers.ExactNTKBalancer

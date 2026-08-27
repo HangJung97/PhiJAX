@@ -106,13 +106,19 @@ class ExactNTKBalancer:
 
     For loss `i`, the balancer computes the exact diagonal empirical NTK independently at every sampled point and
     stores its pointwise mean as `mu_i`. The raw rule is `lambda_i = mean_j(mu_j) / mu_i`. A moving average blends each
-    raw update with its previous value.
+    raw update with its previous value. Using empirical NTK statistics to diagnose and balance PINN loss terms follows
+    Wang et al. (2022); PhiJAX uses mean-diagonal normalization and evaluates named residual streams sequentially to
+    control peak memory.
 
     Attributes:
         loss_names: Stable loss and mean-diagonal ordering.
         eps: Positive mean-diagonal floor used for safe division.
         momentum: Moving-average coefficient applied to previous weights.
         initial_weights: Initial `float32` weight vector.
+
+    References:
+        Wang, S., Yu, X., and Perdikaris, P. (2022). When and Why PINNs Fail to Train: A Neural Tangent Kernel
+            Perspective. Journal of Computational Physics, 449, 110768.
     """
 
     def __init__(
