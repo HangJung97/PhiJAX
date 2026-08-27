@@ -22,7 +22,7 @@
 - [ ] Pre-commit passes with `uv run --no-sync pre-commit run --all-files`.
 - [ ] Public API and user documentation were updated, or no documentation change is needed.
 - [ ] Breaking, numerical, configuration, checkpoint, and artifact changes are documented above.
-- [ ] GPU, distributed, external-service, or large-data checks not run locally are identified above.
+- [ ] GPU-sensitive changes were tested on suitable hardware, or the lack of GPU validation is documented above.
 
 <!-- Optional: Closes #123 -->
 
