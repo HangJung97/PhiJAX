@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from phijax.models import apply_mlp, initialize_mlp
+from phijax.models import build_mlp
 from phijax.training import PrecisionPolicy
 
 
@@ -41,15 +41,17 @@ def test_precision_policy_resolves_lightning_modes(
 
 def test_mixed_precision_mlp_keeps_float32_parameters_and_outputs() -> None:
     """Verify BF16 mixed precision only lowers supported internal arithmetic."""
-    graphdef, state = initialize_mlp(
+    initialized = build_mlp(
         jax.random.key(1),
         2,
         1,
+        jnp.zeros(2),
+        jnp.ones(2),
         hidden=(4,),
         precision="bf16-mixed",
     )
-    output = apply_mlp(graphdef, state, jnp.ones((2,), dtype=jnp.float32))
-    array_leaves = [leaf for leaf in jax.tree.leaves(state) if hasattr(leaf, "dtype")]
+    output = initialized.apply(initialized.state, jnp.ones((2,), dtype=jnp.float32))
+    array_leaves = [leaf for leaf in jax.tree.leaves(initialized.state) if hasattr(leaf, "dtype")]
     assert array_leaves
     assert all(leaf.dtype == jnp.float32 for leaf in array_leaves)
     assert output.dtype == jnp.float32
@@ -57,18 +59,32 @@ def test_mixed_precision_mlp_keeps_float32_parameters_and_outputs() -> None:
 
 def test_true_precision_mlp_casts_parameters_and_outputs() -> None:
     """Verify BF16 true precision uses BF16 storage and public outputs."""
-    graphdef, state = initialize_mlp(
+    initialized = build_mlp(
         jax.random.key(2),
         2,
         1,
+        jnp.zeros(2),
+        jnp.ones(2),
         hidden=(4,),
         precision="bf16-true",
     )
-    output = apply_mlp(graphdef, state, jnp.ones((2,), dtype=jnp.bfloat16))
-    array_leaves = [leaf for leaf in jax.tree.leaves(state) if hasattr(leaf, "dtype")]
+    output = initialized.apply(initialized.state, jnp.ones((2,), dtype=jnp.bfloat16))
+    array_leaves = [leaf for leaf in jax.tree.leaves(initialized.state) if hasattr(leaf, "dtype")]
     assert array_leaves
     assert all(leaf.dtype == jnp.bfloat16 for leaf in array_leaves)
     assert output.dtype == jnp.bfloat16
+
+
+def test_precision_policy_applies_model_defaults_without_replacing_overrides() -> None:
+    """Verify custom model factories can inherit policy dtypes while preserving explicit options."""
+    policy = PrecisionPolicy.from_name("bf16-mixed")
+
+    resolved = policy.apply_model_dtype_defaults({"output_dtype": jnp.float16, "hidden_dim": 16})
+
+    assert resolved["parameter_dtype"] == jnp.float32
+    assert resolved["compute_dtype"] == jnp.bfloat16
+    assert resolved["output_dtype"] == jnp.float16
+    assert resolved["hidden_dim"] == 16
 
 
 def test_precision_policy_casts_only_floating_batch_leaves() -> None:

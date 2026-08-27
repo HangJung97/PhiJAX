@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -126,6 +127,23 @@ class PrecisionPolicy:
             Model-state PyTree with floating leaves cast to `parameter_dtype`.
         """
         return jax.tree.map(lambda value: _cast_floating(value, self.parameter_dtype), model_state)
+
+    def apply_model_dtype_defaults(self, model_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+        """Add policy dtypes without replacing explicit architecture options.
+
+        Args:
+            model_kwargs: Architecture keyword arguments that may explicitly contain `parameter_dtype`,
+                `compute_dtype`, or `output_dtype`.
+
+        Returns:
+            New keyword mapping containing policy defaults and all explicit architecture options.
+        """
+        defaults = {
+            "parameter_dtype": self.parameter_dtype,
+            "compute_dtype": self.compute_dtype,
+            "output_dtype": self.output_dtype,
+        }
+        return defaults | dict(model_kwargs)
 
     def cast_batch(self, batch: Any) -> Any:
         """Cast floating batch leaves to the configured derivative dtype.

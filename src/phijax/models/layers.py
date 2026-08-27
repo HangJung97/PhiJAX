@@ -1,5 +1,5 @@
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import jax
@@ -233,3 +233,57 @@ class FactorizedDense(nnx.Module):
         if self.bias is not None:
             output = output + self.bias[...].astype(self.compute_dtype)
         return output
+
+
+def create_dense(
+    input_dim: int,
+    output_dim: int,
+    *,
+    kernel_init: Initializer | None,
+    weight_norm: bool = False,
+    weight_factorization: bool = False,
+    weight_factorization_kwargs: Mapping[str, Any] | None = None,
+    compute_dtype: Any,
+    parameter_dtype: Any,
+    rngs: nnx.Rngs,
+) -> nnx.Module:
+    """Construct a dense layer with shared PhiJAX parameterization policies.
+
+    Args:
+        input_dim: Input feature width.
+        output_dim: Output feature width.
+        kernel_init: Optional dense-kernel initializer.
+        weight_norm: Whether to wrap a regular dense layer with NNX weight normalization.
+        weight_factorization: Whether to use :class:`FactorizedDense`.
+        weight_factorization_kwargs: Options forwarded to :class:`FactorizedDense`.
+        compute_dtype: Data type used for affine arithmetic.
+        parameter_dtype: Data type used for trainable parameters.
+        rngs: NNX random streams used for parameter initialization.
+
+    Returns:
+        Configured dense NNX module.
+
+    Raises:
+        ValueError: If weight normalization and random weight factorization are both enabled.
+    """
+    if weight_norm and weight_factorization:
+        raise ValueError("`weight_norm` and `weight_factorization` cannot both be enabled.")
+    if weight_factorization:
+        return FactorizedDense(
+            input_dim,
+            output_dim,
+            kernel_init=kernel_init,
+            compute_dtype=compute_dtype,
+            parameter_dtype=parameter_dtype,
+            rngs=rngs,
+            **dict(weight_factorization_kwargs or {}),
+        )
+    linear_kwargs: dict[str, Any] = {
+        "dtype": compute_dtype,
+        "param_dtype": parameter_dtype,
+        "rngs": rngs,
+    }
+    if kernel_init is not None:
+        linear_kwargs["kernel_init"] = kernel_init
+    linear = nnx.Linear(input_dim, output_dim, **linear_kwargs)
+    return nnx.WeightNorm(linear, rngs=rngs) if weight_norm else linear

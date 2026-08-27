@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
-from phijax.models import MLP, FactorizedDense, PeriodicFeatures, apply_mlp, initialize_mlp
+from phijax.models import MLP, FactorizedDense, PeriodicFeatures, initialize_nnx_model
 
 
 def test_factorized_dense_reconstructs_finite_weight() -> None:
@@ -65,8 +65,7 @@ def test_periodic_features_enforce_value_and_derivative_periodicity() -> None:
 
 def test_mlp_composes_periodic_and_random_fourier_features() -> None:
     """Verify the Burgers embedding chain preserves periodic equality and reconciles intermediate widths."""
-    graphdef, state = initialize_mlp(
-        jax.random.key(17),
+    model = MLP(
         2,
         1,
         hidden=(4,),
@@ -74,10 +73,12 @@ def test_mlp_composes_periodic_and_random_fourier_features() -> None:
         periodic_features_kwargs={"axes": (1,), "frequencies": (jnp.pi,)},
         fourier_features=True,
         fourier_features_kwargs={"embed_dim": 3, "scale": 2.0},
+        rngs=nnx.Rngs(params=jax.random.key(17)),
     )
+    initialized = initialize_nnx_model(model)
     inputs = jnp.asarray([[0.25, -1.0], [0.25, 1.0]], dtype=jnp.float32)
 
-    outputs = apply_mlp(graphdef, state, inputs)
+    outputs = initialized.apply(initialized.state, inputs)
 
     assert outputs.shape == (2, 1)
     np.testing.assert_allclose(outputs[0], outputs[1], rtol=1e-5, atol=1e-6)
@@ -106,8 +107,7 @@ def test_periodic_features_reject_invalid_configuration(kwargs: dict[str, object
 
 def test_mlp_split_apply_and_gradients_with_polar_options() -> None:
     """Verify Fourier-factorized application and gradients through split NNX state."""
-    graphdef, state = initialize_mlp(
-        jax.random.key(11),
+    model = MLP(
         2,
         4,
         hidden=(8, 8),
@@ -117,6 +117,11 @@ def test_mlp_split_apply_and_gradients_with_polar_options() -> None:
         fourier_features_kwargs={"embed_dim": 4, "scale": 1.0},
         weight_factorization=True,
         weight_factorization_kwargs={"mean": 0.5, "std": 0.1},
+        rngs=nnx.Rngs(params=jax.random.key(11)),
+    )
+    initialized = initialize_nnx_model(
+        model,
+        call_kwargs={"input_mean": jnp.zeros(2), "input_std": jnp.ones(2)},
     )
     inputs = jnp.asarray([[0.5, 0.2], [0.8, -0.1]], dtype=jnp.float32)
 
@@ -129,10 +134,10 @@ def test_mlp_split_apply_and_gradients_with_polar_options() -> None:
         Returns:
             Sum of all outputs for the fixed test coordinates.
         """
-        return jnp.sum(apply_mlp(graphdef, model_state, inputs, jnp.zeros(2), jnp.ones(2)))
+        return jnp.sum(initialized.apply(model_state, inputs))
 
-    output = apply_mlp(graphdef, state, inputs, jnp.zeros(2), jnp.ones(2))
-    gradients = jax.grad(summed_output)(state)
+    output = initialized.apply(initialized.state, inputs)
+    gradients = jax.grad(summed_output)(initialized.state)
 
     assert output.shape == (2, 4)
     assert output.dtype == jnp.float32
@@ -204,8 +209,8 @@ def test_mlp_dropout_is_explicit_and_reproducible() -> None:
 
 def test_mlp_clamps_singleton_input_standard_deviation() -> None:
     """Verify finite optional normalization with a zero standard deviation."""
-    graphdef, state = initialize_mlp(jax.random.key(5), 3, 3, hidden=(4,), input_norm=True)
-    output = apply_mlp(graphdef, state, jnp.ones((1, 3)), jnp.ones(3), jnp.zeros(3))
+    model = MLP(3, 3, hidden=(4,), input_norm=True, rngs=nnx.Rngs(params=jax.random.key(5)))
+    output = model(jnp.ones((1, 3)), jnp.ones(3), jnp.zeros(3))
     assert bool(jnp.all(jnp.isfinite(output)))
 
 
