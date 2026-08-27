@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest"]
-        python-version: ["3.12"]
+        python-version: ["3.12", "3.13", "3.14"]
     timeout-minutes: 10
     env:
       JAX_PLATFORMS: cpu
@@ -26,25 +26,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install the project
-        run: uv sync --extra cpu
+        run: uv sync
+      - name: Run tests with coverage
+        if: matrix.python-version == '3.12'
+        run: uv run --no-sync pytest --cov=phijax --cov-report=term-missing
       - name: Run tests
+        if: matrix.python-version != '3.12'
         run: uv run --no-sync pytest
-
-  # Enable this job when Codecov reporting is configured for the repository.
-  # code-coverage:
-  #   runs-on: ubuntu-latest
-  #   env:
-  #     JAX_PLATFORMS: cpu
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v7
-  #     - name: Install uv
-  #       uses: astral-sh/setup-uv@v10.0.1
-  #     - name: Install the project
-  #       run: uv sync --extra cpu
-  #     - name: Run tests and collect coverage
-  #       run: uv run --no-sync pytest --cov --cov-report=xml --cov-config=pyproject.toml
-  #     - name: Upload coverage reports to Codecov
-  #       uses: codecov/codecov-action@v7
-  #       with:
-  #         token: ${{ secrets.CODECOV_TOKEN }}

@@ -1,0 +1,79 @@
+site_name: PhiJAX
+site_description: A typed JAX framework for physics-informed neural networks.
+site_url: https://hangjung97.github.io/PhiJAX/
+repo_url: https://github.com/HangJung97/PhiJAX
+repo_name: HangJung97/PhiJAX
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            heading_level: 2
+            inherited_members: false
+            members_order: source
+            merge_init_into_class: true
+            separate_signature: true
+            show_root_full_path: false
+            show_root_heading: true
+            show_signature_annotations: true
+            show_source: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Guides:
+      - Datasets: guides/datasets.md
+      - Equations and objectives: guides/objectives.md
+      - Loss balancers: guides/balancers.md
+  - API reference:
+      - Overview: api/index.md
+      - API map: api-reference.md
+      - PhiModule: api/module.md
+      - Data: api/data.md
+      - Models: api/models.md
+      - Derivatives: api/derivatives.md
+      - Equations: api/equations.md
+      - Objectives: api/objectives.md
+      - Loss balancers: api/balancers.md
+      - Trainer and state: api/training.md
+      - Callbacks: api/callbacks.md
+      - Checkpointing: api/checkpointing.md
+      - Loggers: api/loggers.md
+      - Evaluation: api/evaluation.md
+      - Configuration: api/configuration.md
+      - Utilities: api/utilities.md
