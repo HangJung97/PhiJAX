@@ -10,17 +10,18 @@ PhiJAX requires Python 3.12 or newer and uses [uv](https://docs.astral.sh/uv/) f
 ```bash
 git clone https://github.com/HangJung97/PhiJAX.git
 cd PhiJAX
-uv sync --group dev --group docs
+uv sync --group all
 uv run --no-sync pre-commit install
 ```
 
-The `dev` group installs testing, linting, typing, and pre-commit tools. The `docs` group installs MkDocs and its
-documentation plugins. For local GPU development, add the extra matching the installed CUDA runtime:
+The aggregate `all` group includes the `dev` and `docs` groups. `dev` installs testing, linting, typing, and pre-commit
+tools, while `docs` installs MkDocs and its documentation plugins. For local GPU development, add the extra matching
+the installed CUDA runtime:
 
 ```bash
-uv sync --group dev --group docs --extra cuda12
+uv sync --group all --extra cuda12
 # or
-uv sync --group dev --group docs --extra cuda13
+uv sync --group all --extra cuda13
 ```
 
 The CUDA extras are mutually exclusive. Ordinary tests must remain CPU-compatible even when a change also adds GPU

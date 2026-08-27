@@ -126,10 +126,10 @@ output scales, masks, and application-provided metadata in a stable host-readabl
 
 ## Development
 
-Install the development and documentation dependency groups, then enable the repository hooks:
+Install all development dependencies, then enable the repository hooks:
 
 ```bash
-uv sync --group dev --group docs
+uv sync --group all
 uv run --no-sync pre-commit install
 ```
 

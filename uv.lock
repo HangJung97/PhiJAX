@@ -1624,6 +1624,17 @@ wandb = [
 ]
 
 [package.dev-dependencies]
+all = [
+    { name = "docformatter" },
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+    { name = "pre-commit" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
 dev = [
     { name = "docformatter" },
     { name = "pre-commit" },
@@ -1670,6 +1681,17 @@ requires-dist = [
 provides-extras = ["cuda12", "cuda13", "tensorboard", "wandb"]
 
 [package.metadata.requires-dev]
+all = [
+    { name = "docformatter", specifier = ">=1.7.5,<2" },
+    { name = "mkdocs", specifier = ">=1.6,<2" },
+    { name = "mkdocs-material", specifier = ">=9,<10" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.27,<1" },
+    { name = "pre-commit", specifier = ">=4.0.1,<5" },
+    { name = "pyright", specifier = ">=1.1.405,<2" },
+    { name = "pytest", specifier = ">=9,<10" },
+    { name = "pytest-cov", specifier = ">=7,<8" },
+    { name = "ruff", specifier = ">=0.16,<0.17" },
+]
 dev = [
     { name = "docformatter", specifier = ">=1.7.5,<2" },
     { name = "pre-commit", specifier = ">=4.0.1,<5" },
