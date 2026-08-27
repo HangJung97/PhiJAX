@@ -1,21 +1,30 @@
-## What does this PR do?
+## Summary
 
-<!--
-Please include a summary of the change and which issue is fixed.
-Please also include relevant motivation and context.
-List any dependencies that are required for this change.
-List all the breaking changes introduced by this pull request.
--->
+<!-- Explain the motivation, approach, and scope of this change. -->
 
-Fixes #\<issue_number>
+## User-visible changes
+
+<!-- Describe changes to behavior, public imports, configuration, numerical results, or generated artifacts. -->
+
+## Breaking changes and migration
+
+<!-- List required migration steps. Write "None" when the change is backward compatible. -->
+
+## Validation
+
+<!-- List the exact commands run and summarize their results. Identify checks left to CI. -->
 
 ## Before submitting
 
-- [ ] Did you make sure **title is self-explanatory** and **the description concisely explains the PR**?
-- [ ] Did you make sure your **PR does only one thing**, instead of bundling different changes together?
-- [ ] Did you list all the **breaking changes** introduced by this pull request?
-- [ ] Did you **test your PR locally** with `JAX_PLATFORMS=cpu uv run --no-sync pytest`?
-- [ ] Did you **run pre-commit hooks** with `uv run --no-sync pre-commit run --all-files`?
+- [ ] The title is self-explanatory and the description summarizes one coherent change.
+- [ ] Tests were added or updated for changed behavior.
+- [ ] The relevant CPU tests pass, or checks not run locally are identified above.
+- [ ] Pre-commit passes with `uv run --no-sync pre-commit run --all-files`.
+- [ ] Public API and user documentation were updated, or no documentation change is needed.
+- [ ] Breaking, numerical, configuration, checkpoint, and artifact changes are documented above.
+- [ ] GPU, distributed, external-service, or large-data checks not run locally are identified above.
+
+<!-- Optional: Closes #123 -->
 
 ## Did you have fun?
 
