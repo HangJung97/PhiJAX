@@ -11,7 +11,7 @@ on_fit_start
   on_train_batch_start
   compiled update
   on_train_batch_end -> bool
-  training_metrics -> scalar metric mapping
+  training_metrics   -> scalar metric mapping
 on_fit_end
 
 on_predict_start

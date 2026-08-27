@@ -9,11 +9,11 @@ optimizer or loss balancer.
 Callbacks run before the corresponding module hook:
 
 ```text
-callbacks.on_fit_start        -> module.on_fit_start
-callbacks.on_train_batch_start -> module.on_train_batch_start
+callbacks.on_fit_start           -> module.on_fit_start
+callbacks.on_train_batch_start   -> module.on_train_batch_start
 compiled train step
-callbacks.on_train_batch_end  -> module.on_train_batch_end
-callbacks.on_fit_end          -> module.on_fit_end
+callbacks.on_train_batch_end     -> module.on_train_batch_end
+callbacks.on_fit_end             -> module.on_fit_end
 
 callbacks.on_predict_start       -> module.on_predict_start
 callbacks.on_predict_epoch_start -> module.on_predict_epoch_start

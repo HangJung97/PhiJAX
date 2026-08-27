@@ -41,19 +41,29 @@ pip install "phijax[tensorboard]"
 pip install "phijax[wandb]"
 ```
 
+Extras can be combined when an environment needs GPU support and both logging integrations:
+
+```bash
+pip install "phijax[cuda13,wandb,tensorboard]"
+```
+
+Replace `cuda13` with `cuda12` for a CUDA 12 environment; do not install both CUDA extras together.
+
 ## Why PhiJAX?
 
-JAX provides composable automatic differentiation, vectorization, compilation, and accelerator execution. PhiJAX
-adds the PINN-specific structure needed to turn those primitives into maintainable experiments:
+JAX provides powerful building blocks for automatic differentiation, vectorization, compilation, and accelerator
+execution. PhiJAX builds on them with the structure needed to develop reproducible and maintainable PINN experiments:
 
 - selective coordinate derivatives and reusable PDE, boundary, and data-fidelity equations;
 - named objective terms with static, gradient-norm, and exact-NTK loss balancing;
 - explicit model, optimizer, balancer, and PRNG state for reproducible compiled updates;
-- Lightning-inspired Trainer, PhiModule, DataModule, callback, logger, and checkpoint lifecycles; and
-- host-first scientific data handling with centralized device placement and versioned prediction artifacts.
+- familiar, Lightning-inspired lifecycles for trainers, modules, DataModules, callbacks, loggers, and checkpoints; and
+- scientific data preparation on the CPU, automatic batch placement by the Trainer, and prediction files with a
+  stable, versioned format.
 
-The result keeps JAX transformations visible and functional while removing repeated orchestration code from each PINN
-application. Hydra support is available as an integration rather than a requirement of the Trainer API.
+PhiJAX preserves JAX's functional model and transparent transformations while taking care of the orchestration shared
+by most PINN applications. Hydra is available as an optional integration, so the core Trainer API remains independent
+of any configuration framework.
 
 ## Core workflow
 
@@ -66,21 +76,31 @@ import jax
 
 from phijax import Trainer
 
-with Trainer(max_steps=1_000, accelerator="auto") as trainer:
-    initial_state = trainer.initialize_state(model_state, optimizer, balancer.initialize(), jax.random.key(0))
-    result = trainer.fit(
-        module,
-        training_plan,
-        initial_state,
-        datamodule=data_module,
-        sampling_key=jax.random.key(1),
-        balancer_key=jax.random.key(2),
-    )
-    predictions = trainer.predict(module, result.state, datamodule=data_module)
+# Select the runtime policy and accelerator.
+trainer = Trainer(max_steps=1_000, accelerator="auto")
+
+# Combine the model, optimizer, balancer, and PRNG state into one functional state.
+initial_state = trainer.initialize_state(model_state, optimizer, balancer.initialize(), jax.random.key(0))
+
+# Train with batches supplied and placed through the application DataModule.
+result = trainer.fit(
+    module,
+    training_plan,
+    initial_state,
+    datamodule=data_module,
+    sampling_key=jax.random.key(1),
+    balancer_key=jax.random.key(2),
+)
+
+# Reuse the fitted in-memory state for prediction.
+predictions = trainer.predict(module, result.state, datamodule=data_module)
 ```
 
 Application DataModules implement `setup()`, `train_batch_source()`, and optionally `predict_batch_source()`.
 Prediction is skipped cleanly when a DataModule has no prediction source.
+
+`Trainer` also supports use as a context manager when an application wants deterministic cleanup at the end of a
+custom orchestration scope.
 
 ## Supported contracts
 
@@ -105,16 +125,31 @@ output scales, masks, and application-provided metadata in a stable host-readabl
 
 ## Development
 
+Install the development and documentation dependency groups, then enable the repository hooks:
+
 ```bash
-uv sync
+uv sync --group dev --group docs
+uv run --no-sync pre-commit install
+```
+
+Run the local validation suite before submitting a change:
+
+```bash
 JAX_PLATFORMS=cpu uv run --no-sync pytest
 uv run --no-sync ruff check .
 uv run --no-sync ruff format --check .
 uv run --no-sync pyright
 uv run --no-sync mkdocs build --strict
+uv run --no-sync pre-commit run --all-files
 ```
 
 See the [documentation](https://hangjung97.github.io/PhiJAX/) for the complete API and extension guides.
+
+## Contributing
+
+Contributions are welcome. Read the
+[contribution guide](https://github.com/HangJung97/PhiJAX/blob/main/CONTRIBUTING.md) for the development workflow,
+testing expectations, documentation requirements, and pull-request checklist.
 
 ## License
 
