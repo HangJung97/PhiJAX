@@ -1,0 +1,19 @@
+# Run pre-commit on all files after changes reach the main branch.
+name: Code Quality Main
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: ".python-version"
+      - name: Run pre-commits
+        uses: pre-commit/action@v3.0.1

@@ -1,0 +1,57 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+**/.vscode/
+
+# JetBrains
+.idea/
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Unit test, lint, and coverage reports
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+site/
+.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Data, checkpoints, and generated artifacts
+*.h5
+*.tar
+*.tar.gz
+*.orbax-checkpoint/
+/data/
+/logs/
+/outputs/
+.jax_cache/
+
+# Local Hydra configuration and secrets
+src/**/configs/local/*
+!src/**/configs/local/example.yaml
+.hydra/
+.env
