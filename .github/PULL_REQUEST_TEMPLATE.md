@@ -1,28 +1,26 @@
 ## Summary
 
-<!-- Explain the motivation, approach, and scope of this change. -->
+<!-- What does this PR do, and why? -->
 
-## User-visible changes
+## Changes
 
-<!-- Describe changes to behavior, public imports, configuration, numerical results, or generated artifacts. -->
+<!-- List the changes reviewers and users should know about. -->
 
-## Breaking changes and migration
+## Breaking changes
 
-<!-- List required migration steps. Write "None" when the change is backward compatible. -->
+<!-- Describe required migration, or write "None". -->
 
-## Validation
+## Testing
 
-<!-- List the exact commands run and summarize their results. Identify checks left to CI. -->
+<!-- Summarize relevant local checks and anything left to CI. -->
 
 ## Before submitting
 
-- [ ] The title is self-explanatory and the description summarizes one coherent change.
-- [ ] Tests were added or updated for changed behavior.
-- [ ] The relevant CPU tests pass, or checks not run locally are identified above.
-- [ ] Pre-commit passes with `uv run --no-sync pre-commit run --all-files`.
-- [ ] Public API and user documentation were updated, or no documentation change is needed.
-- [ ] Breaking, numerical, configuration, checkpoint, and artifact changes are documented above.
-- [ ] GPU-sensitive changes were tested on suitable hardware, or the lack of GPU validation is documented above.
+- [ ] The title is self-explanatory and the description is concise.
+- [ ] The PR contains one coherent change.
+- [ ] Breaking changes are documented, or the section states `None`.
+- [ ] The relevant tests pass locally with `pytest`.
+- [ ] Pre-commit passes with `pre-commit run -a`.
 
 <!-- Optional: Closes #123 -->
 
