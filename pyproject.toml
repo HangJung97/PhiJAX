@@ -61,7 +61,7 @@ dev = [
 docs = [
   "mkdocs>=1.6,<2",
   "mkdocs-material>=9,<10",
-  "mkdocstrings[python]>=0.27,<1",
+  "mkdocstrings[python]>=1,<2",
 ]
 lint = ["docformatter>=1.7.5,<2", "pyright>=1.1.405,<2", "ruff>=0.16,<0.17"]
 test = ["pytest>=9,<10", "pytest-cov>=7,<8"]
