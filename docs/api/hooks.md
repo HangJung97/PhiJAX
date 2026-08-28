@@ -1,8 +1,8 @@
 # Trainer and module hooks
 
-PhiJAX keeps numerical updates in JAX transformations while dispatching lifecycle hooks from the Python host. Hooks
-are intended for orchestration, monitoring, explicit batch or model-state replacement, and external side effects.
-They must not perform traced array mutation or change a compiled PyTree's structure between steps.
+PhiJAX keeps numerical updates inside JAX transformations and runs lifecycle hooks on the Python host. Use hooks for
+orchestration, monitoring, explicit batch or model-state replacement, and external side effects. Hooks must not mutate
+traced arrays or change a compiled PyTree's structure between steps.
 
 For every matching event, callbacks run in declaration order before the `BasePhiModule` hook. This follows Lightning's
 default ordering and gives application code a predictable final extension point.
@@ -16,6 +16,7 @@ Trainer.fit
 +-- BasePhiModule.setup()
 +-- logger.log_hyperparameters(...)
 +-- Callback.on_fit_start(context)
+|   +-- ModelCheckpoint opens its backend
 +-- BasePhiModule.on_fit_start(state, context) -> model_state
 |
 +-- repeat for each training batch
@@ -37,17 +38,18 @@ Trainer.fit
 +-- BasePhiModule.on_fit_end(state, context) -> model_state
 +-- logger.finalize("success")
 +-- Callback.teardown()
+|   +-- ModelCheckpoint waits for writes and closes its backend
 +-- BasePhiModule.teardown()
 ```
 
-`on_fit_start`, `on_train_batch_start`, `on_train_batch_end`, and `on_fit_end` on the module return explicit
-replacements. Returning state is how application code changes numerical model state without hidden mutation.
-`on_train_batch_start` may also replace the placed batch, but its PyTree structure and array shapes must remain
-compatible with the compiled step.
+The module's `on_fit_start`, `on_train_batch_start`, `on_train_batch_end`, and `on_fit_end` hooks return explicit
+replacement values. This is how application code changes numerical state without hidden mutation.
+`on_train_batch_start` may also replace the placed batch. Its PyTree structure and array shapes must still match the
+compiled step.
 
-Callback `on_train_batch_end()` returns `True` to request a clean stop. All callbacks and the module batch-end hook
-still complete for that optimizer step. `training_metrics()` runs after the module hook and may add uniquely named
-host-visible scalar metrics; it cannot replace an existing metric.
+Callback `on_train_batch_end()` returns `True` to request a clean stop. The remaining callbacks and the module hook
+still finish for that step. `training_metrics()` then adds uniquely named host scalar metrics. It cannot replace an
+existing metric.
 
 ## Prediction lifecycle
 
@@ -84,20 +86,20 @@ Trainer.predict
 +-- optional DataModule.teardown_stage("predict")
 ```
 
-Prediction hooks are observational. Override `predict_step()` to transform model outputs. Batch-end hooks see valid,
-unpadded outputs, and epoch-end and predict-end hooks see the concatenated host array when
-`return_predictions=True`. If a DataModule has no prediction source, `Trainer.predict()` returns `None` without
-dispatching the prediction lifecycle.
+Prediction hooks only observe state. Override `predict_step()` to transform model outputs. Batch-end hooks receive
+valid, unpadded outputs. Epoch-end and predict-end hooks receive the joined host array when
+`return_predictions=True`. If a DataModule has no prediction source, `Trainer.predict()` returns `None` and skips the
+prediction hooks.
 
 ## Exceptions and interruption
 
-When setup has completed and a task raises, PhiJAX calls each initialized callback's `on_exception()` before
-`BasePhiModule.on_exception()`. The logger is finalized with `"failed"`, and teardown still runs. Resources whose
-setup failed are not asked to tear down.
+If a task fails after setup, PhiJAX calls each initialized callback's `on_exception()` before
+`BasePhiModule.on_exception()`. It finalizes the logger with `"failed"` and then runs teardown. A resource is only torn
+down if its setup completed.
 
-During fitting, the first `Ctrl+C` preserves the last completed functional state and returns a `FitResult` with
-`interrupted=True`; exception hooks, logger finalization, and teardown still run. `SIGTERM` performs the same cleanup
-but terminates instead of returning. A repeated process signal escalates immediately.
+During fitting, the first `Ctrl+C` preserves the last completed state and returns `FitResult(interrupted=True)`.
+Exception hooks, logger finalization, and teardown still run. `SIGTERM` performs the same cleanup but exits instead of
+returning. A repeated signal exits immediately.
 
 ## Choosing an extension point
 

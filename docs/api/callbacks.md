@@ -1,7 +1,7 @@
 # Callbacks
 
-Callbacks implement independent host-side monitoring and side effects. They do not belong in transformed JAX
-functions, and numerical model changes should use explicit module hook return values instead.
+Callbacks handle host-side monitoring and side effects. Do not call them inside transformed JAX functions. Use module
+hook return values for numerical model changes.
 
 ## Contexts and hook order
 
@@ -49,10 +49,10 @@ allows artifact callbacks to avoid duplicate distributed writes.
 
 ## Prediction writer
 
-The default prediction-only callback suite contains exactly one `PredictionWriter`. It writes the canonical NPZ after
-the final host outputs have been concatenated and can optionally add a MATLAB sidecar. The fitting callback suite also
-contains this writer but enables it only when `predict=true`, allowing the same Trainer and in-memory state to continue
-into prediction after fitting completes or is stopped gracefully with `Ctrl+C`. `SIGTERM` skips prediction.
+The default prediction callback suite contains one `PredictionWriter`. It writes the canonical NPZ after joining all
+host outputs and can also write a MATLAB file. The fit callback suite enables this writer only when `predict=true`.
+This lets prediction reuse the same Trainer and in-memory state after training finishes or stops with `Ctrl+C`.
+`SIGTERM` skips prediction.
 
 ::: phijax.callbacks.PredictionWriter
 
@@ -62,23 +62,23 @@ into prediction after fitting completes or is stopped gracefully with `Ctrl+C`. 
 
 ## Learning-rate monitoring
 
-`LearningRateMonitor` evaluates the configured Optax schedule at the optimizer count used by each completed update.
-It publishes `train/lr` through the ordinary logger stream. `logging_interval="step"` evaluates every optimizer step,
-while `logging_interval="epoch"` evaluates once at the end of the fit pass. The default `None` follows
-`trainer.log_every_n_steps` and always records the terminal rate. This differs slightly from Lightning because a raw
-Optax schedule has no scheduler object carrying an individual `interval` field, and it avoids dispatching a separate
-JAX schedule operation on unlogged steps.
+`LearningRateMonitor` evaluates the Optax schedule at the optimizer count for each completed update. It sends
+`train/lr` to the configured loggers. `logging_interval="step"` evaluates every step, while
+`logging_interval="epoch"` evaluates once at the end of fitting. The default `None` follows
+`trainer.log_every_n_steps` and always records the final rate. Unlike a Lightning scheduler, a raw Optax schedule has
+no `interval` field. PhiJAX therefore avoids evaluating the schedule on steps that will not be logged.
 
-Like Lightning, `log_momentum` and `log_weight_decay` enable `-momentum` and `-weight_decay` metrics, and
-`log_key_prefix` is prepended verbatim to every key. PhiJAX supplies the optional values explicitly because an Optax
-transformation has no inspectable parameter groups.
+Like Lightning, `log_momentum` and `log_weight_decay` add `-momentum` and `-weight_decay` metrics.
+`log_key_prefix` is added to every key. These optional values must be supplied because Optax transformations do not
+expose inspectable parameter groups.
 
 ::: phijax.callbacks.LearningRateMonitor
 
 ## Model checkpoints
 
-`ModelCheckpoint` delegates persistence to `CheckpointIO`; the default implementation uses Orbax. Only one checkpoint
-callback may be attached to a trainer.
+`ModelCheckpoint` delegates storage to `CheckpointIO`; the default backend uses Orbax. A Trainer accepts only one
+checkpoint callback. The callback opens its backend when fitting starts and closes it during teardown. Custom backends
+must support repeated `open()` and `close()` calls and must be able to reopen for later tasks.
 
 ::: phijax.callbacks.CheckpointIO
 

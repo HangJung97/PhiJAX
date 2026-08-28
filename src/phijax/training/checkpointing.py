@@ -73,7 +73,7 @@ def _checkpoint_metadata(state: TrainState, step: int) -> dict[str, Any]:
 
 
 class OrbaxCheckpointIO:
-    """Manage asynchronous full-state checkpoints with Orbax.
+    """Manage lazily opened asynchronous full-state checkpoints with Orbax.
 
     Attributes:
         directory: Absolute checkpoint-root directory.
@@ -99,11 +99,26 @@ class OrbaxCheckpointIO:
         if max_to_keep is not None and max_to_keep < 1:
             raise ValueError("`max_to_keep` must be positive or `None`.")
         self.directory = Path(directory).expanduser().resolve()
-        options = ocp.CheckpointManagerOptions(
+        self._options = ocp.CheckpointManagerOptions(
             max_to_keep=max_to_keep,
             enable_async_checkpointing=enable_async_checkpointing,
         )
-        self._manager = ocp.CheckpointManager(self.directory, options=options)
+        self._manager: ocp.CheckpointManager | None = None
+
+    def open(self) -> None:
+        """Open the Orbax manager when it is not already active."""
+        if self._manager is None:
+            self._manager = ocp.CheckpointManager(self.directory, options=self._options)
+
+    def _active_manager(self) -> ocp.CheckpointManager:
+        """Return an active manager, opening it lazily when required.
+
+        Returns:
+            Active Orbax checkpoint manager.
+        """
+        self.open()
+        assert self._manager is not None
+        return self._manager
 
     @property
     def latest_step(self) -> int | None:
@@ -112,7 +127,7 @@ class OrbaxCheckpointIO:
         Returns:
             Latest step, or `None` when no checkpoint exists.
         """
-        return self._manager.latest_step()
+        return self._active_manager().latest_step()
 
     def save(
         self,
@@ -133,7 +148,7 @@ class OrbaxCheckpointIO:
         Returns:
             Whether Orbax initiated a save.
         """
-        return self._manager.save(
+        return self._active_manager().save(
             step,
             args=ocp.args.StandardSave(state),
             metrics=dict(metrics or {}),
@@ -158,7 +173,8 @@ class OrbaxCheckpointIO:
         if resolved_step is None:
             raise FileNotFoundError(f"No checkpoints exist below `{self.directory}`.")
         self._validate_metadata(target, resolved_step)
-        return cast(TrainState, self._manager.restore(resolved_step, args=ocp.args.StandardRestore(target)))
+        manager = self._active_manager()
+        return cast(TrainState, manager.restore(resolved_step, args=ocp.args.StandardRestore(target)))
 
     def _validate_metadata(self, target: TrainState, step: int) -> None:
         """Validate checkpoint schema, producer line, step, and target structure.
@@ -170,7 +186,7 @@ class OrbaxCheckpointIO:
         Raises:
             ValueError: If metadata is absent or incompatible with this runtime and target.
         """
-        metadata = self._manager.metadata(step).custom_metadata.get("phijax")
+        metadata = self._active_manager().metadata(step).custom_metadata.get("phijax")
         if not isinstance(metadata, dict):
             raise ValueError("Checkpoint does not contain a PhiJAX compatibility manifest.")
         if metadata.get("schema_version") != _CHECKPOINT_SCHEMA_VERSION:
@@ -206,11 +222,16 @@ class OrbaxCheckpointIO:
 
     def wait_until_finished(self) -> None:
         """Block until all asynchronous checkpoint writes have committed."""
-        self._manager.wait_until_finished()
+        if self._manager is not None:
+            self._manager.wait_until_finished()
 
     def close(self) -> None:
-        """Wait for pending writes and release Orbax resources."""
-        self._manager.close()
+        """Wait for pending writes and release Orbax resources idempotently."""
+        if self._manager is None:
+            return
+        manager = self._manager
+        self._manager = None
+        manager.close()
 
     def __enter__(self) -> OrbaxCheckpointIO:
         """Enter a checkpoint-manager context.
@@ -218,6 +239,7 @@ class OrbaxCheckpointIO:
         Returns:
             This checkpoint manager.
         """
+        self.open()
         return self
 
     def __exit__(self, exception_type: Any, exception: Any, traceback: Any) -> None:

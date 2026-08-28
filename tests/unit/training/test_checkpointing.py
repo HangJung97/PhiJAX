@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import jax
 import jax.numpy as jnp
@@ -52,6 +53,52 @@ def test_orbax_checkpoint_supports_resume_and_weights_only_loading(tmp_path: Pat
     assert manifest["schema_version"] == 1
     assert manifest["step"] == 4
     assert manifest["phijax_version"] == "0.1.0b1"
+
+
+def test_orbax_checkpoint_manager_opens_lazily_and_reopens(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify stage cleanup can recreate the Orbax manager without explicit Trainer cleanup.
+
+    Args:
+        monkeypatch: Pytest attribute patch helper.
+        tmp_path: Temporary checkpoint-root parent.
+    """
+    managers: list[MagicMock] = []
+
+    def create_manager(*args: object, **kwargs: object) -> MagicMock:
+        """Create and record one mock Orbax manager.
+
+        Args:
+            *args: Positional manager arguments.
+            **kwargs: Keyword manager arguments.
+
+        Returns:
+            Fresh mock manager.
+        """
+        del args, kwargs
+        manager = MagicMock()
+        managers.append(manager)
+        return manager
+
+    monkeypatch.setattr(checkpointing_module.ocp, "CheckpointManager", create_manager)
+    checkpoint_io = OrbaxCheckpointIO(tmp_path / "checkpoints")
+
+    assert checkpoint_io._manager is None
+    checkpoint_io.open()
+    checkpoint_io.open()
+    assert len(managers) == 1
+
+    checkpoint_io.close()
+    checkpoint_io.close()
+    managers[0].close.assert_called_once_with()
+    assert checkpoint_io._manager is None
+
+    checkpoint_io.open()
+    assert len(managers) == 2
+    checkpoint_io.close()
+    managers[1].close.assert_called_once_with()
 
 
 def test_checkpoint_state_identifier_tracks_structure_not_values() -> None:

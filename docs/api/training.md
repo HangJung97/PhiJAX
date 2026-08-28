@@ -1,13 +1,13 @@
 # Trainer and functional state
 
-`Trainer` is host-side orchestration. Numerical updates remain in a pure compiled train step, while callbacks, module
-hooks, logging, checkpoint scheduling, graceful interruption, and batch placement remain outside `jax.jit`.
+`Trainer` runs on the host. Numerical updates stay in a pure compiled step. Callbacks, module hooks, logging,
+checkpoint scheduling, interruption handling, and batch placement stay outside `jax.jit`.
 See [Trainer and module hooks](hooks.md) for the complete fit, prediction, exception, and teardown order.
 
 ## State and steps
 
 `TrainState` contains model, Optax, balancer, PRNG, step, and mixed-precision loss-scaling state. A complete checkpoint
-can therefore resume the next optimizer update and deterministic batch draw.
+can resume both the next optimizer update and the deterministic batch sequence.
 
 ::: phijax.training.TrainState
 
@@ -30,15 +30,14 @@ deterministic: true
 log_every_n_steps: 10
 ```
 
-`fit` accepts a `TrainingPlan` and asks the supplied DataModule for its step-indexed source using the plan's batch keys.
-Pass `sampling_key` for deterministic training batches and `balancer_key` when fixed NTK or gradient-norm diagnostics
-are configured. A raw compiled step plus an explicit iterable or callable remains available for programmatic use.
-Pass an optional `ckpt_path` and `ckpt_step` directly to the trainer for full-state resumption, or set
-`weights_only=True` for transfer learning. `predict` accepts the same fresh or in-memory `TrainState` shape and restores
-model weights when `ckpt_path` is set. When batches are omitted, it requests `predict_batch_source()` from the supplied
-DataModule and skips prediction if the source is `None`. Neither lifecycle requires callers to invoke the low-level
-checkpoint backend. Passing the DataModule through `datamodule` transfers source and stage-teardown ownership to the
-trainer.
+`fit` accepts a `TrainingPlan`. It asks the DataModule for a step-indexed source that provides the plan's batch keys.
+Pass `sampling_key` for deterministic batches. Pass `balancer_key` when using fixed NTK or gradient-norm diagnostic
+batches. Advanced users may instead supply a compiled step and an iterable or callable source.
+
+Set `ckpt_path` and, optionally, `ckpt_step` to resume a complete training state. Use `weights_only=True` for transfer
+learning. `predict` accepts a fresh or in-memory `TrainState` and loads model weights when `ckpt_path` is set. If no
+batches are passed, it asks the DataModule for `predict_batch_source()`. Prediction is skipped when that method returns
+`None`. The Trainer owns DataModule source access and stage teardown during both tasks.
 
 ```python
 fit_result = trainer.fit(
@@ -57,9 +56,13 @@ predictions = trainer.predict(
 )
 ```
 
-A graceful `Ctrl+C` returns the last completed functional state with `FitResult.interrupted=True`, allowing a caller
-to continue into prediction. `SIGTERM` runs exception hooks and teardown, waits for checkpoint cleanup, and then
-terminates the process with the conventional signal exit status.
+Each task closes its callback and checkpoint resources, even after an error. You can reuse one Trainer across `fit()`
+and `predict()` calls without calling `close()`. The idempotent `close()` method and context manager remain available
+for integrations that open resources outside these tasks.
+
+After `Ctrl+C`, `fit` returns the last completed state with `FitResult.interrupted=True`. The caller can then run
+prediction. `SIGTERM` runs exception hooks and teardown, waits for checkpoint cleanup, and exits with the standard
+signal status.
 
 ::: phijax.training.FitResult
 
@@ -97,9 +100,9 @@ members:
 before the Optax update. Non-finite gradients skip the update and reduce the scale; sustained finite updates allow it
 to grow. BFloat16 normally does not require this because it retains a float32-like exponent range.
 
-`matmul_precision` independently controls JAX dot and convolution arithmetic during lazy fit and prediction tracing.
-Use `default`, `high`, or `highest`; `null` preserves an externally configured JAX policy. The trainer restores the
-previous process policy after each lifecycle, so experiments do not leak overrides into later tasks.
+`matmul_precision` controls JAX dot and convolution arithmetic during fit and prediction tracing. Use `default`,
+`high`, or `highest`. Set it to `null` to preserve the current JAX policy. The Trainer restores the previous policy
+after each task.
 
 ::: phijax.training.PrecisionPolicy
 
@@ -125,6 +128,6 @@ Distributed initialization must occur before any operation that initializes a JA
 
 ## Configuration boundary
 
-`Trainer` accepts constructed Python objects and never reads Hydra configuration. Optional factories and assembly
-helpers live under `phijax.integrations.hydra`; see [Configuration integrations](configuration.md). This keeps the core
-runtime usable from plain Python and lets each project own its config tree and executable entrypoints.
+`Trainer` accepts constructed Python objects and never reads Hydra configuration. Optional factories live under
+`phijax.integrations.hydra`; see [Configuration integrations](configuration.md). This keeps the Trainer usable from
+plain Python and lets each application own its config tree and entrypoints.

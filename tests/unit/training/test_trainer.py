@@ -557,6 +557,17 @@ class _MemoryCheckpointIO:
         self.directory = directory
         self.restore_steps: list[int | None] = []
         self.weight_steps: list[int | None] = []
+        self.open_calls = 0
+        self.close_calls = 0
+        self.opened = False
+        self.closed = False
+
+    def open(self) -> None:
+        """Record backend activation while allowing repeated Trainer stages."""
+        if self.opened:
+            return
+        self.open_calls += 1
+        self.opened = True
         self.closed = False
 
     @property
@@ -623,6 +634,10 @@ class _MemoryCheckpointIO:
 
     def close(self) -> None:
         """Record backend resource closure."""
+        if not self.opened:
+            return
+        self.close_calls += 1
+        self.opened = False
         self.closed = True
 
 
@@ -1350,11 +1365,61 @@ def test_trainer_context_manager_closes_resources_idempotently() -> None:
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
         callbacks=(checkpoint,),
     ) as trainer:
-        assert trainer._closed is False
+        checkpoint_io.open()
 
     trainer.close()
 
-    assert trainer._closed is True
+    assert checkpoint_io.close_calls == 1
+
+
+def test_trainer_automatically_closes_and_reopens_checkpoint_resources() -> None:
+    """Verify repeated fit stages require no explicit Trainer cleanup."""
+    checkpoint_io = _MemoryCheckpointIO(_state())
+    trainer = Trainer(
+        max_steps=1,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+        callbacks=(ModelCheckpoint(checkpoint_io, save_last=False),),
+    )
+
+    first = trainer.fit(_RecordingModule(), _train_step, _state(), ({"increment": jnp.asarray(1.0)},))
+    second = trainer.fit(_RecordingModule(), _train_step, first.state, ({"increment": jnp.asarray(1.0)},))
+
+    assert int(second.state.step) == 2
+    assert checkpoint_io.open_calls == 2
+    assert checkpoint_io.close_calls == 2
+    assert checkpoint_io.closed is True
+
+
+def test_trainer_closes_checkpoint_resources_after_fit_failure() -> None:
+    """Verify exceptional fit termination closes an opened checkpoint backend."""
+    checkpoint_io = _MemoryCheckpointIO(_state())
+    trainer = Trainer(
+        max_steps=2,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+        callbacks=(ModelCheckpoint(checkpoint_io, save_last=False),),
+    )
+
+    def failing_source(step: int) -> dict[str, jax.Array]:
+        """Return one batch before simulating a source failure.
+
+        Args:
+            step: Requested optimizer step.
+
+        Returns:
+            Synthetic first-step batch.
+
+        Raises:
+            RuntimeError: When the Trainer requests the second batch.
+        """
+        if step > 0:
+            raise RuntimeError("batch failure")
+        return {"increment": jnp.asarray(1.0)}
+
+    with pytest.raises(RuntimeError, match="batch failure"):
+        trainer.fit(_RecordingModule(), _train_step, _state(), failing_source)
+
+    assert checkpoint_io.open_calls == 1
+    assert checkpoint_io.close_calls == 1
     assert checkpoint_io.closed is True
 
 

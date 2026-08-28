@@ -16,6 +16,12 @@ class _RecordingCheckpointIO:
         self.saved: list[tuple[Any, int, dict[str, float], bool]] = []
         self.waited = False
         self.closed = False
+        self.opened = False
+
+    def open(self) -> None:
+        """Record backend activation for a fit stage."""
+        self.opened = True
+        self.closed = False
 
     @property
     def latest_step(self) -> int | None:
@@ -79,8 +85,10 @@ class _RecordingCheckpointIO:
         self.waited = True
 
     def close(self) -> None:
-        """Record backend closure."""
+        """Record pending-write synchronization and backend closure."""
+        self.wait_until_finished()
         self.closed = True
+        self.opened = False
 
 
 def test_model_checkpoint_saves_periodic_and_terminal_states(caplog: pytest.LogCaptureFixture) -> None:
@@ -89,6 +97,7 @@ def test_model_checkpoint_saves_periodic_and_terminal_states(caplog: pytest.LogC
     callback = ModelCheckpoint(checkpoint_io, every_n_steps=2, save_last=True)
     with caplog.at_level(logging.INFO, logger="phijax.callbacks.model_checkpoint"):
         callback.setup()
+        callback.on_fit_start(TrainerContext("initial", 0, {}))
         assert callback.on_train_batch_end(TrainerContext("one", 1, {"loss": jnp.asarray(3.0)})) is False
         assert callback.on_train_batch_end(TrainerContext("two", 2, {"loss": jnp.asarray(2.0)})) is False
         callback.on_fit_end(TrainerContext("three", 3, {"loss": jnp.asarray(1.0)}))
@@ -124,6 +133,7 @@ def test_model_checkpoint_optionally_saves_last_valid_state_on_exception() -> No
     context = TrainerContext("valid", 7, {"loss": jnp.asarray(0.5)})
 
     callback.setup()
+    callback.on_fit_start(TrainerContext("initial", 0, {}))
     callback.on_exception(KeyboardInterrupt(), context)
     callback.on_exception(RuntimeError("duplicate"), context)
 

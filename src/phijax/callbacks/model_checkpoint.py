@@ -11,7 +11,15 @@ log = logging.getLogger(__name__)
 
 
 class CheckpointIO(Protocol):
-    """Describe the storage operations required by :class:`ModelCheckpoint`."""
+    """Describe the storage operations required by :class:`ModelCheckpoint`.
+
+    Backends must allow `open()` after `close()`. Both methods must be idempotent so each Trainer task can own its
+    resources independently.
+    """
+
+    def open(self) -> None:
+        """Prepare checkpoint backend resources for a new fit stage idempotently."""
+        ...
 
     @property
     def latest_step(self) -> int | None:
@@ -72,7 +80,7 @@ class CheckpointIO(Protocol):
         ...
 
     def close(self) -> None:
-        """Release checkpoint backend resources."""
+        """Wait for pending writes and release checkpoint backend resources idempotently."""
         ...
 
 
@@ -120,6 +128,15 @@ class ModelCheckpoint(Callback):
         """Reset fit-local checkpoint scheduling state."""
         self._last_saved_step = None
 
+    def on_fit_start(self, context: TrainerContext) -> None:
+        """Open checkpoint resources for the fit stage.
+
+        Args:
+            context: Initial trainer context.
+        """
+        del context
+        self.checkpoint_io.open()
+
     def on_train_batch_end(self, context: TrainerContext) -> bool:
         """Save the state when the completed optimizer step matches the configured interval.
 
@@ -161,11 +178,11 @@ class ModelCheckpoint(Callback):
             self._save(context)
 
     def teardown(self) -> None:
-        """Wait for asynchronous writes before the fit call returns."""
-        self.checkpoint_io.wait_until_finished()
+        """Wait for asynchronous writes and release stage resources."""
+        self.checkpoint_io.close()
 
     def close(self) -> None:
-        """Wait for pending writes and release checkpoint backend resources."""
+        """Wait for pending writes and release checkpoint backend resources idempotently."""
         self.checkpoint_io.close()
 
     def _save(self, context: TrainerContext) -> None:

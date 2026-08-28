@@ -11,8 +11,9 @@ transfer learning.
 
 ::: phijax.training.OrbaxCheckpointIO
 
-With asynchronous saving enabled, `Trainer.close` and callback teardown wait for pending writes. `max_to_keep=None`
-retains every committed integer step.
+With asynchronous saving, teardown waits for pending writes and closes Orbax before `Trainer.fit()` returns. The
+backend reopens when the same Trainer starts another fit or restore task. Applications do not need to call
+`Trainer.close()`. Set `max_to_keep=None` to retain every saved step.
 
 ## Restore behavior
 
@@ -24,14 +25,13 @@ retains every committed integer step.
 | `weights_only=True` | Model state only; all other template state remains fresh            |
 | `ckpt_path=None`    | Target is returned unchanged                                        |
 
-Training accepts `ckpt_path: null` for fresh initialization. Standalone prediction requires a checkpoint root. A
-an explicit `step` chooses an exact committed step; `None` selects the latest.
+Training accepts `ckpt_path: null` for fresh initialization. Standalone prediction requires a checkpoint root. An
+explicit `step` chooses an exact committed step; `None` selects the latest.
 
-`Trainer.fit(..., ckpt_path=...)` performs full-state restoration by default and supports
-`weights_only=True`. `Trainer.predict(..., ckpt_path=...)` always restores only model weights into the supplied state
-template. A project entrypoint therefore composes a structurally compatible fresh state and delegates restoration
-to the trainer. `restore_checkpoint` remains available for lower-level workflows that intentionally manage state
-outside `Trainer`.
+`Trainer.fit(..., ckpt_path=...)` restores the full state by default. Set `weights_only=True` to load only model
+weights. `Trainer.predict(..., ckpt_path=...)` always loads model weights into the supplied state template. The template
+must have a compatible model structure. Use `restore_checkpoint` directly only when managing state outside the
+Trainer.
 
 ```yaml
 model_checkpoint:

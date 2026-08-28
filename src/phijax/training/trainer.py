@@ -139,7 +139,6 @@ class Trainer:
         self.logger = LoggerCollection(loggers)
         self.interrupted = False
         self.received_sigterm = False
-        self._closed = False
 
     def print_environment_info(self) -> None:
         """Print Lightning-style precision and accelerator information on global rank zero."""
@@ -662,10 +661,15 @@ class Trainer:
         """
         if self.checkpoint_callback is None:
             raise ValueError("`resume_latest()` requires a configured `ModelCheckpoint` callback.")
-        latest_step = self.checkpoint_callback.checkpoint_io.latest_step
-        if latest_step is None:
-            raise FileNotFoundError("No checkpoint is available for resumption.")
-        state = self.checkpoint_callback.checkpoint_io.restore(state, latest_step)
+        checkpoint_io = self.checkpoint_callback.checkpoint_io
+        try:
+            checkpoint_io.open()
+            latest_step = checkpoint_io.latest_step
+            if latest_step is None:
+                raise FileNotFoundError("No checkpoint is available for resumption.")
+            state = checkpoint_io.restore(state, latest_step)
+        finally:
+            checkpoint_io.close()
         return self.fit(
             module,
             training,
@@ -875,7 +879,12 @@ class Trainer:
         """
         if self.checkpoint_callback is None:
             raise ValueError("`load_weights()` requires a configured `ModelCheckpoint` callback.")
-        return self.checkpoint_callback.checkpoint_io.restore_weights(state, step)
+        checkpoint_io = self.checkpoint_callback.checkpoint_io
+        try:
+            checkpoint_io.open()
+            return checkpoint_io.restore_weights(state, step)
+        finally:
+            checkpoint_io.close()
 
     def latest_checkpoint(self) -> tuple[Path, int]:
         """Resolve the latest committed filesystem checkpoint.
@@ -890,19 +899,24 @@ class Trainer:
         if self.checkpoint_callback is None:
             raise ValueError("Resolving the latest checkpoint requires a configured `ModelCheckpoint` callback.")
         checkpoint_io = self.checkpoint_callback.checkpoint_io
-        checkpoint_step = checkpoint_io.latest_step
-        if checkpoint_step is None:
-            raise FileNotFoundError("The configured checkpoint backend contains no committed state.")
-        checkpoint_directory = getattr(checkpoint_io, "directory", None)
-        if checkpoint_directory is None:
-            raise ValueError("The configured checkpoint backend does not expose a filesystem `directory`.")
-        return Path(checkpoint_directory).expanduser().resolve(), checkpoint_step
+        try:
+            checkpoint_io.open()
+            checkpoint_step = checkpoint_io.latest_step
+            if checkpoint_step is None:
+                raise FileNotFoundError("The configured checkpoint backend contains no committed state.")
+            checkpoint_directory = getattr(checkpoint_io, "directory", None)
+            if checkpoint_directory is None:
+                raise ValueError("The configured checkpoint backend does not expose a filesystem `directory`.")
+            return Path(checkpoint_directory).expanduser().resolve(), checkpoint_step
+        finally:
+            checkpoint_io.close()
 
     def close(self) -> None:
-        """Wait for pending checkpoint writes and release manager resources."""
-        if self._closed:
-            return
-        self._closed = True
+        """Release any checkpoint resources opened outside a Trainer task.
+
+        Fit and prediction stages already close their resources automatically. Calling this method is optional and
+        remains supported for explicit lifecycle management and context-manager use.
+        """
         if self.checkpoint_callback is not None:
             self.checkpoint_callback.close()
 

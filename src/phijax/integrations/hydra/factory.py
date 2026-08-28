@@ -16,7 +16,6 @@ from phijax.training.loggers import ExperimentLogger, LoggerCollection
 from phijax.training.precision import PrecisionPolicy
 from phijax.training.trainer import Trainer
 from phijax.types import ModelApply, ModelSummaryFunction
-from phijax.utils.utils import register_task_finalizer
 
 
 def instantiate_enabled(config: DictConfig | None) -> tuple[Any, ...]:
@@ -81,7 +80,6 @@ def instantiate_trainer(config: DictConfig, callbacks: Sequence[Callback] = ()) 
     trainer = instantiate(config, callbacks=tuple(callbacks), loggers=())
     if not isinstance(trainer, Trainer):
         raise TypeError("The `trainer` config must instantiate `Trainer`.")
-    register_task_finalizer(lambda _: trainer.close())
     return trainer
 
 
@@ -98,14 +96,10 @@ def instantiate_loggers(config: DictConfig | None, trainer: Trainer) -> LoggerCo
     Raises:
         TypeError: If an enabled entry does not instantiate :class:`ExperimentLogger`.
     """
-    try:
-        loggers = instantiate_enabled(config) if trainer.strategy.is_global_zero else ()
-        if any(not isinstance(logger, ExperimentLogger) for logger in loggers):
-            raise TypeError("Every enabled logger config must instantiate `ExperimentLogger`.")
-        return LoggerCollection(loggers)
-    except BaseException:
-        trainer.close()
-        raise
+    loggers = instantiate_enabled(config) if trainer.strategy.is_global_zero else ()
+    if any(not isinstance(logger, ExperimentLogger) for logger in loggers):
+        raise TypeError("Every enabled logger config must instantiate `ExperimentLogger`.")
+    return LoggerCollection(loggers)
 
 
 def instantiate_objective(config: DictConfig) -> Objective:
