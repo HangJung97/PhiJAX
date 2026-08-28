@@ -1,7 +1,7 @@
 [project]
 name = "phijax"
 version = "0.1.0b1"
-description = "A configuration-first JAX framework for training physics-informed neural networks."
+description = "A typed JAX framework for reproducible physics-informed neural network training."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
