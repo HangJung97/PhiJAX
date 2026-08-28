@@ -19,15 +19,18 @@ can resume both the next optimizer update and the deterministic batch sequence.
 
 ## Trainer
 
-```yaml
-_target_: phijax.training.Trainer
-max_steps: 10000
-accelerator: auto
-devices: 1
-precision: 32-true
-matmul_precision: null
-deterministic: true
-log_every_n_steps: 10
+```python
+from phijax import Trainer
+
+trainer = Trainer(
+    max_steps=10_000,
+    accelerator="auto",
+    devices=1,
+    precision="32-true",
+    matmul_precision=None,
+    deterministic=True,
+    log_every_n_steps=10,
+)
 ```
 
 `fit` accepts a `TrainingPlan`. It asks the DataModule for a step-indexed source that provides the plan's batch keys.
@@ -71,6 +74,7 @@ signal status.
 ::: phijax.training.BalancerUpdateSchedule
 
 ::: phijax.training.Trainer
+
 options:
 members:
 \- print_environment_info
@@ -101,9 +105,9 @@ before the Optax update. Non-finite gradients skip the update and reduce the sca
 to grow. BFloat16 normally does not require this because it retains a float32-like exponent range.
 
 `matmul_precision` controls JAX dot and convolution arithmetic during fit and prediction tracing. Use `default`,
-`high`, or `highest`. Set it to `null` to preserve the current JAX policy. The Trainer restores the previous policy
+`high`, or `highest`. Set it to `None` to preserve the current JAX policy. The Trainer restores the previous policy
 after each task. Therefore, an explicit Trainer value temporarily overrides `JAX_DEFAULT_MATMUL_PRECISION`, while
-`null` preserves the environment value. See JAX's
+`None` preserves the environment value. See JAX's
 [matrix-multiplication precision guide](https://docs.jax.dev/en/latest/201/precision.html) for the meaning of each
 level. Matmul precision controls dot-product arithmetic and does not change parameter or activation dtypes.
 

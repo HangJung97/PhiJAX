@@ -98,16 +98,19 @@ transferring prediction values to the host. It should usually run only on global
 
 ::: phijax.callbacks.RichProgressBar
 
-## Project composition
+## Compose callbacks
 
-Projects may assign each callback an individual Hydra config. A defaults list can compose fitting callbacks, while
-`predict.yaml` composes prediction-only callbacks. `instantiate_enabled` ignores entries without `_target_` and entries
-with `enabled: false`.
+Pass callbacks to the Trainer in dispatch order:
 
-```yaml
-callbacks:
-  early_stopping:
-    enabled: true
-    monitor: train/loss
-    patience: 1000
+```python
+from phijax.callbacks import EarlyStopping, RichProgressBar
+from phijax.training import Trainer
+
+callbacks = (
+    EarlyStopping(monitor="train/loss", patience=1_000),
+    RichProgressBar(),
+)
+trainer = Trainer(max_steps=10_000, callbacks=callbacks)
 ```
+
+See [Configuration integrations](configuration.md) for optional Hydra-based callback construction.

@@ -44,11 +44,12 @@ repos:
     rev: 1.0.0
     hooks:
       - id: mdformat
-        args: ["--number"]
+        args: ["--number", "--align-semantic-breaks-in-lists"]
         additional_dependencies:
           - mdformat-gfm
           - mdformat-footnote
           - mdformat-gfm-alerts
+          - mdformat-mkdocs
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3

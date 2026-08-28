@@ -1,15 +1,15 @@
 # Building an application DataModule
 
 This guide assumes you have run the [heat-equation quickstart](../getting-started/quickstart.md). It expands that
-example to cover data setup, storage, sampling, normalization, prediction, configuration, and testing.
+example to cover data setup, storage, sampling, normalization, prediction, and testing.
 
 The core data API is deliberately small. `PhiDataModule` defines the training and prediction lifecycle. Each
-application defines its datasets, pool names, sampling policy, and config fields.
+application defines its datasets, pool names, sampling policy, and constructor options.
 
 This follows two principles:
 
 - framework code should not need to understand an application's files, geometry, targets, or boundary extraction; and
-- application configuration should describe experiment choices rather than the mechanics of a universal data schema.
+- application APIs should expose experiment choices rather than the mechanics of a universal data schema.
 
 `phijax.data` provides immutable pools, array IO, optional pool builders, device placement, samplers, and prediction
 chunking. An application DataModule uses only the pieces it needs.
@@ -97,41 +97,33 @@ Batch-stream names are part of the application API. Every objective `batch_key` 
 continuous domain:
 
 ```text
-model.objective.terms.<term>.batch_key
-                    │
-                    ├── finite HostPool or generated-domain sampler
-                    └── data.batch_size key
+ResidualTerm(batch_key="pde")
+              |
+              +--> DataModule training source
+              +--> per-stream batch-size policy
 ```
 
 ## Pool size and batch size
 
 Keep construction sizes separate from runtime batch sizes:
 
-```yaml
-pde_sampling: fixed
-pde_size: 16384
-
-batch_size:
-  pde: 4096
+```python
+pde_size = 16_384
+batch_size = {"pde": 4_096}
 ```
 
 These values mean:
 
 ```text
-pde_size           = finite candidate coordinates stored in the host pool
-batch_size.pde     = candidate rows evaluated during one optimizer step
+pde_size          = finite candidate coordinates stored in the host pool
+batch_size["pde"] = candidate rows evaluated during one optimizer step
 ```
 
 For a continuously generated sampler such as `uniform_domain`, no finite `pde_size` exists. In that case,
-`batch_size.pde` is the number of newly generated coordinates per optimizer step.
+`batch_size["pde"]` is the number of newly generated coordinates per optimizer step.
 
-For example, an application DataModule can switch policies without changing its objective:
-
-```bash
-python -m my_project.train experiment=heat_static_1d data.pde_sampling=uniform
-```
-
-In `fixed` mode, the DataModule builds `pde_size` candidates and selects random rows. In `uniform` mode, it creates no
+An application DataModule can expose a `pde_sampling` constructor option without changing its objective. In `fixed`
+mode, the DataModule builds `pde_size` candidates and selects random rows. In `uniform` mode, it creates no
 `pde` pool. Instead, it samples a fresh batch from the time-space bounds at each optimizer step. The explicit root key
 and global step make this sequence reproducible after resuming.
 
@@ -140,202 +132,45 @@ An application can override `PhiDataModule.input_statistics()` with the exact va
 `mean = (a + b) / 2` and `std = (b - a) / sqrt(12)`.
 
 Prediction batch size is a chunking policy, not a prediction-grid size. The grid size comes from `reference_shape`;
-`batch_size.predict` only limits the number of rows evaluated at once.
+`batch_size["predict"]` only limits the number of rows evaluated at once.
 
-## Example application DataModule
+## Application DataModule pattern
 
-The following heat-equation module owns finite initial, boundary, PDE, and prediction pools. The shorter
-[executable version](https://github.com/HangJung97/PhiJAX/blob/main/examples/quickstart.py) is a useful starting point
-when copying this pattern into an application.
+A DataModule should make four application decisions explicit:
 
-```python
-from collections.abc import Mapping
+- which immutable host pools exist for fitting and prediction;
+- which sampler serves each objective `batch_key`;
+- how large each training batch and prediction chunk is; and
+- which coordinates define model-input normalization.
 
-import jax
-import numpy as np
-
-from phijax.data import (
-    ChunkedPredictionSource,
-    HostPool,
-    NamedBatchSource,
-    PhiDataModule,
-    RandomRowSampler,
-)
-from phijax.data.datamodule import DataStage
-
-
-class HeatDataModule(PhiDataModule):
-    """Own heat-equation data construction and batching."""
-
-    def __init__(
-        self,
-        batch_size: Mapping[str, int | str],
-        *,
-        seed: int = 42,
-        initial_size: int = 256,
-        boundary_size: int = 256,
-        pde_size: int = 16384,
-        predict_shape: tuple[int, int] = (101, 256),
-    ) -> None:
-        """Store application data policy.
-
-        Args:
-            batch_size: Per-pool training and prediction policies.
-            seed: PDE candidate-pool seed.
-            initial_size: Initial-condition candidate count.
-            boundary_size: Boundary candidate count.
-            pde_size: Interior candidate count.
-            predict_shape: Dense `(time, space)` prediction shape.
-        """
-        super().__init__()
-        self.batch_size = dict(batch_size)
-        self.seed = seed
-        self.initial_size = initial_size
-        self.boundary_size = boundary_size
-        self.pde_size = pde_size
-        self.predict_shape = predict_shape
-
-    def setup(self, stage: DataStage) -> None:
-        """Construct and store immutable application pools.
-
-        Args:
-            stage: Requested `fit` or `predict` stage.
-
-        """
-        if stage not in ("fit", "predict"):
-            raise ValueError("Heat data stage must be `fit` or `predict`.")
-        generator = np.random.default_rng(self.seed)
-        initial_x = np.linspace(0.0, 1.0, self.initial_size, dtype=np.float32)
-        initial_inputs = np.column_stack((np.zeros_like(initial_x), initial_x))
-        initial_targets = np.sin(np.pi * initial_x)[:, None].astype(np.float32)
-
-        boundary_t = np.linspace(0.0, 1.0, self.boundary_size, dtype=np.float32)
-        boundary_x = np.where(np.arange(self.boundary_size) % 2 == 0, 0.0, 1.0).astype(np.float32)
-        boundary_inputs = np.column_stack((boundary_t, boundary_x))
-
-        pde_inputs = generator.uniform(0.0, 1.0, (self.pde_size, 2)).astype(np.float32)
-        times = np.linspace(0.0, 1.0, self.predict_shape[0], dtype=np.float32)
-        positions = np.linspace(0.0, 1.0, self.predict_shape[1], dtype=np.float32)
-        prediction_inputs = np.stack(np.meshgrid(times, positions, indexing="ij"), axis=-1).reshape(-1, 2)
-
-        self.pools = {
-            "initial": self._pool(initial_inputs, initial_targets),
-            "boundary": self._pool(boundary_inputs, np.zeros((self.boundary_size, 1), dtype=np.float32)),
-            "pde": self._pool(pde_inputs, np.zeros((self.pde_size, 0), dtype=np.float32)),
-            "predict": self._pool(
-                prediction_inputs,
-                np.zeros((prediction_inputs.shape[0], 0), dtype=np.float32),
-                reference_shape=self.predict_shape,
-            ),
-        }
-
-    def train_batch_source(
-        self,
-        batch_keys: tuple[str, ...],
-        key: jax.Array,
-    ) -> NamedBatchSource:
-        """Build deterministic finite-row training samplers.
-
-        Args:
-            batch_keys: Objective batch keys.
-            key: Explicit root sampling key.
-
-        Returns:
-            Unprepared global-step-indexed named batch source.
-        """
-        pools = self._require_setup("fit")
-        samplers = {name: RandomRowSampler(pools[name].fields()) for name in batch_keys}
-        sizes = {name: self.batch_size[name] for name in batch_keys}
-        return NamedBatchSource(samplers, sizes, key)
-
-    def predict_batch_source(self) -> ChunkedPredictionSource:
-        """Build a lazy host-backed prediction source.
-
-        Returns:
-            Re-iterable padded prediction source.
-        """
-        size = self.batch_size["predict"]
-        if not isinstance(size, int) or isinstance(size, bool) or size < 1:
-            raise ValueError("Prediction batch size must be a positive integer.")
-        return ChunkedPredictionSource(self.prediction_pool(), size)
-
-    def prediction_pool(self) -> HostPool:
-        """Return the dense ordered prediction pool.
-
-        Returns:
-            Host pool carrying dense reconstruction metadata.
-        """
-        return self._require_setup("predict")["predict"]
-
-    def normalization_pools(self) -> Mapping[str, HostPool]:
-        """Use interior candidates to derive input statistics.
-
-        Returns:
-            Interior PDE pool mapping.
-        """
-        pools = self._require_setup("fit")
-        return {"pde": pools["pde"]}
-
-    @staticmethod
-    def _pool(
-        inputs: np.ndarray,
-        targets: np.ndarray,
-        *,
-        reference_shape: tuple[int, ...] | None = None,
-    ) -> HostPool:
-        """Construct one indexed heat-equation pool.
-
-        Args:
-            inputs: Coordinate rows.
-            targets: Aligned target rows.
-            reference_shape: Optional dense reconstruction shape.
-
-        Returns:
-            Immutable host pool.
-        """
-        row_count = inputs.shape[0]
-        return HostPool(
-            inputs=inputs,
-            targets=targets,
-            aux={},
-            metadata={"coordinate_names": ("t", "x")},
-            reference_shape=reference_shape or (row_count,),
-            flat_index=np.arange(row_count, dtype=np.int64),
-        )
-```
+The [executable heat-equation quickstart](https://github.com/HangJung97/PhiJAX/blob/main/examples/quickstart.py)
+implements this complete pattern. Use it as a starting point, then replace its analytic coordinates and targets with
+your application's geometry and data.
 
 Applications may factor host-only construction into a separate `data.py`. This keeps geometry and file parsing
 independently testable while the application DataModule remains responsible for lifecycle policy.
 
-## Hydra configuration
+## Construct the DataModule
 
-Once lifecycle decisions live in the application class, its config contains only meaningful experiment parameters:
+Once lifecycle decisions live in the application class, construction contains only meaningful experiment parameters:
 
-```yaml
-_target_: my_project.applications.heat.HeatDataModule
-
-seed: ${seed}
-initial_size: 256
-boundary_size: 256
-pde_size: 16384
-predict_shape: [101, 256]
-
-batch_size:
-  initial: all
-  boundary: 128
-  pde: 4096
-  predict: 4096
+```python
+data_module = HeatDataModule(
+    seed=42,
+    initial_size=256,
+    boundary_size=256,
+    pde_size=16_384,
+    predict_shape=(101, 256),
+    batch_size={
+        "initial": "all",
+        "boundary": 128,
+        "pde": 4_096,
+        "predict": 4_096,
+    },
+)
 ```
 
-Temporary comparisons remain direct:
-
-```bash
-python -m my_project.train experiment=heat_static_1d \
-  data.pde_size=32768 data.batch_size.pde=8192
-```
-
-The factory checks that the configured object implements `PhiDataModule`. The Trainer does not need to know how a pool
-was created. It only prepares the source and places each batch.
+The Trainer only requires a `PhiDataModule`. It does not need to know how pools or sources were created.
 
 ## Reusing array IO inside an application
 
@@ -350,7 +185,7 @@ These are construction utilities, not a framework DataModule. The application st
 objective mappings, and samplers.
 
 An application may use `build_array_pools()` internally while exposing only meaningful choices such as `data_path`,
-`pde_sampling`, `pde_size`, and `batch_size` through its project configuration.
+`pde_sampling`, `pde_size`, and `batch_size` through its constructor or project settings.
 
 ## Sampler choices
 
@@ -402,3 +237,7 @@ Use synthetic CPU-sized fixtures. Ordinary tests must not download data, require
 reference artifact.
 
 Continue with [Building equations and objectives](objectives.md) to connect these batch names to scalar losses.
+
+For Hydra-based application assembly, see the
+[PhiJAX Hydra template](https://github.com/HangJung97/phijax-hydra-template) and the
+[configuration integration API](../api/configuration.md).

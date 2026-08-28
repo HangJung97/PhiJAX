@@ -30,18 +30,14 @@ return `None`. Override `predict_step` to transform each output batch before col
 ## Implementing a custom module
 
 Implement `loss_names`, `forward`, and `training_step`. Implement `residual_stream` when using derivative-based loss
-balancing. The standard `PhiModule` already delegates these operations to a model application callable and objective.
+balancing. The standard `PhiModule` already delegates these operations to a model application callable and objective:
 
-Hydra-based projects can select the standard implementation through their own module config group:
-
-```yaml
-defaults:
-  - module: phi_module
+```python
+module = PhiModule(model_apply, objective, name="heat")
 ```
 
-An application can point `_target_` to any `BasePhiModule` subclass. Its entrypoints inject `model_apply`, `objective`,
-`name`, and `model_summary`, so a custom constructor should accept those arguments. Module selection remains separate
-from optimizer and loss-balancer selection.
+An application can construct any `BasePhiModule` subclass. Keep module selection separate from optimizer and
+loss-balancer selection. See [Configuration integrations](configuration.md) when assembling modules with Hydra.
 
 ```python
 class HeatModule(BasePhiModule):
@@ -61,6 +57,7 @@ class HeatModule(BasePhiModule):
 ::: phijax.module.PhiModuleContext
 
 ::: phijax.module.BasePhiModule
+
 options:
 members:
 \- loss_names
@@ -85,6 +82,7 @@ members:
 \- teardown
 
 ::: phijax.module.PhiModule
+
 options:
 members:
 \- loss_names

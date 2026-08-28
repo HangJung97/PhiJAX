@@ -81,14 +81,19 @@ input normalization
 `weight_factorization` are mutually exclusive. Stochastic dropout requires `deterministic=False` and an explicit
 `dropout_key`.
 
-```yaml
-_target_: phijax.models.build_mlp
-_partial_: true
-input_dim: 2
-output_dim: 1
-hidden: [128, 128, 128, 128]
-activation: tanh
-input_norm: true
+```python
+from phijax.models import build_mlp
+
+model = build_mlp(
+    key,
+    input_dim=2,
+    output_dim=1,
+    input_mean=(0.0, 0.0),
+    input_std=(1.0, 1.0),
+    hidden=(128, 128, 128, 128),
+    activation="tanh",
+    input_norm=True,
+)
 ```
 
 ::: phijax.models.MLP
@@ -112,15 +117,20 @@ Where applicable, the architecture supports the same normalization, coordinate f
 weight normalization, and random weight factorization as the standard MLP. It follows
 [Wang, Teng, and Perdikaris (2021)](https://doi.org/10.1137/20M1318043).
 
-```yaml
-_target_: phijax.models.build_modified_mlp
-_partial_: true
-input_dim: 2
-output_dim: 1
-hidden_dim: 256
-num_layers: 4
-activation: tanh
-input_norm: true
+```python
+from phijax.models import build_modified_mlp
+
+model = build_modified_mlp(
+    key,
+    input_dim=2,
+    output_dim=1,
+    input_mean=(0.0, 0.0),
+    input_std=(1.0, 1.0),
+    hidden_dim=256,
+    num_layers=4,
+    activation="tanh",
+    input_norm=True,
+)
 ```
 
 ::: phijax.models.ModifiedMLP
@@ -146,22 +156,24 @@ factorization can be enabled separately.
 The factory uses standard Glorot initialization. It does not apply the paper's optional physics-informed least-squares
 initialization because that method depends on training data.
 
-```yaml
-_target_: phijax.models.build_pirate_net
-_partial_: true
-input_dim: 2
-output_dim: 1
-hidden_dim: 256
-num_blocks: 4
-activation: tanh
-nonlinearity: 0.0
-input_norm: true
-fourier_features_kwargs:
-  scale: 1.0
-weight_factorization: true
-weight_factorization_kwargs:
-  mean: 0.5
-  std: 0.1
+```python
+from phijax.models import build_pirate_net
+
+model = build_pirate_net(
+    key,
+    input_dim=2,
+    output_dim=1,
+    input_mean=(0.0, 0.0),
+    input_std=(1.0, 1.0),
+    hidden_dim=256,
+    num_blocks=4,
+    activation="tanh",
+    nonlinearity=0.0,
+    input_norm=True,
+    fourier_features_kwargs={"scale": 1.0},
+    weight_factorization=True,
+    weight_factorization_kwargs={"mean": 0.5, "std": 0.1},
+)
 ```
 
 ::: phijax.models.PirateBlock

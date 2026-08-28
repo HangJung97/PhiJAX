@@ -1,7 +1,8 @@
 # API reference
 
 The API reference lists PhiJAX's supported Python imports. Signatures, parameters, return values, and exceptions come
-from source docstrings. Each page also explains ownership, array shapes, Hydra integration, and lifecycle behavior.
+from source docstrings. Each page also explains ownership, array shapes, and lifecycle behavior. Optional configuration
+integration is documented separately.
 
 ## Stability
 
