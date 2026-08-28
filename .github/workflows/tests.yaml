@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, "release/*", "dev"]
 
+env:
+  # Keep every test and coverage job strictly CPU-only, regardless of runner accelerator plugins.
+  JAX_PLATFORMS: cpu
+
 jobs:
   run-tests:
     runs-on: ${{ matrix.os }}
@@ -15,9 +19,6 @@ jobs:
         os: ["ubuntu-latest"]
         python-version: ["3.12", "3.13", "3.14"]
     timeout-minutes: 10
-    env:
-      JAX_PLATFORMS: cpu
-
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -33,9 +34,6 @@ jobs:
   code-coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      JAX_PLATFORMS: cpu
-
     steps:
       - name: Checkout
         uses: actions/checkout@v7
