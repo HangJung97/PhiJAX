@@ -45,10 +45,8 @@ coverage.xml
 *.tar
 *.tar.gz
 *.orbax-checkpoint/
-/data/*
-!/data/.gitkeep
-/logs/*
-!/logs/.gitkeep
+/data/
+/logs/
 /outputs/
 .jax_cache/
 
