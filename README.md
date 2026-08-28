@@ -1,12 +1,18 @@
+<div align="center">
+
 # PhiJAX
 
 [![Code Quality](https://github.com/HangJung97/PhiJAX/actions/workflows/code-quality-main.yaml/badge.svg)](https://github.com/HangJung97/PhiJAX/actions/workflows/code-quality-main.yaml)
 [![Tests](https://github.com/HangJung97/PhiJAX/actions/workflows/tests.yaml/badge.svg)](https://github.com/HangJung97/PhiJAX/actions/workflows/tests.yaml)
 [![Documentation](https://github.com/HangJung97/PhiJAX/actions/workflows/docs.yaml/badge.svg)](https://github.com/HangJung97/PhiJAX/actions/workflows/docs.yaml)
 [![Codecov](https://codecov.io/gh/HangJung97/PhiJAX/graph/badge.svg)](https://codecov.io/gh/HangJung97/PhiJAX)
+<br>
 [![Python](https://img.shields.io/pypi/pyversions/phijax?logo=python&logoColor=white&color=blue)](https://pypi.org/project/phijax/)
 [![PyPI](https://img.shields.io/pypi/v/phijax)](https://pypi.org/project/phijax/)
+<br>
 [![License](https://img.shields.io/github/license/HangJung97/PhiJAX?color=blue)](LICENSE)
+
+</div>
 
 PhiJAX is a typed [JAX](https://docs.jax.dev/) framework for physics-informed neural networks (PINNs). It provides the
 core tools for training PINNs: functional state, explicit-key sampling, reusable equations and objectives, adaptive
