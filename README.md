@@ -21,6 +21,7 @@ configs, and application DataModules.
 [Quickstart](https://hangjung97.github.io/PhiJAX/getting-started/quickstart/) |
 [Guides](https://hangjung97.github.io/PhiJAX/guides/datasets/) |
 [API reference](https://hangjung97.github.io/PhiJAX/api/) |
+[Changelog](CHANGELOG.md) |
 [Contributing](CONTRIBUTING.md)
 
 ## Why PhiJAX?

@@ -36,6 +36,7 @@ dependencies = [
 ]
 
 [project.urls]
+Changelog = "https://github.com/HangJung97/PhiJAX/blob/main/CHANGELOG.md"
 Documentation = "https://hangjung97.github.io/PhiJAX"
 Issues = "https://github.com/HangJung97/PhiJAX/issues"
 Repository = "https://github.com/HangJung97/PhiJAX"
