@@ -13,11 +13,11 @@ Trainer prepares source and places batches
 teardown("fit" | "predict")
 ```
 
-`prepare_data` may generate or obtain shared artifacts. Process-local NumPy pools belong in `setup`.
-`prepare_stage(stage)` makes this pair idempotent until `teardown_stage(stage)` releases the application lifecycle.
-The factory prepares the initial stage before model normalization statistics are requested; the Trainer then owns
-source retrieval and teardown. Returning `None` from `predict_batch_source()` skips prediction. Available prediction
-sources must be finite and repeatable; training sources may sample indefinitely using the global optimizer step.
+`prepare_data` may generate or obtain shared artifacts. Build process-local NumPy pools in `setup`.
+`prepare_stage(stage)` runs these methods at most once until `teardown_stage(stage)` releases the stage. The factory
+prepares the initial stage before requesting model normalization statistics. The Trainer then retrieves sources and
+handles teardown. Return `None` from `predict_batch_source()` to skip prediction. Prediction sources must be finite and
+repeatable; training sources may sample indefinitely from the global optimizer step.
 
 ::: phijax.data.PhiDataModule
 
@@ -34,9 +34,9 @@ array. Array-valued `aux` fields share the sample axis. `reference_shape` and `f
 
 ## Prediction artifacts
 
-Artifact serialization remains reusable independently of the callback lifecycle. The canonical NPZ schema stores
-physical arrays, applied output scales, schema metadata, and safe application metadata. Optional MATLAB arrays use the
-same physical value space and may use application-owned field names.
+Prediction artifacts can be saved and loaded without callbacks. The canonical NPZ stores physical arrays, output
+scales, schema information, and safe application metadata. Optional MATLAB files store the same physical values and
+may use application-specific field names.
 
 ::: phijax.data.save_prediction_artifact
 
@@ -71,8 +71,9 @@ leading dimension.
 
 ## Batch sources
 
-`NamedBatchSource` folds its root key with the global step and splits keys in sampler declaration order. This preserves
-sampling reproducibility after checkpoint restoration. The `"all"` batch-size policy is limited to finite row sources.
+`NamedBatchSource` folds its root key with the global step, then splits keys in sampler declaration order. A restored
+checkpoint therefore continues the same sampling sequence. The `"all"` batch-size policy works only with finite row
+sources.
 
 `ChunkedPredictionSource` pads its final host batch and supplies a Boolean `mask`; `Trainer.predict` removes padded rows
 before output assembly.
@@ -87,10 +88,10 @@ before output assembly.
 
 ## Array IO and declarative pools
 
-`load_arrays` supports NPZ, MATLAB, and HDF5 files. Classic MATLAB files are decoded by SciPy, while `mat73` restores
-logical MATLAB arrays from v7.3 HDF5 storage; generic HDF5 input retains its native storage order. `get_array` accepts
-slash-delimited nested keys. Declarative pool construction is useful for direct field mapping; subclass
-`PhiDataModule` when generation or sampling is application specific.
+`load_arrays` supports NPZ, MATLAB, and HDF5 files. SciPy reads classic MATLAB files. `mat73` restores MATLAB's logical
+array order from v7.3 HDF5 files, while generic HDF5 input keeps its stored order. `get_array` accepts slash-delimited
+nested keys. Use declarative pool construction for direct field mapping. Subclass `PhiDataModule` for custom generation
+or sampling.
 
 ::: phijax.data.load_arrays
 
@@ -100,9 +101,9 @@ slash-delimited nested keys. Declarative pool construction is useful for direct 
 
 ## Host transforms
 
-Reusable transforms operate only on NumPy arrays during host-side data construction. They derive statistics from
-finite values, preserve non-finite entries, and accept explicit statistics when one training-derived transform must be
-reused for prediction. Application-specific physical nondimensionalization remains in the application DataModule.
+Reusable transforms operate on NumPy arrays while building host data. They derive statistics from finite values and
+preserve non-finite entries. They also accept fixed statistics, so prediction can reuse values derived from training
+data. Keep application-specific physical scaling in the application DataModule.
 
 ::: phijax.data.log_compress
 

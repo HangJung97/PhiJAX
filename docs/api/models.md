@@ -1,7 +1,7 @@
 # Models
 
-PhiJAX supplies Flax NNX models but equations and objectives consume only a pure explicit-state callable. Split models
-before regular `jax.jit` use and pass their graph definition through a closure or partial callable.
+PhiJAX includes Flax NNX models, but equations and objectives only need a pure, explicit-state callable. Before using
+regular `jax.jit`, split the model and capture its graph definition in a closure or partial callable.
 
 ## Custom NNX architectures
 
@@ -58,10 +58,10 @@ def build_coordinate_network(
     )
 ```
 
-The returned application merges the captured static graph with explicit state for each call, so it remains compatible
-with JAX transformations and PhiJAX equations without requiring a framework base architecture or registry.
-`apply_model_dtype_defaults()` is optional: use it when the custom constructor exposes `parameter_dtype`,
-`compute_dtype`, and `output_dtype`. Explicit entries in `model_kwargs` override the selected policy.
+The returned application merges the static graph with explicit state on each call. It works with JAX transformations
+and PhiJAX equations without a base architecture or registry. `apply_model_dtype_defaults()` is optional. Use it when
+the custom constructor accepts `parameter_dtype`, `compute_dtype`, and `output_dtype`. Values in `model_kwargs`
+override the selected policy.
 
 ::: phijax.models.initialize_nnx_model
 
@@ -108,8 +108,8 @@ H = activation(dense(H))
 H = H * U + (1 - H) * V
 ```
 
-The architecture supports the same normalization, periodic-feature, Fourier-feature, output-name, precision, weight
-normalization, and random weight-factorization policies as the standard MLP where applicable. It follows
+Where applicable, the architecture supports the same normalization, coordinate features, output names, precision,
+weight normalization, and random weight factorization as the standard MLP. It follows
 [Wang, Teng, and Perdikaris (2021)](https://doi.org/10.1137/20M1318043).
 
 ```yaml
@@ -138,14 +138,13 @@ nonlinear = gated_three_layer_block(features, U, V)
 features = alpha * nonlinear + (1 - alpha) * features
 ```
 
-The default `alpha=0` makes every block an exact identity at initialization. Training can then increase its effective
-depth by learning each coefficient. Random Fourier features are enabled by default and must produce exactly
-`hidden_dim` features; with PhiJAX's paired feature convention, the default uses `embed_dim=hidden_dim/2` sampled
-frequencies. Random weight factorization can be enabled independently.
+The default `alpha=0` makes every block an identity at initialization. Training increases the effective depth by
+learning each coefficient. Random Fourier features are enabled by default and must produce `hidden_dim` features.
+Because PhiJAX pairs cosine and sine features, the default samples `embed_dim=hidden_dim/2` frequencies. Random weight
+factorization can be enabled separately.
 
-The factory implements the adaptive architecture and standard Glorot initialization. The paper's optional
-physics-informed least-squares initialization of the final layer is data-dependent and is not performed implicitly by
-the model factory.
+The factory uses standard Glorot initialization. It does not apply the paper's optional physics-informed least-squares
+initialization because that method depends on training data.
 
 ```yaml
 _target_: phijax.models.build_pirate_net
@@ -184,10 +183,10 @@ and its use for coordinate networks by
 PhiJAX stores the initially random projection `B` as a trainable parameter; keeping `B` fixed would recover the
 classical random-feature interpretation.
 
-`FactorizedDense` provides learned scale and direction parameters following
+`FactorizedDense` uses learned scale and direction parameters following
 [Wang et al. (2022)](https://arxiv.org/abs/2210.01274). PhiJAX stores dense weights in
 `[input_dim, output_dim]` layout, so its factorization is `W = V diag(g)`: each entry of `g` scales one output column.
-This is equivalent to the commonly written `W = diag(g) V` under `[output_dim, input_dim]` weight layout.
+With the common `[output_dim, input_dim]` layout, the same factorization is written `W = diag(g) V`.
 
 ::: phijax.models.PeriodicFeatures
 

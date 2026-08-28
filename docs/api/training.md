@@ -102,7 +102,10 @@ to grow. BFloat16 normally does not require this because it retains a float32-li
 
 `matmul_precision` controls JAX dot and convolution arithmetic during fit and prediction tracing. Use `default`,
 `high`, or `highest`. Set it to `null` to preserve the current JAX policy. The Trainer restores the previous policy
-after each task.
+after each task. Therefore, an explicit Trainer value temporarily overrides `JAX_DEFAULT_MATMUL_PRECISION`, while
+`null` preserves the environment value. See JAX's
+[matrix-multiplication precision guide](https://docs.jax.dev/en/latest/201/precision.html) for the meaning of each
+level. Matmul precision controls dot-product arithmetic and does not change parameter or activation dtypes.
 
 ::: phijax.training.PrecisionPolicy
 

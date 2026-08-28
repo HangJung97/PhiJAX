@@ -1,17 +1,18 @@
 # Building an application DataModule
 
-PhiJAX keeps its core data abstraction deliberately small. `PhiDataModule` defines the lifecycle required by training
-and prediction, while each application owns its dataset construction, pool names, sampler policy, and meaningful
-configuration fields.
+This guide assumes you have run the [heat-equation quickstart](../getting-started/quickstart.md). It expands that
+example to cover data setup, storage, sampling, normalization, prediction, configuration, and testing.
+
+The core data API is deliberately small. `PhiDataModule` defines the training and prediction lifecycle. Each
+application defines its datasets, pool names, sampling policy, and config fields.
 
 This follows two principles:
 
 - framework code should not need to understand an application's files, geometry, targets, or boundary extraction; and
 - application configuration should describe experiment choices rather than the mechanics of a universal data schema.
 
-The reusable `phijax.data` package still provides immutable pools, array IO, declarative array-building helpers, device
-placement, finite and generated samplers, and prediction chunking. An application DataModule composes only the helpers
-it needs.
+`phijax.data` provides immutable pools, array IO, optional pool builders, device placement, samplers, and prediction
+chunking. An application DataModule uses only the pieces it needs.
 
 ## The `PhiDataModule` contract
 
@@ -43,22 +44,21 @@ The remaining lifecycle and normalization methods are:
 - `teardown_stage(stage)`, for releasing the active stage exactly once;
 - `prepare_data()`, for generating or downloading an artifact before loading it;
 - `prediction_pool()`, for declaring the ordered host pool represented by prediction chunks;
-- `normalization_pools()`, for selecting the coordinates used to derive network input mean and standard deviation; and
+- `normalization_pools()`, for selecting the coordinates used to derive network input mean and standard deviation;
 - `input_statistics()`, for overriding pool-derived normalization with exact continuous-distribution statistics; and
 - `teardown(stage)`, for releasing application-owned resources.
 
-`prepare_data()` and host-pool builders should use NumPy and avoid initializing JAX. DataModules construct host-backed
-sampler definitions and prediction chunks; the Trainer prepares persistent sampler state on its Strategy's root device
-and places or shards every batch before compiled execution.
+Use NumPy in `prepare_data()` and host-pool builders so they do not initialize JAX. DataModules create host-backed
+samplers and prediction chunks. The Trainer prepares sampler state on the selected device and places or shards each
+batch before compiled execution.
 
-Calling `Trainer.fit(module, training_plan, state, datamodule=data_module, sampling_key=key)` lets the Trainer request,
-place, and iterate the training source. Calling `Trainer.predict(module, state, datamodule=data_module)` does the same
-for prediction. Return `None` from `predict_batch_source()` when an application has no prediction data; callbacks and
-module prediction hooks are then skipped.
+Pass the DataModule to `Trainer.fit()` so the Trainer can request, place, and iterate its training source. Pass it to
+`Trainer.predict()` for the same prediction lifecycle. Return `None` from `predict_batch_source()` when no prediction
+data exists. The Trainer will skip prediction callbacks and module hooks.
 
-Like Lightning, `setup(stage)` assigns process-local data state rather than returning it. PhiJAX stores that state as
-the explicit `pools` mapping on the host-side DataModule. Unlike Lightning, the two source hooks are not called
-`dataloader` because they do not imply PyTorch datasets, worker processes, or `torch.utils.data.DataLoader` behavior.
+Like Lightning, `setup(stage)` assigns process-local data state instead of returning it. PhiJAX stores this state in
+the DataModule's host-side `pools` mapping. The source hooks are not called `dataloader` because they do not imply
+PyTorch datasets or worker processes.
 
 ## Reusable host transforms
 
@@ -73,9 +73,9 @@ standardized_signal = standardize(signal, mean=train_mean, std=train_std)
 bounded_confidence = scale_by_max(confidence, percentile=99.5)
 ```
 
-Statistics supplied through `minimum`, `maximum`, `mean`, and `std` may be derived from training data once and reused
-for prediction. These generic transforms do not replace physical nondimensionalization: characteristic length,
-velocity, time, pressure, or material scales remain explicit application rules in the DataModule.
+You can derive `minimum`, `maximum`, `mean`, and `std` from training data once and reuse them for prediction. These
+generic transforms do not replace physical nondimensionalization. Keep characteristic physical scales explicit in the
+application DataModule.
 
 ## `HostPool` fields
 
@@ -131,9 +131,9 @@ For example, an application DataModule can switch policies without changing its 
 python -m my_project.train experiment=heat_static_1d data.pde_sampling=uniform
 ```
 
-In `fixed` mode, it constructs `pde_size` candidates and selects random rows. In `uniform` mode, it does not construct
-a `pde` host pool; instead, it samples a reproducible fresh batch from the time-space bounds for every global optimizer
-step. Its explicit root key and restored global step ensure resumed training follows the same coordinate sequence.
+In `fixed` mode, the DataModule builds `pde_size` candidates and selects random rows. In `uniform` mode, it creates no
+`pde` pool. Instead, it samples a fresh batch from the time-space bounds at each optimizer step. The explicit root key
+and global step make this sequence reproducible after resuming.
 
 For independent uniform coordinates on intervals `[a, b]`, normalization does not require a surrogate finite pool.
 An application can override `PhiDataModule.input_statistics()` with the exact values
@@ -144,7 +144,9 @@ Prediction batch size is a chunking policy, not a prediction-grid size. The grid
 
 ## Example application DataModule
 
-The following compact heat-equation module owns finite initial, boundary, PDE, and prediction pools:
+The following heat-equation module owns finite initial, boundary, PDE, and prediction pools. The shorter
+[executable version](https://github.com/HangJung97/PhiJAX/blob/main/examples/quickstart.py) is a useful starting point
+when copying this pattern into an application.
 
 ```python
 from collections.abc import Mapping
@@ -332,8 +334,8 @@ python -m my_project.train experiment=heat_static_1d \
   data.pde_size=32768 data.batch_size.pde=8192
 ```
 
-The factory verifies that the configured object implements `PhiDataModule`. The Trainer does not know how any
-pool was created; it only recognizes the generic `prepare(device)` source contract and places each resulting batch.
+The factory checks that the configured object implements `PhiDataModule`. The Trainer does not need to know how a pool
+was created. It only prepares the source and places each batch.
 
 ## Reusing array IO inside an application
 
@@ -344,8 +346,8 @@ Applications backed by NPZ, MATLAB, or HDF5 artifacts can call these helpers fro
 - `build_array_pools()` assembles coordinate grids, slices, source fields, constants, auxiliary fields, and finite
   uniformly sampled pools.
 
-These are construction utilities, not a framework DataModule. The application remains responsible for deciding which
-file keys matter, how pool names map to objectives, and which sampler each pool uses.
+These are construction utilities, not a framework DataModule. The application still chooses the file keys, pool names,
+objective mappings, and samplers.
 
 An application may use `build_array_pools()` internally while exposing only meaningful choices such as `data_path`,
 `pde_sampling`, `pde_size`, and `batch_size` through its project configuration.
@@ -360,30 +362,27 @@ PhiJAX provides three immutable explicit-key samplers:
 | `UniformDomainSampler` | `uniform_domain` | Generate fresh continuous coordinates from bounds                       |
 | `SpaceTimeSampler`     | `space_time`     | Combine fixed spatial rows with freshly generated temporal coordinates  |
 
-The implementation keeps three responsibilities separate: `phijax.data.samplers` defines how one batch is selected
-or generated, `phijax.data.sources` delivers named batches over training or prediction, and `phijax.data.batching`
-contains shared batch-size and prediction-layout policies. Public classes and functions are re-exported from
-`phijax.data`.
+The data package separates three tasks. `phijax.data.samplers` selects or generates a batch.
+`phijax.data.sources` supplies named batches during training or prediction. `phijax.data.batching` defines shared
+batch-size and prediction-layout rules. Public names are re-exported from `phijax.data`.
 
 An application may construct these classes directly or expose a short-name option and call `create_sampler()`. Sampler
 configuration is application policy; it is not required in every data config.
 
-`NamedBatchSource` initially owns host-backed sampler definitions. Before fitting, the Trainer prepares persistent
-candidate arrays, domain bounds, templates, and the root key once on the Strategy's process-local root device. Sampling
-and generated-coordinate construction then remain device-side. The Trainer still applies final precision conversion
-and data-parallel sharding to every produced batch.
+`NamedBatchSource` starts with host-backed sampler definitions. Before fitting, the Trainer moves persistent candidate
+arrays, bounds, templates, and the root key to the Strategy's root device. Sampling then stays on the device. The
+Trainer applies final precision conversion and data-parallel sharding to each batch.
 
 The source folds its root key with the global optimizer step. Repeating one step is deterministic, and a resumed run
 continues the same sampling sequence from its restored global step.
 
-`ChunkedPredictionSource` is a finite re-iterable source. It keeps the full prediction pool on the host, slices and pads
-one fixed-size chunk at a time, and exposes the original pool through `source.pool` for dense reconstruction. The
-Trainer transfers each yielded chunk immediately before prediction, avoiding eager placement of a large prediction
-grid. Following Lightning's prediction loop, PhiJAX copies each valid output chunk back to the host before retaining
-it. The default `PredictionWriter` receives this pool and the final concatenated outputs through `PredictionContext`.
-Keep `return_predictions=True` when using that writer. A custom streaming callback may instead write every batch from
-`on_predict_batch_end`; use `return_predictions=False` only in that streaming case to avoid retaining the complete
-output.
+`ChunkedPredictionSource` is finite and can be iterated more than once. It keeps the full prediction pool on the host,
+then slices and pads one fixed-size chunk at a time. `source.pool` exposes the original pool for dense reconstruction.
+The Trainer transfers one chunk at a time and copies valid outputs back to the host.
+
+The default `PredictionWriter` receives the pool and joined outputs through `PredictionContext`. Keep
+`return_predictions=True` when using it. A streaming callback can instead write each batch from
+`on_predict_batch_end`. Only set `return_predictions=False` for this streaming case.
 
 ## Testing an application DataModule
 
@@ -401,3 +400,5 @@ At minimum, test:
 
 Use synthetic CPU-sized fixtures. Ordinary tests must not download data, require a GPU, or generate the full numerical
 reference artifact.
+
+Continue with [Building equations and objectives](objectives.md) to connect these batch names to scalar losses.

@@ -48,18 +48,32 @@ markdown_extensions:
   - admonition
   - attr_list
   - md_in_html
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: [.]
+      check_paths: true
   - pymdownx.superfences
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
   - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Heat-equation quickstart: getting-started/quickstart.md
+      - Core concepts: getting-started/concepts.md
   - Guides:
       - Datasets: guides/datasets.md
       - Equations and objectives: guides/objectives.md
       - Loss balancers: guides/balancers.md
+      - Troubleshooting: guides/troubleshooting.md
   - API reference:
       - Overview: api/index.md
       - API map: api-reference.md

@@ -15,9 +15,8 @@ The protocols are structural and runtime-checkable. Custom implementations do no
 
 ## Residual terms
 
-One outer equation residual group becomes one scalar loss. Every array in that group contributes its mean square and
-the means are summed. This allows a phase-wrapped term, for example, to combine cosine and sine residuals without an
-equation-specific objective class.
+Each outer residual group becomes one scalar loss. `ResidualTerm` sums the mean square of every array in the group.
+For example, one phase-wrapped loss can combine cosine and sine residuals without a custom objective class.
 
 If `names` is absent, metadata attached by `residual_equation` produces names such as `pde/continuity`.
 

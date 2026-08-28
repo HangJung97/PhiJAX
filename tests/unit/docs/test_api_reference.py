@@ -114,3 +114,20 @@ def test_top_level_api_exposes_beta_runtime_contracts() -> None:
 
     assert expected <= set(phijax.__all__)
     assert phijax.DataModule is phijax.PhiDataModule
+
+
+def test_application_guides_do_not_direct_users_into_the_framework_package() -> None:
+    """Verify extension examples use application-owned source and configuration paths."""
+    guide_directory = _ROOT / "docs" / "guides"
+    documentation = "\n".join(path.read_text(encoding="utf-8") for path in guide_directory.glob("*.md"))
+
+    assert "src/phijax/equations" not in documentation
+    assert "src/phijax/configs" not in documentation
+
+
+def test_balancer_guide_matches_the_public_combine_contract() -> None:
+    """Verify the custom-balancer summary describes the scalar combine result."""
+    documentation = (_ROOT / "docs" / "guides" / "balancers.md").read_text(encoding="utf-8")
+
+    assert "combine(losses, state) -> total" in documentation
+    assert "combine(losses, state) -> (total, xs)" not in documentation

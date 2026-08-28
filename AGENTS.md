@@ -62,6 +62,20 @@ framework package. Hydra and OmegaConf are supported integrations, not assumptio
 
 ## Documentation Standards
 
+- Write for readers who understand Python and basic JAX but may be new to PhiJAX. Define PhiJAX-specific terms before
+  relying on them.
+- Prefer plain language, concrete verbs, and short sentences. Keep one main idea per sentence, and split paragraphs
+  that mix separate concepts, decisions, or lifecycle stages.
+- Lead with the user-visible purpose or outcome. Follow with implementation details only when they help the reader use,
+  extend, or debug the API.
+- Keep guides task-oriented and scannable. Use descriptive headings, short examples, tables for exact mappings, and
+  diagrams only when they clarify relationships or ordering.
+- Preserve technical precision while simplifying prose. Do not replace established JAX, PINN, mathematical, or public
+  API terms with vague wording.
+- Avoid filler, promotional language, unnecessary qualifiers, and long lists embedded in prose. Prefer a short list
+  when readers need to compare three or more items.
+- Keep code examples executable and aligned with the supported public API. Explain non-obvious state ownership, array
+  shapes, coordinate order, PRNG behavior, and device placement close to the example that uses them.
 - Do not add module-level docstrings at the top of Python files.
 - Add complete Google-style docstrings to every class, function, method, private helper, and private method.
 - In docstrings, use single backticks for variables, parameters, attributes, config keys, array shapes, and literals.

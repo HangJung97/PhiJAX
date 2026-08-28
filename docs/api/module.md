@@ -1,8 +1,7 @@
 # PhiModule
 
-`BasePhiModule` is the boundary between application computation and trainer orchestration. It owns model application,
-unweighted objective evaluation, prediction behavior, metric formatting, and application hooks. It does not own an
-optimizer or loss balancer.
+`BasePhiModule` connects application computations to the Trainer. It defines model application, unweighted losses,
+prediction behavior, metric formatting, and application hooks. It does not own an optimizer or loss balancer.
 
 ## Lifecycle ordering
 
@@ -24,9 +23,9 @@ callbacks.on_predict_epoch_end   -> module.on_predict_epoch_end
 callbacks.on_predict_end         -> module.on_predict_end
 ```
 
-Module hooks run on the Python host. Training hooks return explicit replacements and must preserve PyTree structures
-and fixed array shapes expected by compiled functions. Prediction lifecycle hooks are observational and return `None`;
-override `predict_step` for per-batch output transformations before collection and artifact writing.
+Module hooks run on the Python host. Training hooks return explicit replacement values. These values must keep the
+PyTree structure and fixed shapes expected by compiled functions. Prediction lifecycle hooks only observe state and
+return `None`. Override `predict_step` to transform each output batch before collection and artifact writing.
 
 ## Implementing a custom module
 
@@ -40,9 +39,9 @@ defaults:
   - module: phi_module
 ```
 
-An application can replace `_target_` with any `BasePhiModule` subclass. Its training and prediction entrypoints
-inject `model_apply`, `objective`, `name`, and `model_summary` at runtime, so custom module constructors should accept
-those arguments. Module selection stays independent of optimizer and loss-balancer selection.
+An application can point `_target_` to any `BasePhiModule` subclass. Its entrypoints inject `model_apply`, `objective`,
+`name`, and `model_summary`, so a custom constructor should accept those arguments. Module selection remains separate
+from optimizer and loss-balancer selection.
 
 ```python
 class HeatModule(BasePhiModule):

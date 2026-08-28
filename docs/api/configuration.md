@@ -1,8 +1,7 @@
 # Configuration integrations
 
-PhiJAX's runtime does not depend on a particular configuration layout. Optional helpers under
-`phijax.integrations.hydra` instantiate typed runtime objects from project-owned Hydra configs, while
-`phijax.integrations.omegaconf` registers reusable resolvers.
+PhiJAX does not require a particular configuration layout. `phijax.integrations.hydra` can build typed runtime objects
+from project-owned Hydra configs. `phijax.integrations.omegaconf` provides reusable resolvers.
 
 ## Hydra factories
 

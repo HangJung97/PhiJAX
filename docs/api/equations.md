@@ -1,8 +1,8 @@
 # Equations
 
-Equation functions depend on JAX arrays and a generic model application callable, never on a concrete model class.
-Each public PDE accepts an `ArrayMapping` batch and returns named residual groups for `ResidualTerm`. This keeps one
-framework-ready callable per equation while allowing its implementation to compute all coupled components together.
+Equation functions use JAX arrays and a generic model callable, not a concrete model class. Each public PDE accepts an
+`ArrayMapping` batch and returns named residual groups for `ResidualTerm`. One equation callable can compute all of its
+coupled components together.
 
 ## Residual metadata
 
@@ -68,9 +68,8 @@ A zero `viscosity_coefficient` selects an inviscid path that does not trace seco
 
 ## Polar Navier--Stokes
 
-Polar inputs use `[r, th, t]` and outputs use `[u_r, u_th, p]`. `radius_epsilon` guards reciprocal-radius geometric
-terms. The implementation preserves the residual zero set while weighting equations to reduce singular behavior near
-the coordinate origin.
+Polar inputs use `[r, th, t]` and outputs use `[u_r, u_th, p]`. `radius_epsilon` protects terms that divide by the
+radius. Equation weighting keeps the same zero-residual solutions while reducing singular behavior near the origin.
 
 ::: phijax.equations.polar_navier_stokes
 

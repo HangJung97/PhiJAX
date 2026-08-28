@@ -1,8 +1,8 @@
 # Evaluation
 
-Evaluation is a host-only stage operating on saved, self-contained prediction artifacts. The generic contract keeps
-the framework evaluator independent of application packages, while an application evaluator owns physical units,
-coordinate weights, gauge freedoms, domain metrics, and plots.
+Evaluation runs on the host and reads self-contained prediction artifacts. Framework evaluators remain independent of
+application packages. Application evaluators handle physical units, coordinate weights, gauge freedoms, domain
+metrics, and plots.
 
 ## Contracts and outputs
 

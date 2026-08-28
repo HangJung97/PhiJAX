@@ -1,7 +1,7 @@
 # Utilities
 
-Utilities cover reproducibility, rank-aware Python logging, configuration display, task cleanup, shape normalization,
-and conversion at JAX/OmegaConf boundaries.
+Utilities support reproducibility, rank-aware logging, configuration display, task cleanup, shape normalization, and
+conversion between JAX and OmegaConf values.
 
 ## Reproducibility
 

@@ -1,12 +1,17 @@
 # Building equations and objectives
 
+This guide assumes you have run the [heat-equation quickstart](../getting-started/quickstart.md) and read
+[Core concepts](../getting-started/concepts.md). It shows how to test an equation callable and combine it with reusable
+initial and boundary terms.
+
 PhiJAX treats equations and objective reduction as separate layers:
 
 - an **equation callable** evaluates one or more raw residual arrays and declares their local names;
 - a **`ResidualTerm`** prefixes those names with its batch key or applies an explicit application-level override; and
 - a **`CompositeObjective`** merges independently configured terms.
 
-Most applications only need to implement equation callables and compose existing objective classes with Hydra.
+Most applications only need to implement equation callables and compose existing objective classes in Python or in
+their project-owned Hydra configuration.
 
 ## Equation callable contract
 
@@ -43,8 +48,8 @@ model implementation exposing the same pure application contract.
 tuple[tuple[jax.Array, ...], ...]
 ```
 
-The outer tuple aligns one-to-one with names declared by `@residual_equation`. Arrays within one inner tuple contribute
-to the same scalar loss:
+The outer tuple matches the names declared by `@residual_equation`. Arrays in one inner tuple contribute to the same
+scalar loss:
 
 ```text
 (
@@ -64,7 +69,7 @@ can also be flattened into one derivative-balancing stream.
 
 ## Example heat equation
 
-Create `src/phijax/equations/pde/heat/one_dimensional.py`:
+Create `src/my_project/equations/heat.py` in the application repository:
 
 ```python
 from typing import Any
@@ -155,14 +160,15 @@ def heat_1d(
     return ((residuals[:, None],),)
 ```
 
-`value_and_jacobian` shares the primal evaluation across selected first derivatives. `hessian_diagonal` computes only
-the requested pure second derivative `d2u/dx2`, avoiding the unused `d2u/dt2` and mixed Hessian entries. Both helpers
-operate on scalar positional arguments; keep collocation batching outside them with `jax.vmap`.
+`value_and_jacobian` reuses the model evaluation for the selected first derivatives. `hessian_diagonal` computes only
+`d2u/dx2`, not the unused `d2u/dt2` or mixed derivatives. Both helpers work on scalar positional arguments. Apply
+`jax.vmap` outside them to batch collocation points.
 
-Re-export the function from the relevant package `__init__.py` files so Hydra can use a stable public target such as:
+Re-export the function from the application's `my_project.equations` package so Python and Hydra can use the stable
+target:
 
 ```text
-phijax.equations.heat_1d
+my_project.equations.heat_1d
 ```
 
 ## Built-in Navier--Stokes equations
@@ -180,9 +186,9 @@ All four accept `pressure_coefficient` and `viscosity_coefficient`. Use `pressur
 `viscosity_coefficient: 1 / Re` for a consistently nondimensional equation. Setting `viscosity_coefficient: 0.0`
 selects an inviscid path that does not trace velocity Hessians.
 
-The spherical function returns residuals weighted by `r sin(th)`. The factor preserves the physical zero-residual
-condition away from the coordinate singularity while reducing reciprocal-sine terms near the polar axis. Its
-`radius_epsilon` and `sine_epsilon` options protect the remaining denominators in the viscous vector Laplacian.
+The spherical function weights residuals by `r sin(th)`. Away from coordinate singularities, this does not change the
+zero-residual solutions. It reduces terms that divide by `sin(th)` near the polar axis. `radius_epsilon` and
+`sine_epsilon` protect the remaining denominators.
 
 A configured objective term needs only the selected public target:
 
@@ -203,7 +209,7 @@ pde:
 Initial and boundary conditions are direct supervised comparisons, so they can reuse
 `phijax.equations.base_data_fidelity`. Only the PDE needs the new equation callable.
 
-Create `src/phijax/configs/model/objective/heat_1d.yaml`:
+For a Hydra-based application, create `src/my_project/configs/model/objective/heat_1d.yaml`:
 
 ```yaml
 _target_: phijax.objectives.CompositeObjective
@@ -233,18 +239,18 @@ terms:
     batch_key: pde
     ntk_stream: residual
     residual_fn:
-      _target_: phijax.equations.heat_1d
+      _target_: my_project.equations.heat_1d
       _partial_: true
       diffusivity: 0.1
       output_index: 0
 ```
 
-Hydra's `_partial_: true` is essential. It binds equation options such as `diffusivity` while leaving
-`model_apply`, `model_state`, `batch`, and `stream` for the compiled training step.
+Hydra's `_partial_: true` binds options such as `diffusivity`. The compiled training step still supplies `model_apply`,
+`model_state`, `batch`, and `stream`.
 
-The heat equation declares local residual name `heat`. Since its term uses `batch_key: pde`, `ResidualTerm` exposes the
-full loss name `pde/heat`. The explicit supervised names remain useful aliases: the generic
-`base_data_fidelity` equation declares `data`, but the application knows that these targets represent `u`.
+The heat equation declares the local name `heat`. Its term uses `batch_key: pde`, so the full loss name is `pde/heat`.
+Explicit names remain useful for supervised terms. For example, an application can rename the generic fidelity name
+`data` to `initial/u`.
 
 ## Choosing `ntk_stream`
 
@@ -253,9 +259,9 @@ full loss name `pde/heat`. The explicit supervised names remain useful aliases: 
 - `residual` differentiates the physical equation residual;
 - `output` differentiates selected raw model outputs and must be explicitly supported by the equation.
 
-Use `output` for direct fidelity or boundary functions that expose it. Use `residual` for PDEs and for any equation
-that does not implement an output stream. Static and gradient-norm balancers do not consume
-`Objective.residual_stream`, but keeping the declaration correct makes the objective reusable with exact NTK.
+Use `output` for fidelity or boundary functions that expose raw outputs. Use `residual` for PDEs and equations without
+an output stream. Static and gradient-norm balancers do not use `Objective.residual_stream`. A correct declaration
+still lets the same objective work with exact NTK balancing.
 
 ## Multiple losses from one equation
 
@@ -282,8 +288,8 @@ residual_fn:
   _partial_: true
 ```
 
-This produces `pde/continuity`, `pde/momentum_x`, and `pde/momentum_y`. PhiJAX still checks the returned group count at
-runtime, so stale metadata fails clearly instead of silently assigning a residual to the wrong loss.
+This produces `pde/continuity`, `pde/momentum_x`, and `pde/momentum_y`. PhiJAX checks the returned group count at
+runtime. Stale metadata therefore raises an error instead of assigning a residual to the wrong loss.
 
 Use multiple arrays inside one group only when they jointly define one scalar objective, such as sine and cosine errors
 for a wrapped phase.
@@ -322,5 +328,6 @@ objective = hydra.utils.instantiate(config.model.objective)
 assert objective.loss_names == ("initial/u", "boundary/u", "pde/heat")
 ```
 
-The [generic objective-term tests](https://github.com/HangJung97/PhiJAX/blob/main/tests/unit/objectives/test_terms.py) show grouped reduction and stream
-validation in isolation.
+The [generic objective-term tests](https://github.com/HangJung97/PhiJAX/blob/main/tests/unit/objectives/test_terms.py)
+show grouped reduction and stream validation in isolation. Continue with the [loss-balancer guide](balancers.md) after
+the objective exposes stable loss names.

@@ -6,6 +6,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from jax.typing import ArrayLike
 
 from phijax.models.activations import Activation, ActivationName, resolve_activation
 from phijax.models.contracts import InitializedModel
@@ -360,8 +361,8 @@ def build_pirate_net(
     key: jax.Array,
     input_dim: int,
     output_dim: int,
-    input_mean: jax.Array,
-    input_std: jax.Array,
+    input_mean: ArrayLike,
+    input_std: ArrayLike,
     *,
     precision: str | PrecisionPolicy | None = None,
     **model_kwargs: Any,
@@ -372,8 +373,8 @@ def build_pirate_net(
         key: JAX PRNG key for deterministic parameter initialization.
         input_dim: Width of the physical input coordinate vector.
         output_dim: Width of the predicted output vector.
-        input_mean: Per-coordinate input normalization mean.
-        input_std: Per-coordinate input normalization standard deviation.
+        input_mean: Array-like per-coordinate input normalization mean.
+        input_std: Array-like per-coordinate input normalization standard deviation.
         precision: Optional model precision policy.
         **model_kwargs: Architecture options forwarded to :class:`PirateNet`.
 

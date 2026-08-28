@@ -1,8 +1,11 @@
 # Creating a custom loss balancer
 
-Loss balancers convert the named scalar losses produced by `PhiModule` into the single scalar differentiated by the
-optimizer. They are numerical training components rather than callbacks: their weights participate in the compiled
-loss, their state is checkpointed with `TrainState`, and callbacks only observe the resulting diagnostics.
+This guide assumes an objective already exposes stable named losses. Read
+[Building equations and objectives](objectives.md) first if `module.loss_names` or residual groups are unfamiliar.
+
+Loss balancers combine the named losses from `PhiModule` into one scalar for differentiation. They are numerical
+training components, not callbacks. Their weights are part of the compiled loss, and their state is stored in
+`TrainState`. Callbacks only observe their diagnostics.
 
 This guide implements a fixed balancer that normalizes configured nonnegative weights to have mean one. The same
 contract can express other fixed weighting rules without changing the trainer or module.
@@ -11,11 +14,12 @@ contract can express other fixed weighting rules without changing the trainer or
 
 The training factory injects `module.loss_names` into the configured balancer constructor. A balancer must expose:
 
-| Member                                  | Responsibility                                                           |
-| --------------------------------------- | ------------------------------------------------------------------------ |
-| `loss_names`                            | Immutable names defining component and weight-vector order               |
-| `initialize() -> BalancerState`         | Create JAX-compatible weights and diagnostic arrays                      |
-| `combine(losses, state) -> (total, xs)` | Return the weighted scalar total and ordered unweighted component vector |
+| Member                            | Responsibility                                                       |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `loss_names`                      | Immutable names defining component and weight-vector order           |
+| `initialize() -> BalancerState`   | Create JAX-compatible weights and diagnostic arrays                  |
+| `combine(losses, state) -> total` | Return the weighted scalar total                                     |
+| `diagnostics(state) -> mapping`   | Expose stable scalar values for progress bars and experiment loggers |
 
 Do not configure `loss_names` in YAML. They come from the objective after equation-local names and any explicit term
 aliases have been resolved. This prevents a balancer from silently assigning a weight to the wrong residual.
@@ -34,7 +38,7 @@ from collections.abc import Mapping, Sequence
 import jax
 import jax.numpy as jnp
 
-from phijax.balancers.base import BalancerState
+from phijax.balancers import BalancerState
 
 
 class NormalizedStaticBalancer:
@@ -119,9 +123,9 @@ class NormalizedStaticBalancer:
         return {f"weight/{name}": state.weights[index] for index, name in enumerate(self.loss_names)}
 ```
 
-Using `BalancerState` keeps the custom balancer compatible with progress metrics, precision handling, Orbax
-checkpointing, and weight restoration. The `traces` field may remain zero for a fixed policy; adaptive built-ins use it
-for their most recent gradient-norm or NTK diagnostic.
+Using `BalancerState` makes the custom balancer work with progress metrics, precision handling, checkpoints, and
+restoration. A fixed policy can leave `traces` at zero. Adaptive built-ins use it for the latest gradient-norm or NTK
+diagnostic.
 
 Re-export the class from `phijax.balancers` when it is part of PhiJAX itself. An external application package can
 instead use its complete import target directly in Hydra.
@@ -178,7 +182,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from phijax.balancers import NormalizedStaticBalancer
+from my_project.balancers import NormalizedStaticBalancer
 
 
 def test_normalized_static_balancer_preserves_name_order_and_gradients() -> None:
@@ -226,9 +230,8 @@ An adaptive balancer additionally needs a pure compiled update with the shape:
 update(model_state, named_batches, balancer_state) -> balancer_state
 ```
 
-PhiJAX schedules this executable outside the ordinary optimizer executable with `with_balancer_updates`, preventing an
-expensive diagnostic branch from being embedded in every step. Adaptive implementations also satisfy
-`AdaptiveBalancer` by returning a `BalancerUpdatePlan`:
+PhiJAX schedules this function outside the ordinary optimizer update through `with_balancer_updates`. This avoids
+putting an expensive diagnostic branch in every step. Adaptive balancers return a `BalancerUpdatePlan`:
 
 ```python
 from collections.abc import Mapping, Sequence
@@ -252,10 +255,10 @@ def build_update_plan(
 ```
 
 `batch_sizes=None` reuses the current training batches, as gradient-norm balancing does. A mapping such as
-`dict.fromkeys(batch_keys, kernel_size)` asks assembly to draw one fixed diagnostic batch per key, as exact NTK does.
-The common `every_n_steps` and `skip_first_step` keys remain host scheduling policy; all remaining `update` keys are
-passed to `build_update_plan()` for method-specific validation. Consequently, a new adaptive balancer no longer
-requires edits to training assembly and its mathematical update remains outside callbacks.
+`dict.fromkeys(batch_keys, kernel_size)` requests one fixed diagnostic batch per key, as exact NTK does.
+`every_n_steps` and `skip_first_step` control host scheduling. Other `update` keys are passed to
+`build_update_plan()` for method-specific validation. A new adaptive balancer therefore needs no changes to training
+assembly, and its numerical update stays outside callbacks.
 
 ## Common mistakes
 
@@ -271,3 +274,5 @@ requires edits to training assembly and its mathematical update remains outside 
 Keep weights, components, diagnostics, and totals in `float32` unless a configured precision policy explicitly
 requires otherwise. Stop gradients through derived adaptive weights so optimization does not differentiate the
 balancing rule itself.
+
+See the [balancer API](../api/balancers.md) for built-in static, gradient-norm, and exact-NTK policies.
