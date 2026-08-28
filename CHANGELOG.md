@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.0b1] - 2026-08-28
+
 ### Added
 
 - Initial beta API for building, fitting, and evaluating physics-informed neural networks with JAX.
@@ -18,3 +20,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - CPU, CUDA 12, and CUDA 13 installation options, configurable precision, and centralized device placement.
 - Versioned checkpoints and portable prediction artifacts for downstream evaluation.
 - Optional Hydra integration and Weights & Biases and TensorBoard logging.
+
+[0.1.0b1]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.1.0b1
+[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.1.0b1...HEAD
