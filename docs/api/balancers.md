@@ -21,15 +21,16 @@ mapping reuses the current training batches.
 
 ::: phijax.balancers.StaticLossBalancer
 
-```yaml
-factory:
-  _target_: phijax.balancers.StaticLossBalancer
-  weights:
-    initial/u: 1.0
-    pde/burgers: 1.0
+```python
+from phijax.balancers import StaticLossBalancer
+
+balancer = StaticLossBalancer(
+    module.loss_names,
+    weights={"initial/u": 1.0, "pde/burgers": 1.0},
+)
 ```
 
-Assembly injects `loss_names`; do not duplicate them in configuration.
+Pass the module's resolved `loss_names`; do not duplicate them in project settings.
 
 ## Gradient-norm weighting
 

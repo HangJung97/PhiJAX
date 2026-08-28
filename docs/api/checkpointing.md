@@ -25,7 +25,7 @@ backend reopens when the same Trainer starts another fit or restore task. Applic
 | `weights_only=True` | Model state only; all other template state remains fresh            |
 | `ckpt_path=None`    | Target is returned unchanged                                        |
 
-Training accepts `ckpt_path: null` for fresh initialization. Standalone prediction requires a checkpoint root. An
+Training accepts `ckpt_path=None` for fresh initialization. Standalone prediction requires a checkpoint root. An
 explicit `step` chooses an exact committed step; `None` selects the latest.
 
 `Trainer.fit(..., ckpt_path=...)` restores the full state by default. Set `weights_only=True` to load only model
@@ -33,15 +33,18 @@ weights. `Trainer.predict(..., ckpt_path=...)` always loads model weights into t
 must have a compatible model structure. Use `restore_checkpoint` directly only when managing state outside the
 Trainer.
 
-```yaml
-model_checkpoint:
-  enabled: true
-  _target_: phijax.callbacks.ModelCheckpoint
-  every_n_steps: 5000
-  save_last: true
-  checkpoint_io:
-    _target_: phijax.training.OrbaxCheckpointIO
-    directory: ${paths.output_dir}/checkpoints
-    max_to_keep: 3
-    enable_async_checkpointing: true
+```python
+from phijax.callbacks import ModelCheckpoint
+from phijax.training import OrbaxCheckpointIO
+
+checkpoint_io = OrbaxCheckpointIO(
+    output_directory / "checkpoints",
+    max_to_keep=3,
+    enable_async_checkpointing=True,
+)
+checkpoint_callback = ModelCheckpoint(
+    checkpoint_io,
+    every_n_steps=5_000,
+    save_last=True,
+)
 ```

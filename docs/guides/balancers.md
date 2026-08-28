@@ -12,7 +12,7 @@ contract can express other fixed weighting rules without changing the trainer or
 
 ## Balancer contract
 
-The training factory injects `module.loss_names` into the configured balancer constructor. A balancer must expose:
+Pass `module.loss_names` to the balancer constructor. A balancer must expose:
 
 | Member                            | Responsibility                                                       |
 | --------------------------------- | -------------------------------------------------------------------- |
@@ -21,8 +21,9 @@ The training factory injects `module.loss_names` into the configured balancer co
 | `combine(losses, state) -> total` | Return the weighted scalar total                                     |
 | `diagnostics(state) -> mapping`   | Expose stable scalar values for progress bars and experiment loggers |
 
-Do not configure `loss_names` in YAML. They come from the objective after equation-local names and any explicit term
-aliases have been resolved. This prevents a balancer from silently assigning a weight to the wrong residual.
+Do not duplicate `loss_names` in project settings. They come from the objective after equation-local names and any
+explicit term aliases have been resolved. This prevents a balancer from silently assigning a weight to the wrong
+residual.
 
 `combine` runs inside the JIT-compiled training step and must therefore be pure. It must not mutate Python state,
 convert traced arrays to NumPy, perform file IO, log metrics, or change its output PyTree structure between calls.
@@ -127,51 +128,28 @@ Using `BalancerState` makes the custom balancer work with progress metrics, prec
 restoration. A fixed policy can leave `traces` at zero. Adaptive built-ins use it for the latest gradient-norm or NTK
 diagnostic.
 
-Re-export the class from `phijax.balancers` when it is part of PhiJAX itself. An external application package can
-instead use its complete import target directly in Hydra.
+Re-export the class from `phijax.balancers` when it is part of PhiJAX itself. An application can otherwise import the
+class from its own package.
 
-## Add a Hydra config
+## Construct the balancer
 
-Create `src/my_project/configs/model/balancer/normalized_static.yaml`:
-
-```yaml
-# Fixed normalized loss weights with no periodic diagnostic update.
-name: normalized_static
-factory:
-  _target_: my_project.balancers.NormalizedStaticBalancer
-  # Keys must match the final names exposed by the composed objective.
-  weights:
-    initial/u: 1.0
-    boundary/u: 2.0
-    pde/heat: 4.0
-  # Names omitted above receive this value before all weights are normalized.
-  default_weight: 1.0
-# Fixed policies do not compile or schedule a separate balancer refresh.
-update: null
-```
-
-Select it from an experiment defaults list:
-
-```yaml
-defaults:
-  - override /model/balancer: normalized_static
-  - _self_
-```
-
-For a one-off run, use a Hydra override:
-
-```bash
-python -m my_project.train experiment=heat_static_1d model/balancer=normalized_static
-```
-
-The training factory constructs the balancer as if it were:
+Use the objective's resolved names directly:
 
 ```python
-balancer = NormalizedStaticBalancer(loss_names=module.loss_names, **configured_options)
+balancer = NormalizedStaticBalancer(
+    loss_names=module.loss_names,
+    weights={
+        "initial/u": 1.0,
+        "boundary/u": 2.0,
+        "pde/heat": 4.0,
+    },
+    default_weight=1.0,
+)
+balancer_state = balancer.initialize()
 ```
 
-It then initializes `TrainState`, compiles `combine` into the optimizer step, and logs every current weight as
-`train/weight/<loss_name>`.
+Pass `balancer_state` when initializing `TrainState`. A `TrainingPlan` compiles `combine` into the optimizer step, and
+the balancer diagnostics expose every current weight as `weight/<loss_name>`.
 
 ## Test the balancer independently
 
@@ -211,10 +189,11 @@ def test_normalized_static_balancer_preserves_name_order_and_gradients() -> None
     np.testing.assert_allclose(gradients, state.weights)
 ```
 
-Also add a Hydra composition test that instantiates the complete experiment and checks:
+Add an integration test that composes the objective and balancer and checks:
 
 ```python
-assert objective.loss_names == balancer.loss_names
+balancer = NormalizedStaticBalancer(objective.loss_names)
+assert balancer.loss_names == objective.loss_names
 assert balancer.initialize().weights.shape == (len(objective.loss_names),)
 ```
 
@@ -256,9 +235,9 @@ def build_update_plan(
 
 `batch_sizes=None` reuses the current training batches, as gradient-norm balancing does. A mapping such as
 `dict.fromkeys(batch_keys, kernel_size)` requests one fixed diagnostic batch per key, as exact NTK does.
-`every_n_steps` and `skip_first_step` control host scheduling. Other `update` keys are passed to
-`build_update_plan()` for method-specific validation. A new adaptive balancer therefore needs no changes to training
-assembly, and its numerical update stays outside callbacks.
+Wrap the plan in `BalancerUpdateSchedule` to set `every_n_steps` and `skip_first_step`. Pass method-specific options to
+`build_update_plan()` for validation. A new adaptive balancer therefore needs no changes to the Trainer, and its
+numerical update stays outside callbacks.
 
 ## Common mistakes
 
@@ -276,3 +255,7 @@ requires otherwise. Stop gradients through derived adaptive weights so optimizat
 balancing rule itself.
 
 See the [balancer API](../api/balancers.md) for built-in static, gradient-norm, and exact-NTK policies.
+
+For Hydra-based application assembly, see the
+[PhiJAX Hydra template](https://github.com/HangJung97/phijax-hydra-template) and the
+[configuration integration API](../api/configuration.md).

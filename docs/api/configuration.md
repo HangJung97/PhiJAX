@@ -3,6 +3,10 @@
 PhiJAX does not require a particular configuration layout. `phijax.integrations.hydra` can build typed runtime objects
 from project-owned Hydra configs. `phijax.integrations.omegaconf` provides reusable resolvers.
 
+This page documents the integration functions provided by the package. For a complete config tree, CLI entrypoints,
+and experiment composition, use the
+[PhiJAX Hydra template](https://github.com/HangJung97/phijax-hydra-template).
+
 ## Hydra factories
 
 The factory helpers instantiate callbacks, loggers, a Trainer, DataModule, initialized model, objective, PhiModule,
@@ -22,6 +26,8 @@ constructs and places the DataModule source during `fit()`.
 ::: phijax.integrations.hydra.instantiate_optimizer
 
 ::: phijax.integrations.hydra.instantiate_callbacks
+
+::: phijax.integrations.hydra.instantiate_enabled
 
 ::: phijax.integrations.hydra.instantiate_loggers
 

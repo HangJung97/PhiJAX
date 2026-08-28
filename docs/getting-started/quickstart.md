@@ -2,19 +2,19 @@
 
 This example trains a small physics-informed neural network for the one-dimensional heat equation
 
-\[
-\\frac{\\partial u}{\\partial t} - 0.1\\frac{\\partial^2 u}{\\partial x^2} = 0,
-\\qquad
-u(0,x) = \\sin(\\pi x),
-\\qquad
+$$
+\frac{\partial u}{\partial t} - 0.1\frac{\partial^2 u}{\partial x^2} = 0,
+\qquad
+u(0,x) = \sin(\pi x),
+\qquad
 u(t,0) = u(t,1) = 0.
-\]
+$$
 
 Its analytical solution is
 
-\[
-u(t,x) = \\exp!\\left(-0.1\\pi^2 t\\right)\\sin(\\pi x).
-\]
+$$
+u(t,x) = \exp\!\left(-0.1\pi^2 t\right)\sin(\pi x).
+$$
 
 The example needs no downloaded data and runs on CPU in a few seconds after JAX finishes its initial compilation.
 

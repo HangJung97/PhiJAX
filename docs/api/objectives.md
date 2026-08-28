@@ -20,29 +20,37 @@ For example, one phase-wrapped loss can combine cosine and sine residuals withou
 
 If `names` is absent, metadata attached by `residual_equation` produces names such as `pde/continuity`.
 
-```yaml
-pde:
-  _target_: phijax.objectives.ResidualTerm
-  batch_key: pde
-  residual_fn:
-    _target_: phijax.equations.burgers_1d
-    _partial_: true
-    viscosity_coefficient: ${op:truediv,0.01,${math:pi}}
+```python
+from functools import partial
+
+import math
+
+from phijax.equations import burgers_1d
+from phijax.objectives import ResidualTerm
+
+pde_term = ResidualTerm(
+    batch_key="pde",
+    residual_fn=partial(burgers_1d, viscosity_coefficient=0.01 / math.pi),
+)
 ```
 
 ::: phijax.objectives.ResidualTerm
 
 ## Composite objectives
 
-The term mapping establishes stable Hydra override paths and preserves declaration order. Loss names must be globally
+The term mapping establishes stable composition names and preserves declaration order. Loss names must be globally
 unique across terms.
 
-```yaml
-_target_: phijax.objectives.CompositeObjective
-terms:
-  initial: ${initial_term}
-  boundary: ${boundary_term}
-  pde: ${pde_term}
+```python
+from phijax.objectives import CompositeObjective
+
+objective = CompositeObjective(
+    terms={
+        "initial": initial_term,
+        "boundary": boundary_term,
+        "pde": pde_term,
+    }
+)
 ```
 
 ::: phijax.objectives.CompositeObjective

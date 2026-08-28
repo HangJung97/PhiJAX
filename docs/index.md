@@ -27,17 +27,15 @@ Follow these pages in order:
 Use the [API overview](api/index.md) for supported imports and conventions, or the
 [API map](api-reference.md) to find generated signatures and source docstrings.
 
-The separate `phijax-hydra-template` repository provides runnable Hydra entrypoints, config groups, and a small
-Burgers example. Projects created from the template use PhiJAX as a dependency.
+The separate [PhiJAX Hydra template](https://github.com/HangJung97/phijax-hydra-template) provides runnable
+entrypoints, config groups, and a small Burgers example. Projects created from the template use PhiJAX as a dependency.
 
 ## Runtime ownership
 
 ```text
-Application DataModule ──> host batch source ──> Trainer device placement
-                                                       │
-Model factory ──> InitializedModel ──> PhiModule ──────┼──> TrainingPlan ──> compiled update
-                                                       │
-Objective ──> named losses ──> LossBalancer ───────────┘
+Application DataModule -> host batch source -----------------+
+Model factory -> InitializedModel -> PhiModule --------------+--> Trainer -> compiled update
+Objective -> named losses -> LossBalancer -> TrainingPlan ---+
 ```
 
 The Trainer runs hooks, places data, restores checkpoints, logs metrics, and cleans up resources. Model, optimizer,
