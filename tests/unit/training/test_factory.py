@@ -15,7 +15,7 @@ from phijax.integrations.hydra import (
     instantiate_balancer,
     instantiate_callbacks,
     instantiate_data_module,
-    instantiate_enabled,
+    instantiate_loggers,
     instantiate_model_factory,
     instantiate_module,
 )
@@ -372,7 +372,28 @@ def test_instantiate_callbacks_requires_target() -> None:
         instantiate_callbacks(config)
 
 
-def test_instantiate_enabled_ignores_placeholders_without_targets() -> None:
-    """Verify non-service callback scheduling placeholders are not passed to Hydra."""
-    config = OmegaConf.create({"prediction": {"enabled": True, "every_n_steps": 5}})
-    assert instantiate_enabled(config) == ()
+@pytest.mark.parametrize("enabled", [True, False])
+def test_instantiate_loggers_rejects_enabled_option(enabled: bool) -> None:
+    """Verify logger presence, rather than an `enabled` field, controls instantiation.
+
+    Args:
+        enabled: Legacy logger flag value under test.
+    """
+    config = OmegaConf.create(
+        {
+            "console": {
+                "_target_": "phijax.training.ConsoleLogger",
+                "enabled": enabled,
+            }
+        }
+    )
+    trainer = Trainer(
+        max_steps=1,
+        accelerator="cpu",
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        logger=False,
+    )
+
+    with pytest.raises(ValueError, match="removed `enabled` option"):
+        instantiate_loggers(config, trainer)

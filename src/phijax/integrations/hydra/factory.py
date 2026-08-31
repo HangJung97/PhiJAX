@@ -1,9 +1,9 @@
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import optax
 from hydra.utils import instantiate
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from phijax.balancers import LossBalancer
 from phijax.callbacks import Callback
@@ -15,32 +15,37 @@ from phijax.training.loggers import ExperimentLogger, LoggerCollection
 from phijax.training.trainer import Trainer
 
 
-def instantiate_enabled(config: DictConfig | None) -> tuple[Any, ...]:
-    """Instantiate enabled Hydra service entries from one mapping.
-
-    A mapping containing `_target_` is treated as one service. Otherwise each child entry is considered independently.
-    Entries that are `None` or set `enabled: false` are omitted; the orchestration-only `enabled` key is removed before
-    Hydra calls the target constructor.
+def _service_entries(config: DictConfig | None, service_name: str) -> tuple[tuple[str, DictConfig], ...]:
+    """Validate and return configured Hydra service entries.
 
     Args:
         config: Optional single-service config or mapping of named service configs.
+        service_name: User-facing service type used in validation errors.
 
     Returns:
-        Ordered tuple of instantiated services.
+        Ordered service names and Hydra configuration mappings.
+
+    Raises:
+        TypeError: If an entry is not a Hydra configuration mapping.
+        ValueError: If an entry is null, lacks `_target_`, or uses the removed `enabled` option.
     """
     if config is None:
         return ()
-    nodes: Iterable[Any] = (config,) if "_target_" in config else config.values()
-    instances: list[Any] = []
-    for node in nodes:
-        if node is None or not isinstance(node, DictConfig):
-            continue
-        raw = OmegaConf.to_container(node, resolve=True)
-        if not isinstance(raw, dict) or "_target_" not in raw or not raw.get("enabled", True):
-            continue
-        raw.pop("enabled", None)
-        instances.append(instantiate(OmegaConf.create(raw)))
-    return tuple(instances)
+    entries = ((service_name.lower(), config),) if "_target_" in config else tuple(config.items())
+    validated: list[tuple[str, DictConfig]] = []
+    for name, node in entries:
+        if node is None:
+            raise ValueError(f"{service_name} `{name}` is null; omit the entry to disable it.")
+        if not isinstance(node, DictConfig):
+            raise TypeError(f"{service_name} `{name}` must be a Hydra configuration mapping.")
+        if "enabled" in node:
+            raise ValueError(
+                f"{service_name} `{name}` uses the removed `enabled` option; omit the entry to disable it."
+            )
+        if "_target_" not in node:
+            raise ValueError(f"{service_name} `{name}` must define `_target_`.")
+        validated.append((str(name), node))
+    return tuple(validated)
 
 
 def instantiate_callbacks(config: DictConfig | None) -> tuple[Callback, ...]:
@@ -53,22 +58,11 @@ def instantiate_callbacks(config: DictConfig | None) -> tuple[Callback, ...]:
         Ordered callback instances.
 
     Raises:
-        TypeError: If an entry is not a mapping or does not instantiate :class:`Callback`.
-        ValueError: If an entry is null, lacks `_target_`, or uses the removed `enabled` option.
+        TypeError: If an entry is invalid or does not instantiate :class:`Callback`.
+        ValueError: If an entry is null, lacks `_target_`, or uses `enabled`.
     """
-    if config is None:
-        return ()
-    entries = (("callback", config),) if "_target_" in config else tuple(config.items())
     callbacks: list[Callback] = []
-    for name, node in entries:
-        if node is None:
-            raise ValueError(f"Callback `{name}` is null; omit the entry to disable it.")
-        if not isinstance(node, DictConfig):
-            raise TypeError(f"Callback `{name}` must be a Hydra configuration mapping.")
-        if "enabled" in node:
-            raise ValueError(f"Callback `{name}` uses the removed `enabled` option; omit the entry to disable it.")
-        if "_target_" not in node:
-            raise ValueError(f"Callback `{name}` must define `_target_`.")
+    for name, node in _service_entries(config, "Callback"):
         callback = instantiate(node)
         if not isinstance(callback, Callback):
             raise TypeError(f"Callback `{name}` must instantiate `Callback`.")
@@ -106,11 +100,18 @@ def instantiate_loggers(config: DictConfig | None, trainer: Trainer) -> LoggerCo
         Validated logger collection, empty on nonzero processes.
 
     Raises:
-        TypeError: If an enabled entry does not instantiate :class:`ExperimentLogger`.
+        TypeError: If an entry is invalid or does not instantiate :class:`ExperimentLogger`.
+        ValueError: If an entry is null, lacks `_target_`, or uses `enabled`.
     """
-    loggers = instantiate_enabled(config) if trainer.strategy.is_global_zero else ()
-    if any(not isinstance(logger, ExperimentLogger) for logger in loggers):
-        raise TypeError("Every enabled logger config must instantiate `ExperimentLogger`.")
+    entries = _service_entries(config, "Logger")
+    if not trainer.strategy.is_global_zero:
+        return LoggerCollection()
+    loggers: list[ExperimentLogger] = []
+    for name, node in entries:
+        logger = instantiate(node)
+        if not isinstance(logger, ExperimentLogger):
+            raise TypeError(f"Logger `{name}` must instantiate `ExperimentLogger`.")
+        loggers.append(logger)
     return LoggerCollection(loggers)
 
 
@@ -257,7 +258,6 @@ __all__ = [
     "instantiate_balancer",
     "instantiate_callbacks",
     "instantiate_data_module",
-    "instantiate_enabled",
     "instantiate_loggers",
     "instantiate_model_factory",
     "instantiate_module",
