@@ -18,6 +18,7 @@ from phijax.integrations.hydra import (
     instantiate_loggers,
     instantiate_model_factory,
     instantiate_module,
+    instantiate_trainer,
 )
 from phijax.integrations.hydra import factory as factory_module
 from phijax.models import InitializedModel
@@ -335,6 +336,34 @@ def test_build_trainer_instantiates_hydra_services() -> None:
     assert isinstance(trainer.logger.loggers[0], ConsoleLogger)
 
 
+def test_instantiate_trainer_accepts_preconstructed_loggers() -> None:
+    """Verify configured loggers are injected while the Trainer is constructed."""
+    config = OmegaConf.create(
+        {
+            "_target_": "phijax.training.Trainer",
+            "max_steps": 1,
+            "accelerator": "cpu",
+            "enable_progress_bar": False,
+            "enable_model_summary": False,
+        }
+    )
+    loggers = instantiate_loggers(
+        OmegaConf.create(
+            {
+                "console": {
+                    "_target_": "phijax.training.ConsoleLogger",
+                    "name": "phijax.tests.factory",
+                }
+            }
+        )
+    )
+
+    trainer = instantiate_trainer(config, logger=loggers)
+
+    assert trainer.logger is loggers
+    assert not hasattr(trainer, "set_logger")
+
+
 @pytest.mark.parametrize("enabled", [True, False])
 def test_instantiate_callbacks_rejects_enabled_option(enabled: bool) -> None:
     """Verify callback presence, rather than an `enabled` field, controls instantiation.
@@ -387,13 +416,5 @@ def test_instantiate_loggers_rejects_enabled_option(enabled: bool) -> None:
             }
         }
     )
-    trainer = Trainer(
-        max_steps=1,
-        accelerator="cpu",
-        enable_progress_bar=False,
-        enable_model_summary=False,
-        logger=False,
-    )
-
     with pytest.raises(ValueError, match="removed `enabled` option"):
-        instantiate_loggers(config, trainer)
+        instantiate_loggers(config)

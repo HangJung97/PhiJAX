@@ -70,42 +70,44 @@ def instantiate_callbacks(config: DictConfig | None) -> tuple[Callback, ...]:
     return tuple(callbacks)
 
 
-def instantiate_trainer(config: DictConfig, callbacks: Sequence[Callback] = ()) -> Trainer:
-    """Instantiate a trainer with already constructed callbacks.
+def instantiate_trainer(
+    config: DictConfig,
+    callbacks: Sequence[Callback] = (),
+    logger: bool | ExperimentLogger | Sequence[ExperimentLogger] | None = False,
+) -> Trainer:
+    """Instantiate a trainer with already constructed host services.
 
     Args:
         config: Hydra-instantiable trainer configuration.
         callbacks: Ordered callback instances owned by the trainer.
+        logger: Default logger flag, one backend, several backends, or `None` to disable logging.
 
     Returns:
-        Instantiated trainer with an empty logger collection.
+        Instantiated trainer owning the configured callbacks and loggers.
 
     Raises:
         TypeError: If `config` does not instantiate :class:`Trainer`.
     """
-    trainer = instantiate(config, callbacks=tuple(callbacks), logger=False)
+    trainer = instantiate(config, callbacks=tuple(callbacks), logger=logger)
     if not isinstance(trainer, Trainer):
         raise TypeError("The `trainer` config must instantiate `Trainer`.")
     return trainer
 
 
-def instantiate_loggers(config: DictConfig | None, trainer: Trainer) -> LoggerCollection:
-    """Instantiate external loggers for the trainer's global process.
+def instantiate_loggers(config: DictConfig | None) -> LoggerCollection:
+    """Instantiate external loggers without acquiring their runtime resources.
 
     Args:
         config: Optional logger configuration mapping.
-        trainer: Trainer supplying distributed rank ownership.
 
     Returns:
-        Validated logger collection, empty on nonzero processes.
+        Validated logger collection in configuration order.
 
     Raises:
         TypeError: If an entry is invalid or does not instantiate :class:`ExperimentLogger`.
         ValueError: If an entry is null, lacks `_target_`, or uses `enabled`.
     """
     entries = _service_entries(config, "Logger")
-    if not trainer.strategy.is_global_zero:
-        return LoggerCollection()
     loggers: list[ExperimentLogger] = []
     for name, node in entries:
         logger = instantiate(node)
@@ -248,9 +250,8 @@ def build_trainer(config: DictConfig) -> Trainer:
         Fully configured trainer.
     """
     callbacks = instantiate_callbacks(config.get("callbacks"))
-    trainer = instantiate_trainer(config.trainer, callbacks)
-    trainer.set_logger(instantiate_loggers(config.get("logger"), trainer))
-    return trainer
+    loggers = instantiate_loggers(config.get("logger"))
+    return instantiate_trainer(config.trainer, callbacks, logger=loggers)
 
 
 __all__ = [

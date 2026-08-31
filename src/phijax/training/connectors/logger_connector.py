@@ -42,9 +42,7 @@ class _LoggerConnector:
             callbacks: Ordered callbacks that may contribute host-side metrics.
             is_global_zero: Whether this process owns default logger creation.
         """
-        self._default_root_dir = default_root_dir
         self._callbacks = tuple(callbacks)
-        self._is_global_zero = is_global_zero
         self._logger, self._has_logger = _resolve_loggers(
             logger,
             default_root_dir,
@@ -96,18 +94,6 @@ class _LoggerConnector:
             Latest progress metric mapping.
         """
         return self._metrics.progress_bar
-
-    def set_logger(self, logger: ExperimentLogger | Iterable[ExperimentLogger] | None) -> None:
-        """Replace configured experiment loggers before running a task.
-
-        Args:
-            logger: One logger, several loggers, or `None` to disable logging.
-        """
-        self._logger, self._has_logger = _resolve_loggers(
-            logger,
-            self._default_root_dir,
-            is_global_zero=self._is_global_zero,
-        )
 
     def collect_callback_metrics(
         self,
