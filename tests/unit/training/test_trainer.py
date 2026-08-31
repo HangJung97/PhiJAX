@@ -589,7 +589,7 @@ class _RecordingLogger(ExperimentLogger):
         self.steps: list[int] = []
         self.statuses: list[str] = []
 
-    def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
+    def log_hyperparams(self, parameters: Mapping[str, Any]) -> None:
         """Capture resolved parameters.
 
         Args:

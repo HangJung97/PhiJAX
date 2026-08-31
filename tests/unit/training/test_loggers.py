@@ -22,7 +22,7 @@ class _MemoryLogger(ExperimentLogger):
         self.artifacts: list[Path] = []
         self.statuses: list[str] = []
 
-    def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
+    def log_hyperparams(self, parameters: Mapping[str, Any]) -> None:
         """Capture parameters.
 
         Args:
@@ -62,7 +62,7 @@ def test_logger_collection_fans_out_every_operation(tmp_path: Path) -> None:
     second = _MemoryLogger()
     collection = LoggerCollection((first, second))
     artifact = tmp_path / "model.json"
-    collection.log_hyperparameters({"seed": 3})
+    collection.log_hyperparams({"seed": 3})
     collection.log_metrics({"loss": 1.0}, 4)
     collection.log_artifact(artifact)
     collection.finalize("success")
@@ -137,7 +137,7 @@ def test_default_logger_uses_versioned_csv_fallback(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("phijax.training.loggers.find_spec", lambda name: None)
     first = create_default_logger(tmp_path)
     second = create_default_logger(tmp_path)
-    first.log_hyperparameters({"seed": 3})
+    first.log_hyperparams({"seed": 3})
     first.finalize("success")
     second.finalize("success")
 
@@ -227,7 +227,7 @@ def test_scalar_metrics_rejects_vector_values() -> None:
 def test_console_logger_accepts_standard_lifecycle_calls() -> None:
     """Verify the built-in console backend implements the shared logger contract."""
     logger = ConsoleLogger("phijax.tests.trainer")
-    logger.log_hyperparameters({"seed": 1})
+    logger.log_hyperparams({"seed": 1})
     logger.log_metrics({"loss": 2.0}, 3)
     logger.log_artifact("checkpoint")
     logger.finalize("success")
@@ -279,7 +279,7 @@ def test_wandb_logger_owns_and_idempotently_finishes_run(monkeypatch: pytest.Mon
     init.assert_not_called()
     register_finalizer.assert_not_called()
 
-    logger.log_hyperparameters({"seed": 3})
+    logger.log_hyperparams({"seed": 3})
     logger.log_metrics({"loss": 1.0}, 2)
     logger.log_artifact(tmp_path / "checkpoint")
     logger.finalize("failed")

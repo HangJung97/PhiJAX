@@ -52,7 +52,7 @@ class ExperimentLogger:
         """
         return None
 
-    def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
+    def log_hyperparams(self, parameters: Mapping[str, Any]) -> None:
         """Record resolved experiment parameters.
 
         Args:
@@ -140,14 +140,14 @@ class LoggerCollection(ExperimentLogger):
         """
         return self.loggers[0].log_dir if self.loggers else None
 
-    def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
+    def log_hyperparams(self, parameters: Mapping[str, Any]) -> None:
         """Forward hyperparameters to all backends.
 
         Args:
             parameters: Resolved experiment configuration.
         """
         for logger in self.loggers:
-            logger.log_hyperparameters(parameters)
+            logger.log_hyperparams(parameters)
 
     def log_metrics(self, metrics: Mapping[str, float], step: int) -> None:
         """Forward scalar metrics to all backends.
@@ -197,7 +197,7 @@ class ConsoleLogger(ExperimentLogger):
         """
         self.logger = get_colorlogger(name, level)
 
-    def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
+    def log_hyperparams(self, parameters: Mapping[str, Any]) -> None:
         """Log the number of resolved top-level parameters.
 
         Args:
@@ -299,7 +299,7 @@ class CSVLogger(ExperimentLogger):
         """
         return self._log_dir
 
-    def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
+    def log_hyperparams(self, parameters: Mapping[str, Any]) -> None:
         """Write resolved parameters to `hparams.yaml`.
 
         Args:
@@ -411,7 +411,7 @@ class TensorBoardLogger(ExperimentLogger):
         """
         return self.save_dir
 
-    def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
+    def log_hyperparams(self, parameters: Mapping[str, Any]) -> None:
         """Write resolved parameters to `hparams.yaml`.
 
         Args:
@@ -583,7 +583,7 @@ class WandbLogger(ExperimentLogger):
         """
         return self._log_dir
 
-    def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
+    def log_hyperparams(self, parameters: Mapping[str, Any]) -> None:
         """Update the W&B run configuration.
 
         Args:
