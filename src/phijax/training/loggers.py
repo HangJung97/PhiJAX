@@ -15,7 +15,12 @@ from phijax.utils.utils import register_task_finalizer
 
 
 class ExperimentLogger:
-    """Define the minimal interface shared by experiment-logging backends."""
+    """Define the minimal interface shared by experiment-logging backends.
+
+    Logger constructors must not create files, start remote runs, or acquire other external resources. Resource
+    acquisition belongs in the idempotent :meth:`setup` hook, and :meth:`finalize` must tolerate calls before setup and
+    repeated calls after cleanup.
+    """
 
     def setup(self) -> None:
         """Prepare task-local logger resources idempotently."""
@@ -254,15 +259,14 @@ class CSVLogger(ExperimentLogger):
         self._name = name
         self._version = version
         self.path = self._log_dir / filename
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file: Any = None
         self._writer: Any = None
-        self.setup()
 
     def setup(self) -> None:
         """Open the CSV stream for a new task when it is currently closed."""
         if self._file is not None and not self._file.closed:
             return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self.path.open("a", encoding="utf-8", newline="")
         self._writer = csv.writer(self._file)
         if self.path.stat().st_size == 0:
@@ -301,6 +305,7 @@ class CSVLogger(ExperimentLogger):
         Args:
             parameters: Resolved experiment configuration.
         """
+        self.setup()
         _write_hyperparameters(self.log_dir, parameters)
 
     def log_metrics(self, metrics: Mapping[str, float], step: int) -> None:
@@ -310,6 +315,7 @@ class CSVLogger(ExperimentLogger):
             metrics: Host scalar metric mapping.
             step: Optimizer step associated with `metrics`.
         """
+        self.setup()
         self._writer.writerows((step, name, value) for name, value in sorted(metrics.items()))
         self._file.flush()
 
@@ -328,9 +334,11 @@ class CSVLogger(ExperimentLogger):
             status: Terminal run status, unused by this backend.
         """
         del status
-        if not self._file.closed:
+        if self._file is not None and not self._file.closed:
             self._file.flush()
             self._file.close()
+        self._file = None
+        self._writer = None
 
 
 class TensorBoardLogger(ExperimentLogger):
@@ -349,28 +357,32 @@ class TensorBoardLogger(ExperimentLogger):
             save_dir: Directory receiving TensorBoard event files.
             name: Logger or experiment name.
             version: Optional run version displayed by progress callbacks.
+        """
+        self.save_dir = Path(save_dir)
+        self._name = name
+        self._version = version
+        self._writer_class: Any | None = None
+        self._writer: Any | None = None
+
+    def setup(self) -> None:
+        """Create a TensorBoard writer for a new task when needed.
 
         Raises:
             ModuleNotFoundError: If the optional `tensorboard` extra is not installed.
         """
-        try:
-            writer_class = import_module("tensorboard.summary.writer.event_file_writer").EventFileWriter
-        except ModuleNotFoundError as error:
-            raise ModuleNotFoundError(
-                "TensorBoard logging requires `uv sync --extra tensorboard` in addition to a JAX backend extra."
-            ) from error
-        self.save_dir = Path(save_dir)
-        self._name = name
-        self._version = version
+        if self._writer is not None:
+            return
+        writer_class = self._writer_class
+        if writer_class is None:
+            try:
+                writer_class = import_module("tensorboard.summary.writer.event_file_writer").EventFileWriter
+            except ModuleNotFoundError as error:
+                raise ModuleNotFoundError(
+                    "TensorBoard logging requires `uv sync --extra tensorboard` in addition to a JAX backend extra."
+                ) from error
+            self._writer_class = writer_class
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        self._writer_class = writer_class
-        self._writer: Any | None = None
-        self.setup()
-
-    def setup(self) -> None:
-        """Create a TensorBoard writer for a new task when needed."""
-        if self._writer is None:
-            self._writer = self._writer_class(str(self.save_dir))
+        self._writer = writer_class(str(self.save_dir))
 
     @property
     def name(self) -> str:
@@ -405,6 +417,7 @@ class TensorBoardLogger(ExperimentLogger):
         Args:
             parameters: Resolved experiment configuration.
         """
+        self.setup()
         _write_hyperparameters(self.log_dir, parameters)
 
     def log_metrics(self, metrics: Mapping[str, float], step: int) -> None:
@@ -414,6 +427,7 @@ class TensorBoardLogger(ExperimentLogger):
             metrics: Host scalar metric mapping.
             step: Optimizer step associated with `metrics`.
         """
+        self.setup()
         event_class = import_module("tensorboard.compat.proto.event_pb2").Event
         summary_class = import_module("tensorboard.compat.proto.summary_pb2").Summary
 
@@ -451,7 +465,7 @@ class WandbLogger(ExperimentLogger):
     logger also registers the same finalizer as a failure-safe for errors outside :meth:`Trainer.fit`.
 
     Attributes:
-        run: Active W&B run returned by `wandb.init()`.
+        run: Lazily initialized W&B run returned by `wandb.init()`.
     """
 
     def __init__(
@@ -485,45 +499,62 @@ class WandbLogger(ExperimentLogger):
             resume: W&B resume policy. When omitted with `run_id`, defaults to `allow`.
             artifact_type: Default type assigned to logged artifact paths.
             init_kwargs: Additional keyword arguments forwarded to `wandb.init()`.
-
-        Raises:
-            ModuleNotFoundError: If the optional `wandb` extra is not installed.
-            RuntimeError: If `wandb.init()` does not return a run.
         """
-        try:
-            wandb = import_module("wandb")
-        except ModuleNotFoundError as error:
-            raise ModuleNotFoundError(
-                "Weights & Biases logging requires `uv sync --extra wandb` in addition to a JAX backend extra."
-            ) from error
-        resolved_save_dir = None if save_dir is None else Path(save_dir)
-        if resolved_save_dir is not None:
-            resolved_save_dir.mkdir(parents=True, exist_ok=True)
-        resolved_resume = "allow" if run_id is not None and resume is None else resume
-        options = dict(init_kwargs or {})
-        options.update(
+        self._log_dir = None if save_dir is None else Path(save_dir)
+        self._name = project
+        self._version = run_id
+        self.artifact_type = artifact_type
+        self._run: Any | None = None
+        self._options = dict(init_kwargs or {})
+        self._options.update(
             {
                 "project": project,
                 "entity": entity,
-                "dir": None if resolved_save_dir is None else str(resolved_save_dir),
+                "dir": None if self._log_dir is None else str(self._log_dir),
                 "name": name,
                 "id": run_id,
                 "group": group,
                 "job_type": job_type,
                 "tags": tuple(tags),
                 "mode": mode,
-                "resume": resolved_resume,
+                "resume": "allow" if run_id is not None and resume is None else resume,
             }
         )
-        self.run = wandb.init(**options)
-        if self.run is None:
+
+    def setup(self) -> None:
+        """Start the configured W&B run when it is not already active.
+
+        Raises:
+            ModuleNotFoundError: If the optional `wandb` extra is not installed.
+            RuntimeError: If `wandb.init()` does not return a run.
+        """
+        if self._run is not None:
+            return
+        try:
+            wandb = import_module("wandb")
+        except ModuleNotFoundError as error:
+            raise ModuleNotFoundError(
+                "Weights & Biases logging requires `uv sync --extra wandb` in addition to a JAX backend extra."
+            ) from error
+        if self._log_dir is not None:
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+        run = wandb.init(**self._options)
+        if run is None:
             raise RuntimeError("`wandb.init()` did not return an active run.")
-        self.artifact_type = artifact_type
-        self._name = project
-        self._version = run_id
-        self._log_dir = resolved_save_dir
-        self._finished = False
+        self._run = run
         register_task_finalizer(self.finalize)
+
+    @property
+    def run(self) -> Any:
+        """Return the active W&B run, starting it on first access.
+
+        Returns:
+            Active W&B run returned by `wandb.init()`.
+        """
+        self.setup()
+        if self._run is None:
+            raise RuntimeError("W&B logger setup completed without an active run.")
+        return self._run
 
     @property
     def name(self) -> str:
@@ -583,10 +614,11 @@ class WandbLogger(ExperimentLogger):
         Args:
             status: Terminal run status; only `success` maps to exit code `0`.
         """
-        if self._finished:
+        if self._run is None:
             return
-        self._finished = True
-        self.run.finish(exit_code=0 if status == "success" else 1)
+        run = self._run
+        self._run = None
+        run.finish(exit_code=0 if status == "success" else 1)
 
 
 def scalar_metrics(metrics: Mapping[str, Any]) -> dict[str, float]:
@@ -623,8 +655,7 @@ def create_default_logger(default_root_dir: str | Path, *, is_global_zero: bool 
     if not is_global_zero:
         return LoggerCollection()
     root = Path(default_root_dir).expanduser().resolve() / "phijax_logs"
-    version_number = _next_version(root)
-    run_dir = root / f"version_{version_number}"
+    version_number, run_dir = _reserve_version(root)
     try:
         tensorboard_available = find_spec("tensorboard") is not None
     except (ImportError, ValueError):
@@ -637,24 +668,25 @@ def create_default_logger(default_root_dir: str | Path, *, is_global_zero: bool 
     return LoggerCollection((logger,))
 
 
-def _next_version(root: Path) -> int:
-    """Find the next unused integer run version.
+def _reserve_version(root: Path) -> tuple[int, Path]:
+    """Atomically reserve the next unused integer run directory.
 
     Args:
         root: Experiment directory containing `version_N` children.
 
     Returns:
-        Smallest nonnegative version not already present.
+        Smallest available version and its newly created run directory.
     """
-    existing = {
-        int(path.name.removeprefix("version_"))
-        for path in root.glob("version_*")
-        if path.is_dir() and path.name.removeprefix("version_").isdigit()
-    }
+    root.mkdir(parents=True, exist_ok=True)
     version_number = 0
-    while version_number in existing:
-        version_number += 1
-    return version_number
+    while True:
+        run_dir = root / f"version_{version_number}"
+        try:
+            run_dir.mkdir()
+        except FileExistsError:
+            version_number += 1
+            continue
+        return version_number, run_dir
 
 
 def _write_hyperparameters(log_dir: Path, parameters: Mapping[str, Any]) -> None:

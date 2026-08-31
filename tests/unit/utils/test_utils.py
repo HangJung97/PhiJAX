@@ -201,7 +201,7 @@ def test_task_wrapper_uses_registered_wandb_finalizer_once(
             cfg: Test task configuration.
         """
         del cfg
-        WandbLogger("phijax-tests", mode="disabled")
+        WandbLogger("phijax-tests", mode="disabled").setup()
 
     task(OmegaConf.create({"paths": {"output_dir": str(tmp_path)}}))
     run.finish.assert_called_once_with(exit_code=0)
