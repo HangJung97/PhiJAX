@@ -91,6 +91,18 @@ class LearningRateMonitor(Callback):
             raise RuntimeError("LearningRateMonitor requires a configured learning-rate `schedule`.")
         self._last_step = None
 
+    def on_fit_start(self, context: TrainerContext) -> None:
+        """Require an experiment logger before the first optimizer update.
+
+        Args:
+            context: Initial Trainer context exposing logger availability.
+
+        Raises:
+            RuntimeError: If the Trainer has no configured experiment logger.
+        """
+        if not context.has_logger:
+            raise RuntimeError("Cannot use `LearningRateMonitor` with a Trainer that has no logger.")
+
     def training_metrics(self, context: TrainerContext) -> Mapping[str, jax.Array]:
         """Evaluate the learning rate used by the completed optimizer update.
 
@@ -126,6 +138,30 @@ class LearningRateMonitor(Callback):
             )
         self._last_step = context.step
         return metrics
+
+    def state_dict(self) -> Mapping[str, Any]:
+        """Return the most recently emitted optimizer step.
+
+        Returns:
+            JSON-compatible monitor state.
+        """
+        return {"last_step": self._last_step}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore learning-rate emission bookkeeping.
+
+        Args:
+            state: Mapping containing an integer or null `last_step`.
+
+        Raises:
+            ValueError: If the mapping shape or saved step is invalid.
+        """
+        if set(state) != {"last_step"}:
+            raise ValueError("LearningRateMonitor state must contain only `last_step`.")
+        last_step = state["last_step"]
+        if last_step is not None and (isinstance(last_step, bool) or not isinstance(last_step, int) or last_step < 0):
+            raise ValueError("LearningRateMonitor `last_step` must be a nonnegative integer or `None`.")
+        self._last_step = last_step
 
 
 def _validate_scalar_source(source: Any, name: str) -> None:

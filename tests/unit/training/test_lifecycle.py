@@ -4,7 +4,7 @@ from typing import Any
 import jax
 
 from phijax.callbacks import Callback, PredictionContext
-from phijax.module import BasePhiModule, PhiModuleContext
+from phijax.core import BasePhiModule, PhiModuleContext
 from phijax.training.lifecycle import TaskLifecycle
 from phijax.training.loggers import ExperimentLogger
 from phijax.types import NamedBatches

@@ -138,7 +138,7 @@ def test_phi_data_module_is_a_minimal_abstract_lifecycle() -> None:
 
 
 def test_phi_data_module_default_lifecycle_selects_non_prediction_pools() -> None:
-    """Verify default preparation, normalization selection, teardown, and application delegation."""
+    """Verify default preparation, optional normalization, teardown, and application delegation."""
     data_module = _MinimalDataModule()
     assert data_module.prepare_data() is None
     data_module.prepare_stage("fit")
@@ -149,9 +149,7 @@ def test_phi_data_module_default_lifecycle_selects_non_prediction_pools() -> Non
     with pytest.raises(RuntimeError, match="still active"):
         data_module.prepare_stage("predict")
     assert tuple(data_module.normalization_pools()) == ("train",)
-    mean, std = data_module.input_statistics()
-    np.testing.assert_allclose(mean, np.asarray([3.0, 4.0], dtype=np.float32))
-    np.testing.assert_allclose(std, np.sqrt(5.0))
+    assert data_module.input_statistics() is None
     assert data_module.train_batch_source(("train",), jax.random.key(1))(0)["train"]["inputs"].shape == (2, 2)
     assert len(data_module.predict_batch_source()) == 2
     assert data_module.teardown_stage("fit") is None

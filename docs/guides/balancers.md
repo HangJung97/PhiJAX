@@ -145,15 +145,92 @@ balancer = NormalizedStaticBalancer(
     },
     default_weight=1.0,
 )
-balancer_state = balancer.initialize()
 ```
 
-Pass `balancer_state` when initializing `TrainState`. A `TrainingPlan` compiles `combine` into the optimizer step, and
-the balancer diagnostics expose every current weight as `weight/<loss_name>`.
+Pass the balancer to the concise Trainer API. The Trainer initializes its state and compiles `combine` into the update:
 
-## Test the balancer independently
+```python
+result = trainer.fit(
+    module,
+    datamodule=data_module,
+    optimizer=optimizer,
+    seed=0,
+    balancer=balancer,
+)
+```
 
-Add a focused unit test under `tests/unit/balancers/`:
+The balancer diagnostics expose every current weight as `weight/<loss_name>`. Advanced applications can initialize the
+balancer state directly and pass an explicit plan to `Trainer.fit_state()`.
+
+## Adaptive custom balancers
+
+An adaptive balancer additionally needs a pure compiled update with the shape:
+
+```python
+update(model_state, named_batches, balancer_state) -> balancer_state
+```
+
+PhiJAX schedules this function from the Trainer's host loop, outside the ordinary optimizer update. This avoids putting
+an expensive diagnostic branch in every step. Adaptive balancers return a `BalancerUpdatePlan`:
+
+Store `update_every_n_steps` and `update_start_step` as validated constructor attributes on the custom balancer. Put
+any method-specific settings, such as a diagnostic sample count, on the same constructor. The plan then resolves
+those typed settings for the Trainer:
+
+```python
+from collections.abc import Sequence
+
+from phijax.balancers import BalancerUpdatePlan
+from phijax.core import BasePhiModule
+
+
+def build_update_plan(
+    self,
+    module: BasePhiModule,
+    batch_keys: Sequence[str],
+) -> BalancerUpdatePlan:
+    """Build the compiled update and declare its scheduling and sampling policy."""
+    del batch_keys
+    return BalancerUpdatePlan(
+        update=self.make_update(module),
+        every_n_steps=self.update_every_n_steps,
+        update_start_step=self.update_start_step,
+        batch_sizes=None,
+    )
+```
+
+`batch_sizes=None` reuses the current training batches, as gradient-norm balancing does. A mapping such as
+`dict.fromkeys(batch_keys, kernel_size)` requests one fixed diagnostic batch per key, as exact NTK does.
+Put cadence and method-specific diagnostic settings on the balancer itself:
+
+```python
+from phijax.balancers import ExactNTKBalancer
+
+balancer = ExactNTKBalancer(
+    module.loss_names,
+    update_every_n_steps=100,
+    kernel_size=256,
+)
+
+result = trainer.fit(
+    module,
+    datamodule=data_module,
+    optimizer=optimizer,
+    seed=0,
+    balancer=balancer,
+)
+```
+
+The constructor validates numerical and scheduling options before fitting. When `update_start_step` is omitted, the
+first update occurs after one complete interval. The cadence is anchored to an explicit start: a start of `50` and an
+interval of `100` updates at steps `50`, `150`, and `250`. `build_update_plan()` converts that typed configuration into
+the single runtime contract consumed by the Trainer. A new adaptive balancer therefore needs no Trainer changes, and
+its numerical update stays outside callbacks. Advanced users place a complete `BalancerUpdatePlan` in
+`TrainingPlan.balancer_update`; no separate schedule wrapper is required.
+
+## Testing a custom balancer
+
+Start with a focused unit test under `tests/unit/balancers/`:
 
 ```python
 import jax
@@ -164,18 +241,18 @@ from my_project.balancers import NormalizedStaticBalancer
 
 
 def test_normalized_static_balancer_preserves_name_order_and_gradients() -> None:
-    """Verify normalized weights, mapping order independence, and finite loss gradients."""
+    """Verify normalized weights, name order, and finite loss gradients."""
     balancer = NormalizedStaticBalancer(("data", "pde"), weights={"data": 1.0, "pde": 3.0})
     state = balancer.initialize()
 
     def combined_loss(components: jax.Array) -> jax.Array:
-        """Combine a synthetic component vector.
+        """Combine two synthetic loss values.
 
         Args:
-            components: Ordered synthetic scalar losses.
+            components: Loss values in balancer order.
 
         Returns:
-            Weighted total produced from a deliberately reversed mapping.
+            Weighted total loss.
         """
         losses = {"pde": components[1], "data": components[0]}
         return balancer.combine(losses, state)
@@ -189,7 +266,7 @@ def test_normalized_static_balancer_preserves_name_order_and_gradients() -> None
     np.testing.assert_allclose(gradients, state.weights)
 ```
 
-Add an integration test that composes the objective and balancer and checks:
+Add a small integration test to confirm that the objective and balancer use the same loss order:
 
 ```python
 balancer = NormalizedStaticBalancer(objective.loss_names)
@@ -197,58 +274,19 @@ assert balancer.loss_names == objective.loss_names
 assert balancer.initialize().weights.shape == (len(objective.loss_names),)
 ```
 
-Test invalid names and numeric options before testing the compiled path. For adaptive numerical methods, additionally
-test zero diagnostics, finite gradients, deterministic updates, singleton batches, and exact behavior on an analytic
-toy problem.
-
-## Adaptive custom balancers
-
-An adaptive balancer additionally needs a pure compiled update with the shape:
-
-```python
-update(model_state, named_batches, balancer_state) -> balancer_state
-```
-
-PhiJAX schedules this function outside the ordinary optimizer update through `with_balancer_updates`. This avoids
-putting an expensive diagnostic branch in every step. Adaptive balancers return a `BalancerUpdatePlan`:
-
-```python
-from collections.abc import Mapping, Sequence
-from typing import Any
-
-from phijax.balancers import BalancerUpdatePlan
-from phijax.module import BasePhiModule
-
-
-def build_update_plan(
-    self,
-    module: BasePhiModule,
-    batch_keys: Sequence[str],
-    options: Mapping[str, Any],
-) -> BalancerUpdatePlan:
-    """Build the compiled update and declare its sampling policy."""
-    del batch_keys
-    if options:
-        raise ValueError(f"Unsupported update options: {tuple(options)}")
-    return BalancerUpdatePlan(update=self.make_update(module), batch_sizes=None)
-```
-
-`batch_sizes=None` reuses the current training batches, as gradient-norm balancing does. A mapping such as
-`dict.fromkeys(batch_keys, kernel_size)` requests one fixed diagnostic batch per key, as exact NTK does.
-Wrap the plan in `BalancerUpdateSchedule` to set `every_n_steps` and `skip_first_step`. Pass method-specific options to
-`build_update_plan()` for validation. A new adaptive balancer therefore needs no changes to the Trainer, and its
-numerical update stays outside callbacks.
+Also test invalid names and numerical options. For an adaptive balancer, test zero diagnostics, deterministic updates,
+singleton batches, finite gradients, and one case with a known analytic result.
 
 ## Common mistakes
 
-| Symptom                           | Likely cause                                                               |
-| --------------------------------- | -------------------------------------------------------------------------- |
-| Missing loss `KeyError`           | Configured weight key does not match the objective's final loss name       |
-| Weight attached to the wrong loss | Components were built from mapping iteration order instead of `loss_names` |
-| JAX concretization error          | `combine` converted a traced value to Python or NumPy                      |
-| Retracing on every update         | State, batch shapes, dtypes, or PyTree structure change between calls      |
-| Checkpoint structure mismatch     | Balancer state structure changed between save and restore                  |
-| Adaptive weights lag unexpectedly | Update scheduling or `skip_first_step` does not match the intended cadence |
+| Symptom                           | Likely cause                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------ |
+| Missing loss `KeyError`           | Configured weight key does not match the objective's final loss name           |
+| Weight attached to the wrong loss | Components were built from mapping iteration order instead of `loss_names`     |
+| JAX concretization error          | `combine` converted a traced value to Python or NumPy                          |
+| Retracing on every update         | State, batch shapes, dtypes, or PyTree structure change between calls          |
+| Checkpoint structure mismatch     | Balancer state structure changed between save and restore                      |
+| Adaptive weights lag unexpectedly | `update_start_step` or the update interval does not match the intended cadence |
 
 Keep weights, components, diagnostics, and totals in `float32` unless a configured precision policy explicitly
 requires otherwise. Stop gradients through derived adaptive weights so optimization does not differentiate the

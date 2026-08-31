@@ -1,7 +1,12 @@
 # Models
 
-PhiJAX includes Flax NNX models, but equations and objectives only need a pure, explicit-state callable. Before using
-regular `jax.jit`, split the model and capture its graph definition in a closure or partial callable.
+PhiJAX includes Flax NNX models, but equations and objectives only need a pure, explicit-state callable. A
+`ModelFactory` delays initialization until the Trainer has prepared data and selected precision. It returns an
+`InitializedModel` with a pure apply callable, explicit state, and optional summary.
+
+::: phijax.models.ModelFactory
+
+::: phijax.models.InitializedModel
 
 ## Custom NNX architectures
 
@@ -42,14 +47,17 @@ class CoordinateNetwork(nnx.Module):
 
 
 def build_coordinate_network(
-    key: jax.Array,
     input_dim: int,
     output_dim: int,
     *,
-    precision: str | PrecisionPolicy | None = None,
+    key: jax.Array,
+    input_mean: jax.typing.ArrayLike | None,
+    input_std: jax.typing.ArrayLike | None,
+    precision: str | PrecisionPolicy,
     **model_kwargs: object,
 ) -> InitializedModel:
-    policy = PrecisionPolicy.from_name(precision or "32-true")
+    del input_mean, input_std
+    policy = PrecisionPolicy.from_name(precision)
     resolved_kwargs = policy.apply_model_dtype_defaults(model_kwargs)
     model = CoordinateNetwork(input_dim, output_dim, rngs=nnx.Rngs(params=key), **resolved_kwargs)
     return initialize_nnx_model(
@@ -58,6 +66,8 @@ def build_coordinate_network(
     )
 ```
 
+Bind application architecture values with `functools.partial`; the Trainer supplies `key`, `input_mean`, `input_std`,
+and `precision` by keyword. A factory may ignore optional statistics when its architecture does not normalize inputs.
 The returned application merges the static graph with explicit state on each call. It works with JAX transformations
 and PhiJAX equations without a base architecture or registry. `apply_model_dtype_defaults()` is optional. Use it when
 the custom constructor accepts `parameter_dtype`, `compute_dtype`, and `output_dtype`. Values in `model_kwargs`
@@ -82,14 +92,14 @@ input normalization
 `dropout_key`.
 
 ```python
+from functools import partial
+
 from phijax.models import build_mlp
 
-model = build_mlp(
-    key,
+model_factory = partial(
+    build_mlp,
     input_dim=2,
     output_dim=1,
-    input_mean=(0.0, 0.0),
-    input_std=(1.0, 1.0),
     hidden=(128, 128, 128, 128),
     activation="tanh",
     input_norm=True,
@@ -118,14 +128,14 @@ weight normalization, and random weight factorization as the standard MLP. It fo
 [Wang, Teng, and Perdikaris (2021)](https://doi.org/10.1137/20M1318043).
 
 ```python
+from functools import partial
+
 from phijax.models import build_modified_mlp
 
-model = build_modified_mlp(
-    key,
+model_factory = partial(
+    build_modified_mlp,
     input_dim=2,
     output_dim=1,
-    input_mean=(0.0, 0.0),
-    input_std=(1.0, 1.0),
     hidden_dim=256,
     num_layers=4,
     activation="tanh",
@@ -157,14 +167,14 @@ The factory uses standard Glorot initialization. It does not apply the paper's o
 initialization because that method depends on training data.
 
 ```python
+from functools import partial
+
 from phijax.models import build_pirate_net
 
-model = build_pirate_net(
-    key,
+model_factory = partial(
+    build_pirate_net,
     input_dim=2,
     output_dim=1,
-    input_mean=(0.0, 0.0),
-    input_std=(1.0, 1.0),
     hidden_dim=256,
     num_blocks=4,
     activation="tanh",

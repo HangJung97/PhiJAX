@@ -1,4 +1,6 @@
 import argparse
+from collections.abc import Mapping
+from functools import partial
 from time import perf_counter
 from typing import Any
 
@@ -7,14 +9,14 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from phijax import PhiModule, Trainer, TrainingPlan, hessian_diagonal, value_and_jacobian
-from phijax.balancers import StaticLossBalancer
-from phijax.data import ChunkedPredictionSource, HostPool, NamedBatchSource, PhiDataModule, RandomRowSampler
+from phijax import PhiModule, Trainer, hessian_diagonal, value_and_jacobian
+from phijax.callbacks import RichModelSummary, RichProgressBar
+from phijax.data import BatchSize, ChunkedPredictionSource, HostPool, NamedBatchSource, PhiDataModule, input_statistics
 from phijax.data.datamodule import DataStage
 from phijax.equations import base_data_fidelity, residual_equation
 from phijax.evaluation import regression_metrics
 from phijax.models import build_mlp
-from phijax.objectives import CompositeObjective, ResidualTerm
+from phijax.objectives import CompositeObjective
 from phijax.training import configure_precision
 from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
 
@@ -94,6 +96,7 @@ class HeatDataModule(PhiDataModule):
         boundary_size: int = 32,
         pde_shape: tuple[int, int] = (16, 32),
         predict_shape: tuple[int, int] = (21, 51),
+        batch_sizes: Mapping[str, BatchSize] | None = None,
     ) -> None:
         """Store finite source sizes.
 
@@ -102,12 +105,15 @@ class HeatDataModule(PhiDataModule):
             boundary_size: Number of time coordinates sampled on each boundary edge.
             pde_shape: Number of candidate coordinates along the time and space axes.
             predict_shape: Number of ordered prediction coordinates along the time and space axes.
+            batch_sizes: Optional per-pool training batch sizes. Finite pools also accept `"all"`.
         """
         super().__init__()
         self.initial_size = initial_size
         self.boundary_size = boundary_size
         self.pde_shape = pde_shape
         self.predict_shape = predict_shape
+        defaults = {"initial": 32, "boundary": 32, "pde": 64}
+        self.batch_sizes = dict(defaults if batch_sizes is None else batch_sizes)
 
     def setup(self, stage: DataStage) -> None:
         """Construct immutable pools for one Trainer stage.
@@ -137,7 +143,7 @@ class HeatDataModule(PhiDataModule):
                     boundary_inputs,
                     np.zeros((boundary_inputs.shape[0], 1), dtype=np.float32),
                 ),
-                "pde": _pool(pde_inputs, np.zeros((pde_inputs.shape[0], 0), dtype=np.float32)),
+                "pde": _pool(pde_inputs),
             }
             return
         if stage == "predict":
@@ -160,9 +166,15 @@ class HeatDataModule(PhiDataModule):
             Step-indexed initial, boundary, and collocation batches.
         """
         pools = self._require_setup("fit")
-        samplers = {name: RandomRowSampler(pools[name].fields()) for name in batch_keys}
-        policies = {"initial": 32, "boundary": 32, "pde": 64}
-        return NamedBatchSource(samplers, {name: policies[name] for name in batch_keys}, key)
+        return NamedBatchSource.from_pools(pools, self.batch_sizes, key, names=batch_keys)
+
+    def input_statistics(self) -> tuple[np.ndarray, np.ndarray]:
+        """Compute normalization statistics from the finite training pools.
+
+        Returns:
+            Per-coordinate mean and safely positive standard deviation arrays.
+        """
+        return input_statistics(self.normalization_pools())
 
     def predict_batch_source(self) -> ChunkedPredictionSource:
         """Build finite ordered prediction batches.
@@ -186,7 +198,7 @@ class HeatDataModule(PhiDataModule):
 
 def _pool(
     inputs: np.ndarray,
-    targets: np.ndarray,
+    targets: np.ndarray | None = None,
     *,
     reference_shape: tuple[int, ...] | None = None,
 ) -> HostPool:
@@ -194,20 +206,17 @@ def _pool(
 
     Args:
         inputs: Rank-two coordinate array.
-        targets: Rank-two target array with the same row count.
+        targets: Optional rank-two target array with the same row count.
         reference_shape: Optional dense reconstruction shape.
 
     Returns:
         Pool with coordinate and reconstruction metadata.
     """
-    size = inputs.shape[0]
     return HostPool(
         inputs=inputs,
         targets=targets,
-        aux={},
         metadata={"coordinate_names": ("t", "x")},
-        reference_shape=reference_shape or (size,),
-        flat_index=np.arange(size),
+        reference_shape=reference_shape,
     )
 
 
@@ -216,6 +225,7 @@ def run_quickstart(
     *,
     accelerator: str = "cpu",
     precision: str = "32-true",
+    enable_progress_bar: bool = True,
 ) -> float:
     """Train the heat PINN and return its maximum prediction error.
 
@@ -223,68 +233,57 @@ def run_quickstart(
         max_steps: Positive number of optimizer updates.
         accelerator: `auto`, `cpu`, `gpu`, or `tpu` backend selected by the Trainer.
         precision: Canonical PhiJAX precision mode used for model construction and training.
+        enable_progress_bar: Whether to display Rich fit and prediction progress.
 
     Returns:
         Maximum absolute error against the analytical solution on the prediction grid.
     """
     configure_precision(precision)
+    # Print the initialized network architecture once before training starts.
+    callbacks = (RichModelSummary(),)
+    if enable_progress_bar:
+        # Refresh the optional Rich display every 10 optimizer steps.
+        callbacks += (RichProgressBar(total=max_steps, refresh_rate=10),)
     trainer = Trainer(
         max_steps=max_steps,
         accelerator=accelerator,
         precision=precision,
         log_every_n_steps=100,
+        enable_progress_bar=enable_progress_bar,
+        callbacks=callbacks,
     )
     trainer.print_environment_info()
     data_module = HeatDataModule()
-    data_module.prepare_stage("fit")
-    input_mean, input_std = data_module.input_statistics()
-
-    # Keep parameter initialization, Trainer state, and batch sampling on independent PRNG streams.
-    model_key, state_key, sampling_key = jax.random.split(jax.random.key(0), 3)
-    initialized = build_mlp(
-        model_key,
+    model = partial(
+        build_mlp,
         input_dim=2,
         output_dim=1,
-        input_mean=input_mean,
-        input_std=input_std,
         hidden=(32, 32),
         activation="tanh",
         input_norm=True,
-        precision=trainer.precision,
     )
-    objective = CompositeObjective(
+    objective = CompositeObjective.from_equations(
         {
-            "initial": ResidualTerm(
-                residual_fn=base_data_fidelity,
-                batch_key="initial",
-                ntk_stream="output",
-            ),
-            "boundary": ResidualTerm(
-                residual_fn=base_data_fidelity,
-                batch_key="boundary",
-                ntk_stream="output",
-            ),
-            "pde": ResidualTerm(residual_fn=heat_equation, batch_key="pde"),
+            "initial": base_data_fidelity,
+            "boundary": base_data_fidelity,
+            "pde": heat_equation,
         }
     )
-    module = PhiModule(initialized.apply, objective, name="Heat PINN", model_summary=initialized.summary)
-    balancer = StaticLossBalancer(module.loss_names)
+    module = PhiModule(model, objective, name="Heat PINN")
     optimizer = optax.adam(learning_rate=1.0e-3)
-    state = trainer.initialize_state(initialized.state, optimizer, balancer.initialize(), state_key)
-    batch_keys = ("initial", "boundary", "pde")
-    plan = TrainingPlan(trainer.compile_train_step(module, balancer, optimizer), batch_keys)
 
     training_started = perf_counter()
-    result = trainer.fit(module, plan, state, datamodule=data_module, sampling_key=sampling_key)
+    result = trainer.fit(module, datamodule=data_module, optimizer=optimizer, seed=0)
     jax.block_until_ready(result.state)
     training_time = perf_counter() - training_started
-    predictions = trainer.predict(module, result.state, datamodule=data_module)
+    predictions = trainer.predict(result, datamodule=data_module)
 
     if predictions is None:
         raise RuntimeError("The quickstart DataModule did not produce prediction batches.")
     prediction_pool = data_module.prediction_pool()
     if prediction_pool is None:
         raise RuntimeError("The quickstart DataModule did not retain its prediction pool.")
+    assert prediction_pool.targets is not None
     metrics = regression_metrics(np.asarray(predictions), prediction_pool.targets)
     maximum_error = metrics["max_absolute_error"]
     relative_l2_error = metrics["relative_l2_error"]
@@ -311,11 +310,13 @@ def main() -> None:
         default="32-true",
         help="Model and training precision mode.",
     )
+    parser.add_argument("--no-progress-bar", action="store_true", help="Disable fit and prediction progress output.")
     arguments = parser.parse_args()
     run_quickstart(
         arguments.max_steps,
         accelerator=arguments.accelerator,
         precision=arguments.precision,
+        enable_progress_bar=not arguments.no_progress_bar,
     )
 
 

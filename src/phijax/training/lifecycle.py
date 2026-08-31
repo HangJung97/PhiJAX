@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 
 from phijax.callbacks import Callback, CallbackContext
-from phijax.module import BasePhiModule, PhiModuleContext
+from phijax.core import BasePhiModule, PhiModuleContext
 from phijax.training.loggers import ExperimentLogger
 
 
@@ -47,6 +47,8 @@ class TaskLifecycle:
 
     def setup(self) -> None:
         """Set up callbacks in declaration order and then set up the module."""
+        if self._is_global_zero:
+            self._logger.setup()
         for callback in self._callbacks:
             callback.setup()
             self._setup_callbacks.append(callback)

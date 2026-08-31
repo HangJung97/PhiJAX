@@ -1,10 +1,8 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
 
 import jax
-import numpy as np
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -16,7 +14,8 @@ from rich.progress import (
 )
 from rich.text import Text
 
-from phijax.callbacks.base import Callback, CallbackContext, PredictionContext, TrainerContext
+from phijax.callbacks.base import CallbackContext, PredictionContext, TrainerContext
+from phijax.callbacks.progress_bar import ProgressBar
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +151,7 @@ class _MetricsColumn(ProgressColumn):
         return Text(str(task.fields.get("metrics", "")), style=self._style)
 
 
-class RichProgressBar(Callback):
+class RichProgressBar(ProgressBar):
     """Display fit and prediction progress with Rich.
 
     The batch counter advances without transferring device metrics to the host. Selected metric values are copied only
@@ -162,7 +161,7 @@ class RichProgressBar(Callback):
     Attributes:
         total: Number of batches expected in one fit call.
         refresh_rate: Number of batches between metric-value refreshes.
-        metric_names: Optional ordered override. `None` discovers `train/loss` and `train/weight` metrics automatically.
+        metric_names: Optional ordered override. `None` displays metrics selected by module calls to `self.log()`.
         description: Label displayed before the progress bar.
         predict_description: Label displayed during prediction.
         transient: Whether Rich removes the progress display after completion.
@@ -188,8 +187,7 @@ class RichProgressBar(Callback):
         Args:
             total: Number of batches expected in one fit call.
             refresh_rate: Positive interval between device-to-host metric transfers.
-            metric_names: Optional ordered exact names to display. `None` selects combined and unweighted losses plus
-                balancer weights published under the module's `train/loss` and `train/weight` metric namespaces.
+            metric_names: Optional ordered exact names to display. `None` uses module-selected progress metrics.
             description: Non-empty label displayed before the progress bar.
             predict_description: Non-empty label displayed during prediction.
             transient: Whether Rich removes the progress display after completion.
@@ -200,31 +198,17 @@ class RichProgressBar(Callback):
         Raises:
             ValueError: If `total`, `refresh_rate`, either description, or a metric name is invalid.
         """
-        if total < 1:
-            raise ValueError("`total` must be positive.")
-        if refresh_rate < 1:
-            raise ValueError("`refresh_rate` must be positive.")
-        if not description.strip():
-            raise ValueError("`description` must not be empty.")
-        if not predict_description.strip():
-            raise ValueError("`predict_description` must not be empty.")
-        names = None if metric_names is None else tuple(metric_names)
-        if names is not None and any(not name.strip() for name in names):
-            raise ValueError("`metric_names` must contain only non-empty names.")
-        if names is not None and len(names) != len(set(names)):
-            raise ValueError("`metric_names` must not contain duplicates.")
         resolved_theme = theme or RichProgressBarTheme()
-        try:
-            format(1.0, resolved_theme.metrics_format)
-        except ValueError as error:
-            raise ValueError("`theme.metrics_format` must be a valid scalar format specification.") from error
-        self.total = total
-        self.refresh_rate = refresh_rate
-        self.metric_names = names
-        self.description = description
-        self.predict_description = predict_description
+        super().__init__(
+            total,
+            refresh_rate=refresh_rate,
+            metric_names=metric_names,
+            description=description,
+            predict_description=predict_description,
+            rank_zero_only=rank_zero_only,
+            metrics_format=resolved_theme.metrics_format,
+        )
         self.transient = transient
-        self.rank_zero_only = rank_zero_only
         self.theme = resolved_theme
         self._console = console
         self._progress: Progress | None = None
@@ -237,7 +221,7 @@ class RichProgressBar(Callback):
         self._completed = 0
         self._last_metrics = ""
         self._task_id = None
-        if self.rank_zero_only and jax.process_index() != 0:
+        if self.is_disabled or (self.rank_zero_only and jax.process_index() != 0):
             self._progress = None
             return
         self._progress = Progress(
@@ -267,28 +251,24 @@ class RichProgressBar(Callback):
         self._progress.start()
         self._task_id = self._progress.add_task(self._step_description(0), total=self.total, metrics="")
 
-    def on_train_batch_end(self, context: TrainerContext) -> bool:
+    def on_train_metrics(self, context: TrainerContext) -> None:
         """Advance the bar and periodically refresh its selected metrics.
 
         Args:
             context: Post-update trainer context containing device metrics.
-
-        Returns:
-            Always `False`; progress reporting never requests early termination.
         """
         if self._progress is None or self._task_id is None:
-            return False
+            return
         self._completed += 1
         should_refresh_metrics = self._completed == 1 or self._completed % self.refresh_rate == 0
         if should_refresh_metrics:
-            self._last_metrics = self._format_metrics(context.metrics)
+            self._last_metrics = self._render_metrics(context)
         self._progress.update(
             self._task_id,
             advance=1,
             description=self._step_description(self._completed),
             metrics=self._last_metrics,
         )
-        return False
 
     def on_fit_end(self, context: TrainerContext) -> None:
         """Render terminal metrics and stop the progress display.
@@ -298,7 +278,7 @@ class RichProgressBar(Callback):
         """
         if self._progress is None or self._task_id is None:
             return
-        self._last_metrics = self._format_metrics(context.metrics)
+        self._last_metrics = self._render_metrics(context)
         self._progress.update(self._task_id, metrics=self._last_metrics, refresh=True)
         self._stop()
 
@@ -363,42 +343,17 @@ class RichProgressBar(Callback):
         """Stop Rich resources idempotently during trainer cleanup."""
         self._stop()
 
-    def _format_metrics(self, metrics: Mapping[str, Any]) -> str:
-        """Format configured scalar metrics after transferring only those values to the host.
+    def _render_metrics(self, context: TrainerContext) -> str:
+        """Format selected scalar metrics after transferring only those values to the host.
 
         Args:
-            metrics: Latest named device or host metrics.
+            context: Complete post-update Trainer context.
 
         Returns:
             Space-separated `name=value` fields for metrics that are available.
-
-        Raises:
-            ValueError: If a selected available metric is not scalar.
         """
-        fields: list[str] = []
-        names = self.metric_names if self.metric_names is not None else self._automatic_metric_names(metrics)
-        for name in names:
-            if name not in metrics:
-                continue
-            array = np.asarray(jax.device_get(metrics[name]))
-            if array.size != 1:
-                raise ValueError(f"Progress metric `{name}` must be scalar, received shape {array.shape}.")
-            scalar = float(array.reshape(()))
-            fields.append(f"{name}: {scalar:{self.theme.metrics_format}}")
+        fields = [f"{name}: {value}" for name, value in self._formatted_metrics(context).items()]
         return self.theme.metrics_text_delimiter.join(fields)
-
-    def _automatic_metric_names(self, metrics: Mapping[str, Any]) -> tuple[str, ...]:
-        """Select losses and balancer weights from a compiled-step metric mapping.
-
-        Args:
-            metrics: Latest named device or host metrics in their stable insertion order.
-
-        Returns:
-            Loss and balancer-weight metric names in stable insertion order.
-        """
-        return tuple(
-            name for name in metrics if name == "train/loss" or name.startswith(("train/loss/", "train/weight/"))
-        )
 
     def _step_description(self, completed: int) -> str:
         """Build the step-based progress description.

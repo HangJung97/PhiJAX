@@ -24,6 +24,7 @@ def test_callback_default_hooks_accept_each_supported_lifecycle() -> None:
     callback.on_postprocessing_end(postprocessing_context)
     callback.on_exception(RuntimeError("test"), trainer_context)
     callback.teardown()
+    assert trainer_context.batch is None
     assert prediction_context.batch is None
     assert prediction_context.total_batches is None
 

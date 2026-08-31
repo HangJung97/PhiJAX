@@ -3,7 +3,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from phijax.callbacks import RichModelSummary, TrainerContext
+from phijax.callbacks import ModelSummary, RichModelSummary, TrainerContext
+from phijax.training import Trainer
 
 
 def test_rich_model_summary_prints_module_summary_on_global_fit_start(
@@ -74,3 +75,27 @@ def test_rich_model_summary_rejects_invalid_display_policy(kwargs: dict[str, int
     """
     with pytest.raises(ValueError, match=match):
         RichModelSummary(**kwargs)
+
+
+def test_trainer_treats_rich_summary_as_plain_summary_replacement() -> None:
+    """Verify explicit Rich summaries suppress automatic plain summary insertion."""
+    callback = RichModelSummary()
+    trainer = Trainer(
+        max_steps=1,
+        callbacks=(callback,),
+        enable_progress_bar=False,
+        logger=False,
+    )
+
+    assert trainer.callbacks == (callback,)
+
+
+def test_trainer_rejects_multiple_model_summaries() -> None:
+    """Verify one fit task cannot render duplicate model summaries."""
+    with pytest.raises(ValueError, match="Only one model-summary"):
+        Trainer(
+            max_steps=1,
+            callbacks=(ModelSummary(), RichModelSummary()),
+            enable_progress_bar=False,
+            logger=False,
+        )

@@ -8,8 +8,12 @@ objective can use static, gradient-norm, exact-NTK, or custom weighting.
 `BalancerState.weights` is aligned with objective `loss_names`. The `traces` field stores the latest adaptive
 diagnostic: parameter-gradient norms for `GradNormBalancer`, or mean pointwise diagonal NTKs for `ExactNTKBalancer`.
 
-`BalancerUpdatePlan` contains a compiled functional update and optional diagnostic batch sizes. A `None` batch-size
-mapping reuses the current training batches.
+`BalancerUpdatePlan` contains a compiled functional update, its host-side cadence, and optional diagnostic batch
+sizes. A `None` batch-size mapping reuses the current training batches.
+
+Adaptive balancers accept `update_every_n_steps` and an optional `update_start_step`. By default, the first update
+occurs after one complete interval. An explicit start anchors the cadence, so a start of `50` with an interval of `100`
+updates at steps `50`, `150`, and `250`.
 
 ::: phijax.balancers.BalancerState
 
@@ -39,6 +43,13 @@ algorithm. Losses are differentiated individually to limit retained intermediate
 
 ::: phijax.balancers.GradNormBalancer
 
+```python
+balancer = GradNormBalancer(
+    module.loss_names,
+    update_every_n_steps=100,
+)
+```
+
 ## Exact NTK weighting
 
 Exact NTK balancing computes the squared parameter-Jacobian norm at each point. It averages these values for each
@@ -53,5 +64,14 @@ limit peak memory.
 ::: phijax.balancers.exact_ntk_trace
 
 ::: phijax.balancers.ExactNTKBalancer
+
+```python
+balancer = ExactNTKBalancer(
+    module.loss_names,
+    update_every_n_steps=100,
+    kernel_size=256,
+    kernel_chunk_size=1,
+)
+```
 
 See [Creating a custom loss balancer](../guides/balancers.md) for implementation and testing requirements.

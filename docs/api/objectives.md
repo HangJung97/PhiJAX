@@ -29,8 +29,8 @@ from phijax.equations import burgers_1d
 from phijax.objectives import ResidualTerm
 
 pde_term = ResidualTerm(
+    partial(burgers_1d, viscosity_coefficient=0.01 / math.pi),
     batch_key="pde",
-    residual_fn=partial(burgers_1d, viscosity_coefficient=0.01 / math.pi),
 )
 ```
 
@@ -40,6 +40,24 @@ pde_term = ResidualTerm(
 
 The term mapping establishes stable composition names and preserves declaration order. Loss names must be globally
 unique across terms.
+
+Use `from_equations()` when each equation consumes the batch with the same mapping key. Equation metadata supplies
+local loss names and the default exact-NTK stream:
+
+```python
+from phijax.equations import base_data_fidelity, burgers_1d
+from phijax.objectives import CompositeObjective
+
+objective = CompositeObjective.from_equations(
+    {
+        "initial": base_data_fidelity,
+        "boundary": base_data_fidelity,
+        "pde": burgers_1d,
+    }
+)
+```
+
+Use explicit terms when loss names, batch routing, or streams require overrides:
 
 ```python
 from phijax.objectives import CompositeObjective

@@ -1,7 +1,7 @@
 [project]
 name = "phijax"
-version = "0.1.0b1"
-description = "A typed JAX framework for reproducible physics-informed neural network training."
+version = "0.2.0b1"
+description = "A JAX framework for reproducible physics-informed neural network training."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -30,9 +30,11 @@ dependencies = [
   "omegaconf==2.3.1",
   "optax==0.2.8",
   "orbax-checkpoint==0.12.4",
+  "pyyaml>=6.0.3,<7",
   "rich>=15,<16",
   "rootutils>=1.0.7,<2",
   "scipy>=1.17,<2",
+  "tqdm>=4.67,<5",
 ]
 
 [project.urls]
@@ -42,8 +44,10 @@ Issues = "https://github.com/HangJung97/PhiJAX/issues"
 Repository = "https://github.com/HangJung97/PhiJAX"
 
 [project.optional-dependencies]
+# Install at most one accelerator extra. TPU support is experimental.
 cuda12 = ["jax[cuda12]==0.11.1"]
 cuda13 = ["jax[cuda13]==0.11.1"]
+tpu = ["jax[tpu]==0.11.1"]
 tensorboard = ["tensorboard>=2.20,<3"]
 wandb = ["wandb>=0.29,<0.30"]
 
@@ -52,6 +56,7 @@ requires = ["uv_build>=0.11,<0.13"]
 build-backend = "uv_build"
 
 [dependency-groups]
+# Install this group for the complete local development environment.
 all = [{ include-group = "dev" }, { include-group = "docs" }]
 dev = [
   "pre-commit>=4.0.1,<5",
@@ -68,7 +73,12 @@ test = ["pytest>=9,<10", "pytest-cov>=7,<8"]
 
 [tool.uv]
 required-version = ">=0.12,<0.13"
-conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }]]
+# JAX accelerator plugins cannot be installed together in one environment.
+conflicts = [
+  [{ extra = "cuda12" }, { extra = "cuda13" }],
+  [{ extra = "cuda12" }, { extra = "tpu" }],
+  [{ extra = "cuda13" }, { extra = "tpu" }],
+]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -76,6 +86,7 @@ addopts = [
   "--durations=0",
 ]
 filterwarnings = [
+  # Ignore third-party Orbax deprecations while keeping PhiJAX deprecations visible.
   "ignore:.*deprecated.*:DeprecationWarning:orbax.*",
 ]
 log_cli = true
@@ -94,6 +105,7 @@ fail_under = 90
 show_missing = true
 
 [tool.pyright]
+# Type-check the public framework package. Pytest and Ruff validate tests and examples.
 include = ["src/phijax"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
@@ -105,8 +117,35 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["A", "ANN", "B", "C4", "D", "E", "F", "I", "N", "PERF", "PIE", "PT", "RUF", "S", "SIM", "UP", "W"]
-ignore = ["ANN401", "D100", "D104", "S101"]
+# Rule families: https://docs.astral.sh/ruff/rules/
+select = [
+  "A",    # flake8-builtins
+  "ANN",  # flake8-annotations
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "D",    # pydocstyle
+  "E",    # pycodestyle errors
+  "F",    # Pyflakes
+  "I",    # isort
+  "N",    # pep8-naming
+  "PERF", # Perflint
+  "PIE",  # flake8-pie
+  "PT",   # flake8-pytest-style
+  "RUF",  # Ruff-specific rules
+  "S",    # flake8-bandit
+  "SIM",  # flake8-simplify
+  "UP",   # pyupgrade
+  "W",    # pycodestyle warnings
+]
+ignore = [
+  "ANN401", # Allow `Any` at generic JAX PyTree and extension boundaries.
+  "D100",   # PhiJAX does not require module-level docstrings.
+  "D104",   # PhiJAX does not require package-level docstrings.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/**" = ["S101"] # Examples may use assertions for concise runtime checks.
+"tests/**" = ["S101"]    # Pytest uses assertions for test expectations.
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

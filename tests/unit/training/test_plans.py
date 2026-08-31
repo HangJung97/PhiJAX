@@ -2,12 +2,14 @@ from typing import Any
 
 import pytest
 
-from phijax.training import BalancerUpdateSchedule, TrainingPlan
+from phijax.balancers import BalancerUpdatePlan
+from phijax.training import TrainingPlan
 
 
-def _update_plan(state: Any, batch: Any) -> tuple[Any, dict[str, float]]:
-    """Return unchanged state and empty diagnostics for schedule validation tests."""
-    return state, {}
+def _balancer_update(model_state: Any, batches: Any, state: Any) -> Any:
+    """Return unchanged balancer state for update-plan validation tests."""
+    del model_state, batches
+    return state
 
 
 def _train_step(state: Any, batch: Any) -> tuple[Any, dict[str, float]]:
@@ -16,20 +18,33 @@ def _train_step(state: Any, batch: Any) -> tuple[Any, dict[str, float]]:
 
 
 @pytest.mark.parametrize("interval", [True, 1.5, "1"])
-def test_balancer_update_schedule_requires_an_integer_interval(interval: object) -> None:
+def test_balancer_update_plan_requires_an_integer_interval(interval: object) -> None:
     """Verify Boolean and non-integer adaptive update intervals are rejected."""
     with pytest.raises(TypeError, match="integer"):
-        BalancerUpdateSchedule(_update_plan, interval)  # type: ignore[arg-type]
+        BalancerUpdatePlan(_balancer_update, interval, 0)  # type: ignore[arg-type]
 
 
-def test_balancer_update_schedule_validates_positive_interval_and_boolean_skip() -> None:
-    """Verify schedule values fail early when their host-side semantics are invalid."""
+def test_balancer_update_plan_validates_and_freezes_batch_sizes() -> None:
+    """Verify one update plan owns an immutable diagnostic sampling policy."""
+    batch_sizes = {"pde": 8}
+    plan = BalancerUpdatePlan(_balancer_update, 10, update_start_step=5, batch_sizes=batch_sizes)
+    batch_sizes["pde"] = 16
+
+    assert plan.every_n_steps == 10
+    assert plan.update_start_step == 5
+    assert plan.batch_sizes == {"pde": 8}
+    with pytest.raises(TypeError):
+        plan.batch_sizes["pde"] = 4  # type: ignore[index,union-attr]
     with pytest.raises(ValueError, match="positive"):
-        BalancerUpdateSchedule(_update_plan, 0)
-    with pytest.raises(TypeError, match="Boolean"):
-        BalancerUpdateSchedule(_update_plan, 1, skip_first_step=1)  # type: ignore[arg-type]
-    schedule = BalancerUpdateSchedule(_update_plan, 3, skip_first_step=False)
-    assert schedule.every_n_steps == 3
+        BalancerUpdatePlan(_balancer_update, 0, 0)
+    with pytest.raises(TypeError, match="update_start_step"):
+        BalancerUpdatePlan(_balancer_update, 1, True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="update_start_step"):
+        BalancerUpdatePlan(_balancer_update, 1, -1)
+    with pytest.raises(TypeError, match="batch names"):
+        BalancerUpdatePlan(_balancer_update, 1, 0, batch_sizes={"": 1})
+    with pytest.raises(ValueError, match="batch sizes"):
+        BalancerUpdatePlan(_balancer_update, 1, 0, batch_sizes={"pde": 0})
 
 
 def test_training_plan_validates_step_and_batch_keys() -> None:

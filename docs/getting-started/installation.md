@@ -34,6 +34,17 @@ python -c "import jax; print(jax.default_backend()); print(jax.devices())"
 Refer to the [JAX installation guide](https://docs.jax.dev/en/latest/installation.html) for supported platforms,
 drivers, and accelerator-specific limitations.
 
+## Experimental TPU
+
+Install the mutually exclusive TPU extra in a TPU runtime:
+
+```bash
+python -m pip install "phijax[tpu]"
+```
+
+TPU support is experimental. Device discovery and placement follow JAX, but PhiJAX does not run real TPU jobs in its
+ordinary CI. Do not combine `tpu` with `cuda12` or `cuda13`, and validate the intended topology before a long run.
+
 ## Optional experiment loggers
 
 TensorBoard and Weights & Biases remain optional:

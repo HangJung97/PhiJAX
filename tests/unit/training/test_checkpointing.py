@@ -27,6 +27,8 @@ def _state(weight: float, slot: float, step: int) -> TrainState:
         optimizer_state={"slot": jnp.asarray(slot)},
         balancer_state=BalancerState(weights=jnp.ones(1), traces=jnp.zeros(1)),
         rng_key=jax.random.key(step),
+        sampling_key=jax.random.key(step + 1),
+        balancer_key=jax.random.key(step + 2),
         step=jnp.asarray(step, jnp.int32),
         loss_scale=jnp.asarray(1.0, jnp.float32),
         finite_steps=jnp.asarray(step, jnp.int32),
@@ -37,12 +39,14 @@ def test_orbax_checkpoint_supports_resume_and_weights_only_loading(tmp_path: Pat
     """Verify exact resume restores all fields while weight loading preserves fresh run state."""
     source = _state(weight=2.0, slot=3.0, step=4)
     target = _state(weight=9.0, slot=8.0, step=0)
+    callback_states = {"phijax.callbacks.Example:0": {"last_step": 3}}
     with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
-        assert checkpoint_io.save(source, 4, {"train/loss": 1.0}) is True
+        assert checkpoint_io.save(source, 4, {"train/loss": 1.0}, callback_states=callback_states) is True
         checkpoint_io.wait_until_finished()
         manifest = checkpoint_io._manager.metadata(4).custom_metadata["phijax"]
         resumed = checkpoint_io.restore(target)
         weights_only = checkpoint_io.restore_weights(target)
+        restored_callback_states = checkpoint_io.restore_callback_states()
 
     assert float(resumed.model_state["weight"]) == 2.0
     assert float(resumed.optimizer_state["slot"]) == 3.0
@@ -50,9 +54,11 @@ def test_orbax_checkpoint_supports_resume_and_weights_only_loading(tmp_path: Pat
     assert float(weights_only.model_state["weight"]) == 2.0
     assert float(weights_only.optimizer_state["slot"]) == 8.0
     assert int(weights_only.step) == 0
-    assert manifest["schema_version"] == 1
+    assert manifest["schema_version"] == 2
     assert manifest["step"] == 4
-    assert manifest["phijax_version"] == "0.1.0b1"
+    assert manifest["phijax_version"] == "0.2.0b1"
+    assert manifest["callbacks"] == callback_states
+    assert restored_callback_states == callback_states
 
 
 def test_orbax_checkpoint_manager_opens_lazily_and_reopens(
@@ -111,30 +117,41 @@ def test_checkpoint_state_identifier_tracks_structure_not_values() -> None:
     assert checkpointing_module._state_identifier(first) != checkpointing_module._state_identifier(changed)
 
 
-@pytest.mark.parametrize("producer", ["0.2.0", None])
-def test_checkpoint_manifest_rejects_incompatible_producers(producer: str | None) -> None:
-    """Verify restore validation rejects absent and cross-minor manifests.
+@pytest.mark.parametrize(
+    ("metadata", "message"),
+    [
+        ({}, "manifest"),
+        (
+            {
+                "schema_version": 1,
+                "phijax_version": "0.2.0b1",
+                "step": 4,
+            },
+            "schema",
+        ),
+        (
+            {
+                "schema_version": 2,
+                "phijax_version": "0.1.0b1",
+                "step": 4,
+            },
+            "cannot be restored",
+        ),
+    ],
+)
+def test_checkpoint_manifest_rejects_incompatible_producers(metadata: dict[str, object], message: str) -> None:
+    """Verify restore validation rejects absent, old-schema, and cross-minor manifests.
 
     Args:
-        producer: Incompatible producer version or missing-manifest marker.
+        metadata: Candidate PhiJAX checkpoint manifest fields.
+        message: Expected incompatibility-message fragment.
     """
     target = _state(weight=1.0, slot=2.0, step=0)
     checkpoint_io = OrbaxCheckpointIO.__new__(OrbaxCheckpointIO)
-    custom_metadata = (
-        {}
-        if producer is None
-        else {
-            "phijax": {
-                "schema_version": 1,
-                "phijax_version": producer,
-                "step": 4,
-                "state_identifier": checkpointing_module._state_identifier(target),
-            }
-        }
-    )
+    custom_metadata = {} if not metadata else {"phijax": metadata | {"state_identifier": "unused"}}
     checkpoint_io._manager = SimpleNamespace(
         metadata=lambda step: SimpleNamespace(custom_metadata=custom_metadata),
     )
 
-    with pytest.raises(ValueError, match=r"manifest|cannot be restored"):
+    with pytest.raises(ValueError, match=message):
         checkpoint_io._validate_metadata(target, 4)

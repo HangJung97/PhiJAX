@@ -122,13 +122,13 @@ from phijax.equations import cartesian_3d_navier_stokes
 from phijax.objectives import ResidualTerm
 
 pde_term = ResidualTerm(
-    batch_key="pde",
-    ntk_stream="residual",
-    residual_fn=partial(
+    partial(
         cartesian_3d_navier_stokes,
         pressure_coefficient=1.0,
         viscosity_coefficient=0.01,
     ),
+    batch_key="pde",
+    ntk_stream="residual",
 )
 ```
 
@@ -151,21 +151,21 @@ fidelity = partial(
 objective = CompositeObjective(
     terms={
         "initial": ResidualTerm(
+            fidelity,
             names=("initial/u",),
             batch_key="initial",
             ntk_stream="output",
-            residual_fn=fidelity,
         ),
         "boundary": ResidualTerm(
+            fidelity,
             names=("boundary/u",),
             batch_key="boundary",
             ntk_stream="output",
-            residual_fn=fidelity,
         ),
         "pde": ResidualTerm(
+            partial(heat_1d, diffusivity=0.1, output_index=0),
             batch_key="pde",
             ntk_stream="residual",
-            residual_fn=partial(heat_1d, diffusivity=0.1, output_index=0),
         ),
     }
 )
@@ -207,7 +207,7 @@ def fluid_equation(...) -> ResidualGroups:
 Its term only provides the grouping prefix:
 
 ```python
-term = ResidualTerm(batch_key="pde", residual_fn=fluid_equation)
+term = ResidualTerm(fluid_equation, batch_key="pde")
 ```
 
 This produces `pde/continuity`, `pde/momentum_x`, and `pde/momentum_y`. PhiJAX checks the returned group count at
@@ -222,18 +222,18 @@ Set `ResidualTerm.names` only when the application needs names different from `b
 
 ```python
 measurement_term = ResidualTerm(
+    base_data_fidelity,
     names=("measurement/axial_velocity",),
     batch_key="measurement",
-    residual_fn=base_data_fidelity,
 )
 ```
 
 Explicit names must remain unique and match the equation's outer group count. They do not modify the reusable
 equation's metadata.
 
-## Objective tests
+## Testing an objective
 
-Test equations independently before composing a training experiment:
+Test each equation before adding it to an objective:
 
 - residual shapes and dtypes;
 - analytic or manufactured-solution values;
@@ -243,15 +243,15 @@ Test equations independently before composing a training experiment:
 - invalid coordinate widths and coefficients; and
 - residual-group count and order.
 
-Then compose the objective and verify:
+Then compose the objective and check its final loss names:
 
 ```python
 assert objective.loss_names == ("initial/u", "boundary/u", "pde/heat")
 ```
 
-The [generic objective-term tests](https://github.com/HangJung97/PhiJAX/blob/main/tests/unit/objectives/test_terms.py)
-show grouped reduction and stream validation in isolation. Continue with the [loss-balancer guide](balancers.md) after
-the objective exposes stable loss names.
+The [objective-term tests](https://github.com/HangJung97/PhiJAX/blob/main/tests/unit/objectives/test_terms.py) show
+grouped reduction and stream validation. Continue with the [loss-balancer guide](balancers.md) after the objective
+exposes stable loss names.
 
 For Hydra-based application assembly, see the
 [PhiJAX Hydra template](https://github.com/HangJung97/phijax-hydra-template) and the

@@ -13,7 +13,7 @@ import orbax.checkpoint as ocp
 
 from phijax.training.state import TrainState
 
-_CHECKPOINT_SCHEMA_VERSION = 1
+_CHECKPOINT_SCHEMA_VERSION = 2
 
 
 def _state_identifier(state: TrainState) -> str:
@@ -52,12 +52,17 @@ def _version_line(value: str) -> tuple[int, int]:
     return int(fields[0]), int(fields[1])
 
 
-def _checkpoint_metadata(state: TrainState, step: int) -> dict[str, Any]:
+def _checkpoint_metadata(
+    state: TrainState,
+    step: int,
+    callback_states: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Build versioned metadata stored with one checkpoint step.
 
     Args:
         state: Complete state submitted for saving.
         step: Checkpoint step associated with the state.
+        callback_states: Optional JSON-compatible callback state mapping.
 
     Returns:
         JSON-compatible PhiJAX checkpoint metadata.
@@ -68,6 +73,7 @@ def _checkpoint_metadata(state: TrainState, step: int) -> dict[str, Any]:
             "phijax_version": version("phijax"),
             "step": step,
             "state_identifier": _state_identifier(state),
+            "callbacks": dict(callback_states or {}),
         }
     }
 
@@ -115,10 +121,15 @@ class OrbaxCheckpointIO:
 
         Returns:
             Active Orbax checkpoint manager.
+
+        Raises:
+            RuntimeError: If Orbax does not create a checkpoint manager.
         """
         self.open()
-        assert self._manager is not None
-        return self._manager
+        manager = self._manager
+        if manager is None:
+            raise RuntimeError("Orbax did not create a checkpoint manager.")
+        return manager
 
     @property
     def latest_step(self) -> int | None:
@@ -136,6 +147,7 @@ class OrbaxCheckpointIO:
         metrics: Mapping[str, float] | None = None,
         *,
         force: bool = False,
+        callback_states: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> bool:
         """Submit a complete training state for checkpointing.
 
@@ -144,6 +156,7 @@ class OrbaxCheckpointIO:
             step: Unique checkpoint step.
             metrics: Optional host scalar metrics used by Orbax retention policies.
             force: Whether to save independently of manager policies.
+            callback_states: Optional callback states restored before fit-start hooks.
 
         Returns:
             Whether Orbax initiated a save.
@@ -153,8 +166,38 @@ class OrbaxCheckpointIO:
             args=ocp.args.StandardSave(state),
             metrics=dict(metrics or {}),
             force=force,
-            custom_metadata=_checkpoint_metadata(state, step),
+            custom_metadata=_checkpoint_metadata(state, step, callback_states),
         )
+
+    @property
+    def steps(self) -> tuple[int, ...]:
+        """Return committed checkpoint steps in ascending order.
+
+        Returns:
+            Ordered committed steps.
+        """
+        return tuple(sorted(self._active_manager().all_steps()))
+
+    def checkpoint_path(self, step: int) -> Path:
+        """Return the filesystem path associated with a checkpoint step.
+
+        Args:
+            step: Committed checkpoint step.
+
+        Returns:
+            Expected Orbax step directory.
+        """
+        return self.directory / str(step)
+
+    def delete(self, step: int) -> None:
+        """Delete one committed checkpoint and wait for completion.
+
+        Args:
+            step: Checkpoint step to remove.
+        """
+        manager = self._active_manager()
+        manager.delete(step)
+        manager.wait_until_finished()
 
     def restore(self, target: TrainState, step: int | None = None) -> TrainState:
         """Restore a complete state for exact training resumption.
@@ -219,6 +262,33 @@ class OrbaxCheckpointIO:
         """
         restored = self.restore(target, step)
         return replace(target, model_state=restored.model_state)
+
+    def restore_callback_states(self, step: int | None = None) -> dict[str, Mapping[str, Any]]:
+        """Restore JSON-compatible callback states from checkpoint metadata.
+
+        Args:
+            step: Checkpoint step, or `None` for the latest committed step.
+
+        Returns:
+            Stable callback identifier mapping.
+
+        Raises:
+            FileNotFoundError: If no requested checkpoint exists.
+            ValueError: If callback metadata is malformed.
+        """
+        resolved_step = self.latest_step if step is None else step
+        if resolved_step is None:
+            raise FileNotFoundError(f"No checkpoints exist below `{self.directory}`.")
+        metadata = self._active_manager().metadata(resolved_step).custom_metadata.get("phijax")
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("callbacks"), dict):
+            raise ValueError("Checkpoint does not contain compatible callback state metadata.")
+        callbacks = metadata["callbacks"]
+        malformed = any(
+            not isinstance(identifier, str) or not isinstance(state, dict) for identifier, state in callbacks.items()
+        )
+        if malformed:
+            raise ValueError("Checkpoint callback state metadata is malformed.")
+        return cast(dict[str, Mapping[str, Any]], callbacks)
 
     def wait_until_finished(self) -> None:
         """Block until all asynchronous checkpoint writes have committed."""

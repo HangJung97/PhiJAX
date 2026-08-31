@@ -1,4 +1,4 @@
-from phijax.models.contracts import InitializedModel
+from phijax.models.contracts import InitializedModel, ModelFactory
 from phijax.models.layers import FactorizedDense, PeriodicFeatures, RandomFourierFeatures
 from phijax.models.mlp import MLP, build_mlp
 from phijax.models.modified_mlp import ModifiedMLP, build_modified_mlp
@@ -10,6 +10,7 @@ __all__ = [
     "MLP",
     "FactorizedDense",
     "InitializedModel",
+    "ModelFactory",
     "ModifiedMLP",
     "PeriodicFeatures",
     "PirateBlock",

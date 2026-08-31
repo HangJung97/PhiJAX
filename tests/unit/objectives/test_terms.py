@@ -30,7 +30,6 @@ def _objective(*, viscosity_coefficient: float = 0.0) -> CompositeObjective:
     return CompositeObjective(
         {
             "fidelity": ResidualTerm(
-                (LOSS_NAMES[0],),
                 partial(
                     phase_wrapped_fidelity,
                     output_indices=(0,),
@@ -38,6 +37,7 @@ def _objective(*, viscosity_coefficient: float = 0.0) -> CompositeObjective:
                     target_negation=True,
                 ),
                 batch_key="fidelity",
+                names=(LOSS_NAMES[0],),
                 ntk_stream="output",
             ),
             "boundary": ResidualTerm(
@@ -101,8 +101,8 @@ def test_residual_term_reduces_groups_and_dispatches_ntk_streams() -> None:
         reference = batch["values"]
         return ((3.0 * reference,),) if stream == "output" else ((reference, 2.0 * reference),)
 
-    term = ResidualTerm(("grouped",), grouped_residuals, batch_key="data", ntk_stream="output")
-    residual_term = ResidualTerm(("grouped",), grouped_residuals, batch_key="data")
+    term = ResidualTerm(grouped_residuals, batch_key="data", names=("grouped",), ntk_stream="output")
+    residual_term = ResidualTerm(grouped_residuals, batch_key="data", names=("grouped",))
     batches = {"data": {"values": jnp.ones((2, 1), dtype=jnp.float32)}}
     losses = term.losses(lambda state, point: point, None, batches)
     stream = term.residual_stream("grouped", lambda state, point: point, None, batches)
@@ -141,6 +141,26 @@ def test_composite_terms_expose_scalar_losses_and_raw_streams() -> None:
     assert streams["fidelity/uR"].shape == (2, 1)
     assert streams["boundary/free_slip"].shape == (2, 2)
     assert streams["pde/continuity"].shape == (2, 1)
+
+
+def test_composite_objective_infers_terms_batch_keys_names_and_streams() -> None:
+    """Verify equation shorthand preserves declaration order and decorated metadata."""
+    objective = CompositeObjective.from_equations(
+        {
+            "boundary": partial(free_slip_boundary, output_indices=(0, 1), target_indices=(0, 1)),
+            "pde": partial(polar_navier_stokes, viscosity_coefficient=0.0),
+        }
+    )
+
+    assert objective.batch_keys == ("boundary", "pde")
+    assert objective.loss_names == (
+        "boundary/free_slip",
+        "pde/continuity",
+        "pde/momentum_r",
+        "pde/momentum_th",
+    )
+    assert objective.terms["boundary"].ntk_stream == "output"
+    assert objective.terms["pde"].ntk_stream == "residual"
 
 
 def test_polar_term_supports_nonzero_viscosity() -> None:
@@ -192,17 +212,17 @@ def test_residual_term_validates_configuration_and_equation_groups() -> None:
         return ((jnp.ones((2, 1)),),)
 
     with pytest.raises(ValueError, match="unique non-empty"):
-        ResidualTerm((), one_group, batch_key="data")
+        ResidualTerm(one_group, batch_key="data", names=())
     with pytest.raises(ValueError, match="unique non-empty"):
-        ResidualTerm(("same", "same"), one_group, batch_key="data")
+        ResidualTerm(one_group, batch_key="data", names=("same", "same"))
     with pytest.raises(TypeError, match="callable"):
-        ResidualTerm(("loss",), object(), batch_key="data")  # type: ignore[arg-type]
+        ResidualTerm(object(), batch_key="data", names=("loss",))  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="ntk_stream"):
-        ResidualTerm(("loss",), one_group, batch_key="data", ntk_stream="invalid")  # type: ignore[arg-type]
+        ResidualTerm(one_group, batch_key="data", names=("loss",), ntk_stream="invalid")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="does not define residual names"):
         ResidualTerm(residual_fn=one_group, batch_key="data")
 
-    term = ResidualTerm(("first", "second"), one_group, batch_key="data")
+    term = ResidualTerm(one_group, batch_key="data", names=("first", "second"))
     with pytest.raises(ValueError, match="returned 1 groups"):
         term.losses(lambda state, point: point, None, {"data": {}})
     with pytest.raises(KeyError, match="Unknown objective stream"):

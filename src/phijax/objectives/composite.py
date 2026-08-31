@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Mapping
 from typing import Any
 
@@ -5,7 +7,8 @@ import jax
 import jax.numpy as jnp
 
 from phijax.objectives.base import ObjectiveTerm
-from phijax.types import ModelApply, NamedBatches
+from phijax.objectives.terms import ResidualTerm
+from phijax.types import ModelApply, NamedBatches, ResidualFunction
 
 
 class CompositeObjective:
@@ -17,6 +20,7 @@ class CompositeObjective:
     Attributes:
         terms: Ordered objective terms keyed by stable configuration names.
         loss_names: Flattened stable loss-name ordering across every term.
+        batch_keys: Required DataModule batch names in first-declaration order.
     """
 
     def __init__(self, terms: Mapping[str, ObjectiveTerm]) -> None:
@@ -39,8 +43,27 @@ class CompositeObjective:
         loss_names = tuple(name for term in resolved_terms.values() for name in term.loss_names)
         if not loss_names or len(set(loss_names)) != len(loss_names):
             raise ValueError("Objective term loss names must be non-empty and globally unique.")
+        batch_keys = tuple(dict.fromkeys(key for term in resolved_terms.values() for key in term.batch_keys))
+        if not batch_keys:
+            raise ValueError("Objective terms must expose at least one batch key.")
         self.terms = resolved_terms
         self.loss_names = loss_names
+        self.batch_keys = batch_keys
+
+    @classmethod
+    def from_equations(cls, equations: Mapping[str, ResidualFunction]) -> CompositeObjective:
+        """Create one residual term per named equation.
+
+        Mapping keys route DataModule batches and prefix equation-local loss names. Equation metadata selects the
+        default derivative-balancing stream.
+
+        Args:
+            equations: Non-empty ordered mapping from batch names to decorated residual equations.
+
+        Returns:
+            Composite objective with inferred names, batch routing, and balancing streams.
+        """
+        return cls({name: ResidualTerm(equation, batch_key=name) for name, equation in equations.items()})
 
     def losses(
         self,

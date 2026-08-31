@@ -1,53 +1,42 @@
-import logging
-import signal
-import threading
-from collections.abc import Callable, Iterable, Mapping, Sequence, Sized
+import json
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
 from pathlib import Path
-from types import FrameType
 from typing import Any, Self, cast
 
 import jax
 import numpy as np
 import optax
 
-from phijax.callbacks import Callback, ModelCheckpoint, PredictionContext, PredictionWriter, TrainerContext
+from phijax.balancers import LossBalancer, StaticLossBalancer
+from phijax.callbacks import (
+    Callback,
+    ModelCheckpoint,
+    ModelSummary,
+    PredictionWriter,
+    ProgressBar,
+    TQDMProgressBar,
+)
+from phijax.core import BasePhiModule, PhiModule
 from phijax.data import PhiDataModule
-from phijax.module import BasePhiModule, PhiModuleContext
-from phijax.training.checkpointing import restore_checkpoint
-from phijax.training.lifecycle import TaskLifecycle
-from phijax.training.loggers import ExperimentLogger, LoggerCollection, scalar_metrics
+from phijax.training.assembly import build_training_plan
+from phijax.training.checkpointing import OrbaxCheckpointIO, restore_checkpoint
+from phijax.training.connectors.logger_connector import _LoggerConnector
+from phijax.training.connectors.signal_connector import _SignalConnector
+from phijax.training.loggers import ExperimentLogger, LoggerCollection
+from phijax.training.loops.fit_loop import _BalancerUpdateRuntime, _FitLoop, _state_step
+from phijax.training.loops.prediction_loop import _PredictionLoop
 from phijax.training.plans import TrainingPlan
 from phijax.training.precision import PrecisionPolicy
+from phijax.training.results import FitResult
 from phijax.training.state import TrainState, initialize_train_state
-from phijax.training.steps import TrainStep, make_train_step, with_balancer_updates
+from phijax.training.steps import TrainStep, make_train_step
 from phijax.training.strategies import Strategy, create_strategy
 from phijax.types import JaxDevice
 
 type BatchSource = Iterable[Any] | Callable[[int], Any]
 
-log = logging.getLogger(__name__)
 _MATMUL_PRECISIONS = frozenset({"default", "high", "highest"})
-
-
-@dataclass(frozen=True, slots=True)
-class FitResult:
-    """Summarize the terminal state of one trainer fit call.
-
-    Attributes:
-        state: Final functional training state.
-        metrics: Final host scalar metrics.
-        stopped_early: Whether a callback requested termination.
-        iterations: Number of batches processed by this fit call.
-        interrupted: Whether an operating-system signal or :class:`KeyboardInterrupt` stopped training.
-    """
-
-    state: TrainState
-    metrics: dict[str, float]
-    stopped_early: bool
-    iterations: int
-    interrupted: bool = False
 
 
 class Trainer:
@@ -61,6 +50,7 @@ class Trainer:
         precision: Resolved training precision policy.
         matmul_precision: Optional JAX dot and convolution precision override.
         strategy: Explicit device-placement strategy.
+        enable_progress_bar: Whether fit and prediction tasks display progress.
         prediction_writer: Configured prediction artifact callback, or `None`.
     """
 
@@ -77,8 +67,12 @@ class Trainer:
         loss_scale_growth_interval: int = 2000,
         deterministic: bool = True,
         log_every_n_steps: int = 10,
+        enable_progress_bar: bool = True,
+        enable_model_summary: bool = True,
         callbacks: Iterable[Callback] = (),
-        loggers: Iterable[ExperimentLogger] = (),
+        logger: bool | ExperimentLogger | Iterable[ExperimentLogger] | None = True,
+        default_root_dir: str | Path = ".",
+        loggers: Iterable[ExperimentLogger] | None = None,
         strategy: Strategy | None = None,
         compilation_cache: Mapping[str, Any] | None = None,
     ) -> None:
@@ -95,18 +89,27 @@ class Trainer:
             loss_scale_growth_interval: Finite optimizer updates between FP16 scale increases.
             deterministic: Whether the caller promises deterministic data and step behavior.
             log_every_n_steps: Positive interval between scalar logger updates.
+            enable_progress_bar: Whether to enable a TQDM or explicitly configured progress callback.
+            enable_model_summary: Whether to add a plain model summary when none is supplied explicitly.
             callbacks: Ordered host-side lifecycle callbacks.
-            loggers: Logging backends receiving the same hyperparameters and metrics.
+            logger: Default logger flag, one backend, several backends, or `None` to disable logging.
+            default_root_dir: Parent directory for versioned default local logs.
+            loggers: Deprecated plural alias for an explicit iterable of logging backends.
             strategy: Explicit placement strategy overriding `accelerator` and `devices`.
             compilation_cache: Optional mapping with `enabled` and `directory` values applied before device discovery.
 
         Raises:
-            ValueError: If a step, interval, or matrix-multiplication precision option is invalid.
+            TypeError: If a display flag or logger configuration has an invalid type.
+            ValueError: If a step, interval, callback, logger, or matrix-multiplication precision option is invalid.
         """
         if max_steps < 1:
             raise ValueError("`max_steps` must be positive.")
         if log_every_n_steps < 1:
             raise ValueError("`log_every_n_steps` must be positive.")
+        if not isinstance(enable_progress_bar, bool):
+            raise TypeError("`enable_progress_bar` must be a boolean.")
+        if not isinstance(enable_model_summary, bool):
+            raise TypeError("`enable_model_summary` must be a boolean.")
         if matmul_precision is not None and matmul_precision not in _MATMUL_PRECISIONS:
             choices = ", ".join(sorted(_MATMUL_PRECISIONS))
             raise ValueError(f"`matmul_precision` must be `None` or one of: {choices}.")
@@ -127,7 +130,24 @@ class Trainer:
         self.strategy = strategy or create_strategy(accelerator, devices)
         self.deterministic = deterministic
         self.log_every_n_steps = log_every_n_steps
-        self.callbacks = tuple(callbacks)
+        resolved_callbacks = tuple(callbacks)
+        progress_callbacks = tuple(callback for callback in resolved_callbacks if isinstance(callback, ProgressBar))
+        if len(progress_callbacks) > 1:
+            raise ValueError("Only one progress-bar callback may be configured.")
+        if enable_progress_bar and not progress_callbacks:
+            resolved_callbacks += (TQDMProgressBar(total=max_steps, refresh_rate=log_every_n_steps),)
+        elif not enable_progress_bar:
+            for progress_callback in progress_callbacks:
+                progress_callback.disable()
+        self.enable_progress_bar = enable_progress_bar
+        summary_callbacks = tuple(callback for callback in resolved_callbacks if isinstance(callback, ModelSummary))
+        if len(summary_callbacks) > 1:
+            raise ValueError("Only one model-summary callback may be configured.")
+        if enable_model_summary and not summary_callbacks:
+            resolved_callbacks += (ModelSummary(warn_if_unavailable=False),)
+        self.enable_model_summary = enable_model_summary
+        self.callbacks = resolved_callbacks
+        self._callback_identifiers = _callback_identifiers(self.callbacks)
         checkpoint_callbacks = tuple(callback for callback in self.callbacks if isinstance(callback, ModelCheckpoint))
         if len(checkpoint_callbacks) > 1:
             raise ValueError("Only one `ModelCheckpoint` callback may be configured.")
@@ -136,9 +156,142 @@ class Trainer:
         if len(prediction_writers) > 1:
             raise ValueError("Only one `PredictionWriter` callback may be configured.")
         self.prediction_writer = prediction_writers[0] if prediction_writers else None
-        self.logger = LoggerCollection(loggers)
-        self.interrupted = False
-        self.received_sigterm = False
+        if loggers is not None:
+            if logger is not True:
+                raise ValueError("Configure either `logger` or the deprecated `loggers` alias, not both.")
+            logger = tuple(loggers)
+        self.default_root_dir = Path(default_root_dir).expanduser().resolve()
+        self._logger_connector = _LoggerConnector(
+            logger,
+            self.default_root_dir,
+            callbacks=self.callbacks,
+            is_global_zero=self.strategy.is_global_zero,
+        )
+        self._signal_connector = _SignalConnector()
+        self._fit_loop = _FitLoop(self)
+        self._prediction_loop = _PredictionLoop(self)
+        self._pending_callback_states: Mapping[str, Mapping[str, Any]] | None = None
+        for callback in self.callbacks:
+            callback.connect(self)
+
+    @property
+    def logger(self) -> LoggerCollection:
+        """Return the configured experiment logger collection.
+
+        Returns:
+            Active logger collection.
+        """
+        return self._logger_connector.logger
+
+    @property
+    def interrupted(self) -> bool:
+        """Return whether the latest fit was interrupted.
+
+        Returns:
+            Current signal connector interruption state.
+        """
+        return self._signal_connector.interrupted
+
+    @interrupted.setter
+    def interrupted(self, value: bool) -> None:
+        """Update interruption state for integrations and tests.
+
+        Args:
+            value: New interruption flag.
+        """
+        self._signal_connector.interrupted = value
+
+    @property
+    def received_sigterm(self) -> bool:
+        """Return whether the latest fit received `SIGTERM`.
+
+        Returns:
+            Current signal connector termination flag.
+        """
+        return self._signal_connector.received_sigterm
+
+    @received_sigterm.setter
+    def received_sigterm(self, value: bool) -> None:
+        """Update termination state for integrations and tests.
+
+        Args:
+            value: New termination flag.
+        """
+        self._signal_connector.received_sigterm = value
+
+    @property
+    def logged_metrics(self) -> Mapping[str, Any]:
+        """Return metrics selected for experiment loggers at the latest completed step.
+
+        Returns:
+            Immutable-by-convention logger metric mapping.
+        """
+        return self._logger_connector.logged_metrics
+
+    @property
+    def progress_bar_metrics(self) -> Mapping[str, Any]:
+        """Return metrics selected for progress display at the latest completed step.
+
+        Returns:
+            Immutable-by-convention progress metric mapping.
+        """
+        return self._logger_connector.progress_bar_metrics
+
+    @property
+    def callback_metrics(self) -> Mapping[str, Any]:
+        """Return the complete latest metric mapping used by callbacks and fit results.
+
+        Returns:
+            Complete merged metric mapping.
+        """
+        return self._logger_connector.callback_metrics
+
+    def set_logger(self, logger: ExperimentLogger | Iterable[ExperimentLogger] | None) -> None:
+        """Replace configured experiment loggers before running a task.
+
+        Args:
+            logger: One logger, several loggers, or `None` to disable logging.
+        """
+        self._logger_connector.set_logger(logger)
+
+    def callback_state_dict(self) -> dict[str, Mapping[str, Any]]:
+        """Collect JSON-compatible persistent state from every callback.
+
+        Returns:
+            Stable callback identifiers mapped to persistent callback state.
+
+        Raises:
+            TypeError: If a callback returns a non-mapping or non-JSON-compatible state.
+        """
+        states: dict[str, Mapping[str, Any]] = {}
+        for identifier, callback in zip(self._callback_identifiers, self.callbacks, strict=True):
+            state = callback.state_dict()
+            if not isinstance(state, Mapping):
+                raise TypeError(f"{type(callback).__name__}.state_dict() must return a mapping.")
+            try:
+                json.dumps(state)
+            except (TypeError, ValueError) as error:
+                raise TypeError(f"Callback state `{identifier}` must be JSON-compatible.") from error
+            states[identifier] = dict(state)
+        return states
+
+    def load_callback_state_dict(self, states: Mapping[str, Mapping[str, Any]]) -> None:
+        """Restore callback states using stable identifiers.
+
+        Args:
+            states: Checkpoint callback states.
+
+        Raises:
+            ValueError: If checkpoint and Trainer callback identifiers differ.
+        """
+        expected = set(self._callback_identifiers)
+        received = set(states)
+        if received != expected:
+            missing = sorted(expected - received)
+            unexpected = sorted(received - expected)
+            raise ValueError(f"Checkpoint callback state is incompatible; missing={missing}, unexpected={unexpected}.")
+        for identifier, callback in zip(self._callback_identifiers, self.callbacks, strict=True):
+            callback.load_state_dict(states[identifier])
 
     def print_environment_info(self) -> None:
         """Print Lightning-style precision and accelerator information on global rank zero."""
@@ -177,7 +330,10 @@ class Trainer:
         model_state: Any,
         optimizer: optax.GradientTransformation,
         balancer_state: Any,
-        rng_key: jax.Array,
+        key: jax.Array,
+        *,
+        sampling_key: jax.Array | None = None,
+        balancer_key: jax.Array | None = None,
     ) -> TrainState:
         """Initialize functional state with this trainer's precision policy.
 
@@ -185,12 +341,22 @@ class Trainer:
             model_state: Explicit differentiable model parameter PyTree.
             optimizer: Optax transformation used to initialize optimizer slots.
             balancer_state: Initial loss-balancer state.
-            rng_key: Explicit training PRNG key returned or derived from :func:`phijax.utils.seed_everything`.
+            key: Root training key, or model-runtime key when both persistent keys are supplied.
+            sampling_key: Optional explicit DataModule sampling key.
+            balancer_key: Optional explicit adaptive-balancer diagnostic key.
 
         Returns:
             Complete precision-aware training state.
         """
-        return initialize_train_state(model_state, optimizer, balancer_state, rng_key, self.precision)
+        return initialize_train_state(
+            model_state,
+            optimizer,
+            balancer_state,
+            key,
+            self.precision,
+            sampling_key=sampling_key,
+            balancer_key=balancer_key,
+        )
 
     def compile_train_step(
         self,
@@ -209,39 +375,6 @@ class Trainer:
             Reusable JIT-compiled training step.
         """
         return make_train_step(module, balancer, optimizer, self.precision)
-
-    def _collect_callback_metrics(
-        self,
-        context: TrainerContext,
-        existing_metrics: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        """Collect and validate metrics contributed by configured callbacks.
-
-        Args:
-            context: Current post-module trainer context.
-            existing_metrics: Metrics already produced by the compiled step and module.
-
-        Returns:
-            Uniquely named callback metrics in callback declaration order.
-
-        Raises:
-            TypeError: If a callback does not return a mapping.
-            ValueError: If a callback returns an invalid or colliding metric name.
-        """
-        callback_metrics: dict[str, Any] = {}
-        for callback in self.callbacks:
-            contributed_metrics = callback.training_metrics(context)
-            if not isinstance(contributed_metrics, Mapping):
-                raise TypeError(f"{type(callback).__name__}.training_metrics() must return a mapping.")
-            invalid_names = tuple(name for name in contributed_metrics if not isinstance(name, str) or not name.strip())
-            if invalid_names:
-                raise ValueError(f"Callback metric names must be non-empty strings: {invalid_names}.")
-            existing_names = set(existing_metrics) | set(callback_metrics)
-            collisions = existing_names & set(contributed_metrics)
-            if collisions:
-                raise ValueError(f"Callback metrics collide with existing names: {sorted(collisions)}.")
-            callback_metrics.update(contributed_metrics)
-        return callback_metrics
 
     def prepare_batch_source[SourceT](self, source: SourceT) -> SourceT:
         """Prepare persistent sampler state for this Trainer's process-local root device.
@@ -277,6 +410,78 @@ class Trainer:
 
     def fit(
         self,
+        module: PhiModule,
+        *,
+        datamodule: PhiDataModule,
+        optimizer: optax.GradientTransformation,
+        seed: int | jax.Array,
+        balancer: LossBalancer | None = None,
+        hyperparameters: Mapping[str, Any] | None = None,
+        ckpt_path: str | Path | None = None,
+        ckpt_step: int | None = None,
+        weights_only: bool = False,
+    ) -> FitResult:
+        """Initialize and fit a module blueprint through the concise application API.
+
+        Args:
+            module: Unbound :class:`PhiModule` containing a model factory and objective.
+            datamodule: Application DataModule supplying normalization statistics and training batches.
+            optimizer: Optax transformation used to initialize state and compile updates.
+            seed: Integer seed or valid JAX key. PhiJAX does not modify Python or NumPy global random state.
+            balancer: Functional loss balancer, or `None` for equal static weights.
+            hyperparameters: Optional resolved configuration recorded before the first update.
+            ckpt_path: Optional Orbax checkpoint root, or `"last"` for the configured callback's latest checkpoint.
+            ckpt_step: Exact checkpoint step, or `None` for the latest committed step.
+            weights_only: Whether to restore only model weights into the fresh state.
+
+        Returns:
+            Bound module, final state, metrics, and termination status.
+
+        Raises:
+            TypeError: If `seed` is not an integer or JAX key.
+            ValueError: If model, balancing, checkpoint, or DataModule options are inconsistent.
+        """
+        datamodule.prepare_stage("fit")
+        fit_state_owns_teardown = False
+        try:
+            root_key = _normalize_seed(seed)
+            model_key, runtime_key, sampling_key, balancer_key = jax.random.split(root_key, 4)
+            statistics = datamodule.input_statistics()
+            input_mean, input_std = (None, None) if statistics is None else statistics
+            with jax.default_device(self.strategy.root_device):
+                bound_module, model_state = module.prepare_model(
+                    key=model_key,
+                    input_mean=input_mean,
+                    input_std=input_std,
+                    precision=self.precision,
+                )
+                resolved_balancer = StaticLossBalancer(bound_module.loss_names) if balancer is None else balancer
+                plan = build_training_plan(self, bound_module, resolved_balancer, optimizer)
+                state = self.initialize_state(
+                    model_state,
+                    optimizer,
+                    resolved_balancer.initialize(),
+                    runtime_key,
+                    sampling_key=sampling_key,
+                    balancer_key=balancer_key,
+                )
+            fit_state_owns_teardown = True
+            return self.fit_state(
+                bound_module,
+                plan,
+                state,
+                hyperparameters=hyperparameters,
+                ckpt_path=ckpt_path,
+                ckpt_step=ckpt_step,
+                weights_only=weights_only,
+                datamodule=datamodule,
+            )
+        finally:
+            if not fit_state_owns_teardown:
+                datamodule.teardown_stage("fit")
+
+    def fit_state(
+        self,
         module: BasePhiModule,
         training: TrainingPlan | TrainStep,
         state: TrainState,
@@ -287,51 +492,53 @@ class Trainer:
         ckpt_step: int | None = None,
         weights_only: bool = False,
         datamodule: PhiDataModule | None = None,
-        sampling_key: jax.Array | None = None,
-        balancer_key: jax.Array | None = None,
     ) -> FitResult:
-        """Run training under the configured matrix-multiplication precision policy.
+        """Fit an explicitly initialized module, state, and resolved numerical plan.
 
         Args:
-            module: Application module owning model, objective, and lifecycle behavior.
-            training: Configured training plan, or a compiled step when `batches` is supplied explicitly.
+            module: Bound custom module owning model, objective, and lifecycle behavior.
+            training: Resolved training plan, or a compiled step when `batches` is supplied explicitly.
             state: Initial functional training state and restore template.
-            batches: Optional explicit step-indexed callable or finite iterable batch source. When omitted, the
-                Trainer requests a source from `datamodule` using the plan's batch keys.
+            batches: Optional explicit step-indexed callable or finite iterable source.
             hyperparameters: Optional resolved configuration recorded before the first update.
-            ckpt_path: Optional Orbax checkpoint root used for resumption or weight initialization.
+            ckpt_path: Optional Orbax checkpoint root, or `"last"` for the configured callback's latest checkpoint.
             ckpt_step: Exact checkpoint step, or `None` for the latest committed step.
             weights_only: Whether to restore only model weights into the fresh state.
-            datamodule: Optional DataModule prepared, queried, and torn down for the fit stage.
-            sampling_key: Explicit source-sampling key required when `batches` is omitted.
-            balancer_key: Explicit diagnostic-sampling key required by adaptive plans with fixed diagnostic batches.
+            datamodule: Optional DataModule supplying the source when `batches` is omitted.
 
         Returns:
-            Final state, metrics, stop status, and processed batch count.
+            Bound module, final state, metrics, and termination status.
 
         Raises:
             ValueError: If checkpoint restoration or DataModule source options are incomplete or invalid.
+            RuntimeError: If a custom training step does not increment `TrainState.step` exactly once.
             BaseException: Re-raises training lifecycle errors after cleanup.
         """
         try:
             plan = training if isinstance(training, TrainingPlan) else TrainingPlan(training)
-            batches = self._training_batch_source(plan, batches, datamodule, sampling_key)
-            train_step = self._training_step(plan, batches, balancer_key)
-            state = restore_checkpoint(
+            self._pending_callback_states = None
+            state = self._restore_state(
                 state,
                 ckpt_path,
+                ckpt_step,
                 weights_only=weights_only,
-                step=ckpt_step,
+                restore_callbacks=not weights_only and ckpt_path is not None,
             )
+            state = self.strategy.place_state(state)
+            initial_step = _state_step(state)
+            batches = self._training_batch_source(plan, batches, datamodule, state.sampling_key)
+            balancer_update = self._balancer_update_runtime(plan, batches, state.balancer_key, initial_step)
             precision_context = (
                 nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
             )
             with precision_context:
-                return self._fit(
+                return self._fit_loop.run(
                     module,
-                    train_step,
+                    plan.train_step,
                     state,
                     batches,
+                    initial_step=initial_step,
+                    balancer_update=balancer_update,
                     hyperparameters=hyperparameters,
                 )
         finally:
@@ -362,7 +569,7 @@ class Trainer:
         if batches is not None:
             return self.prepare_batch_source(batches)
         if datamodule is None:
-            raise ValueError("`Trainer.fit()` requires either explicit `batches` or a `datamodule`.")
+            raise ValueError("`Trainer.fit_state()` requires either explicit `batches` or a `datamodule`.")
         if not plan.batch_keys:
             raise ValueError("A DataModule-owned training source requires non-empty `TrainingPlan.batch_keys`.")
         if sampling_key is None:
@@ -370,318 +577,81 @@ class Trainer:
         datamodule.prepare_stage("fit")
         return self.prepare_batch_source(datamodule.train_batch_source(plan.batch_keys, sampling_key))
 
-    def _training_step(
+    def _balancer_update_runtime(
         self,
         plan: TrainingPlan,
         batches: BatchSource,
-        balancer_key: jax.Array | None,
-    ) -> TrainStep:
-        """Bind optional adaptive-balancer diagnostics to a configured training step.
+        balancer_key: jax.Array,
+        initial_step: int,
+    ) -> _BalancerUpdateRuntime | None:
+        """Resolve optional adaptive-balancer diagnostics for host scheduling.
 
         Args:
             plan: Training plan containing the compiled optimizer step and optional update schedule.
             batches: Prepared training source used for fixed diagnostic sampling when requested.
-            balancer_key: Optional explicit diagnostic sampling key.
+            balancer_key: Persistent adaptive-balancer diagnostic key from the restored state.
+            initial_step: Restored global step folded into fixed diagnostic sampling.
 
         Returns:
-            Compiled step or host-scheduled adaptive wrapper ready for the fit loop.
+            Resolved adaptive update runtime, or `None` for static balancing.
 
         Raises:
             TypeError: If fixed diagnostics are requested from a source without explicit sampling support.
-            ValueError: If fixed diagnostic sampling has no `balancer_key`.
         """
-        schedule = plan.balancer_update
-        if schedule is None:
-            return plan.train_step
+        update_plan = plan.balancer_update
+        if update_plan is None:
+            return None
         update_batches = None
-        if schedule.plan.batch_sizes is not None:
-            if balancer_key is None:
-                raise ValueError("Fixed adaptive-balancer diagnostics require an explicit `balancer_key`.")
+        if update_plan.batch_sizes is not None:
             sample = getattr(batches, "sample", None)
             if not callable(sample):
                 raise TypeError("Fixed adaptive-balancer diagnostics require a training source with `sample()`.")
-            update_batches = self.prepare_batch(sample(balancer_key, schedule.plan.batch_sizes))
-        return with_balancer_updates(
-            plan.train_step,
-            schedule.plan.update,
-            update_batches,
-            schedule.every_n_steps,
-            skip_first_step=schedule.skip_first_step,
-        )
-
-    def _fit(
-        self,
-        module: BasePhiModule,
-        train_step: TrainStep,
-        state: TrainState,
-        batches: BatchSource,
-        *,
-        hyperparameters: Mapping[str, Any] | None = None,
-    ) -> FitResult:
-        """Run compiled training updates over a callable or finite iterable batch source.
-
-        Args:
-            module: Application module owning model and objective behavior plus overridable host lifecycle hooks.
-            train_step: Compiled function mapping state and one batch to updated state and scalar metrics.
-            state: Initial functional training state and restore template.
-            batches: Callable accepting the global optimizer step, including the restored state offset, or a finite
-                batch iterable.
-            hyperparameters: Optional resolved configuration recorded before the first update.
-
-        Returns:
-            Final state, metrics, stop status, and processed batch count.
-
-        Raises:
-            BaseException: Re-raises any module, callback, data-source, compiled-step, logging, or checkpoint error
-                after exception hooks and logger finalization run.
-        """
-        state = self.strategy.place_state(state)
-        batch_iterator = None if callable(batches) else iter(batches)
-        initial_step = _state_step(state)
-        context = TrainerContext(
-            state=state,
-            step=initial_step,
-            metrics={},
-            module=module,
-            is_global_zero=self.strategy.is_global_zero,
-        )
-        module_context = PhiModuleContext(step=initial_step, metrics={})
-        module_metrics: dict[str, Any] = {}
-        callback_metrics: dict[str, Any] = {}
-        final_metrics: dict[str, float] = {}
-        stopped_early = False
-        iterations = 0
-        metrics_iteration = 0
-        lifecycle = TaskLifecycle(
-            self.callbacks,
-            module,
-            self.logger,
-            is_global_zero=self.strategy.is_global_zero,
-        )
-        self.interrupted = False
-        self.received_sigterm = False
-        signal_handler = _FitSignalHandler(self)
-        signal_handler.install()
-
-        try:
-            lifecycle.setup()
-            if self.strategy.is_global_zero:
-                self.logger.log_hyperparameters(dict(hyperparameters or {}))
-            for callback in self.callbacks:
-                callback.on_fit_start(context)
-            model_state = module.on_fit_start(state.model_state, module_context)
-            state = replace(state, model_state=model_state)
-            context = TrainerContext(
-                state=state,
-                step=initial_step,
-                metrics={},
-                module=module,
-                is_global_zero=self.strategy.is_global_zero,
-            )
-
-            for iteration in range(self.max_steps):
-                try:
-                    global_step = initial_step + iteration
-                    batch = batches(global_step) if callable(batches) else next(batch_iterator)  # type: ignore[arg-type]
-                except StopIteration:
-                    break
-                batch = self.prepare_batch(batch)
-                for callback in self.callbacks:
-                    callback.on_train_batch_start(context)
-                model_state, batch = module.on_train_batch_start(state.model_state, batch, module_context)
-                state = replace(state, model_state=model_state)
-                context = TrainerContext(
-                    state=state,
-                    step=_state_step(state),
-                    metrics=dict(module_context.metrics),
-                    module=module,
-                    is_global_zero=self.strategy.is_global_zero,
-                )
-
-                state, device_metrics = train_step(state, batch)
-                step = _state_step(state)
-                module_context = PhiModuleContext(step=step, metrics=dict(device_metrics))
-                iterations += 1
-                should_log = iterations == 1 or iterations % self.log_every_n_steps == 0
-                context = TrainerContext(
-                    state=state,
-                    step=step,
-                    metrics=dict(device_metrics),
-                    module=module,
-                    is_global_zero=self.strategy.is_global_zero,
-                    should_log=should_log,
-                )
-                stop_requests = [callback.on_train_batch_end(context) for callback in self.callbacks]
-                stopped_early = any(stop_requests)
-                model_state, device_metrics = module.on_train_batch_end(state.model_state, module_context)
-                state = replace(state, model_state=model_state)
-                module_metrics = dict(device_metrics)
-                module_context = PhiModuleContext(step=step, metrics=dict(device_metrics))
-                context = TrainerContext(
-                    state=state,
-                    step=step,
-                    metrics=dict(device_metrics),
-                    module=module,
-                    is_global_zero=self.strategy.is_global_zero,
-                    should_log=should_log,
-                )
-                callback_metrics = self._collect_callback_metrics(context, module_metrics)
-                if callback_metrics:
-                    device_metrics = {**device_metrics, **callback_metrics}
-                    module_context = PhiModuleContext(step=step, metrics=dict(device_metrics))
-                    context = TrainerContext(
-                        state=state,
-                        step=step,
-                        metrics=dict(device_metrics),
-                        module=module,
-                        is_global_zero=self.strategy.is_global_zero,
-                        should_log=should_log,
-                    )
-
-                if should_log or stopped_early or iteration == self.max_steps - 1:
-                    jax.block_until_ready(device_metrics)
-                    final_metrics = scalar_metrics(device_metrics)
-                    metrics_iteration = iterations
-                if should_log and self.strategy.is_global_zero:
-                    self.logger.log_metrics(final_metrics, step)
-                if stopped_early:
-                    break
-
-            context = TrainerContext(
-                state=state,
-                step=_state_step(state),
-                metrics=module_metrics,
-                module=module,
-                is_global_zero=self.strategy.is_global_zero,
-                is_fit_end=True,
-            )
-            final_callback_metrics = self._collect_callback_metrics(context, module_metrics)
-            terminal_metrics = {**module_metrics, **callback_metrics, **final_callback_metrics}
-            module_context = PhiModuleContext(step=context.step, metrics=terminal_metrics)
-            context = TrainerContext(
-                state=state,
-                step=context.step,
-                metrics=terminal_metrics,
-                module=module,
-                is_global_zero=self.strategy.is_global_zero,
-                is_fit_end=True,
-            )
-            if context.metrics and (metrics_iteration != iterations or final_callback_metrics):
-                jax.block_until_ready(context.metrics)
-                final_metrics = scalar_metrics(context.metrics)
-            if final_callback_metrics and self.strategy.is_global_zero:
-                self.logger.log_metrics(final_metrics, context.step)
-            for callback in self.callbacks:
-                callback.on_fit_end(context)
-            model_state = module.on_fit_end(state.model_state, module_context)
-            state = replace(state, model_state=model_state)
-            context = TrainerContext(
-                state=state,
-                step=_state_step(state),
-                metrics=dict(module_context.metrics),
-                module=module,
-                is_global_zero=self.strategy.is_global_zero,
-                is_fit_end=True,
-            )
-            lifecycle.finalize("success")
-            return FitResult(
-                state=state,
-                metrics=final_metrics,
-                stopped_early=stopped_early,
-                interrupted=False,
-                iterations=iterations,
-            )
-        except KeyboardInterrupt as error:
-            self.interrupted = True
-            lifecycle.handle_exception(error, context, module_context)
-            if context.metrics:
-                jax.block_until_ready(context.metrics)
-                final_metrics = scalar_metrics(context.metrics)
-            if self.strategy.is_global_zero:
-                log.warning(f"Training interrupted at step {context.step}; preserving the last completed state.")
-                lifecycle.finalize("interrupted")
-            return FitResult(
-                state=context.state,
-                metrics=final_metrics,
-                stopped_early=False,
-                interrupted=True,
-                iterations=iterations,
-            )
-        except SystemExit as error:
-            if not self.received_sigterm:
-                lifecycle.handle_exception(error, context, module_context)
-                lifecycle.finalize("failed")
-                raise
-            self.interrupted = True
-            lifecycle.handle_exception(error, context, module_context)
-            if context.metrics:
-                jax.block_until_ready(context.metrics)
-            if self.strategy.is_global_zero:
-                log.warning(f"Training received SIGTERM at step {context.step}; terminating after checkpoint cleanup.")
-            lifecycle.finalize("interrupted")
-            raise
-        except BaseException as error:
-            lifecycle.handle_exception(error, context, module_context)
-            lifecycle.finalize("failed")
-            raise
-        finally:
-            signal_handler.restore()
-            lifecycle.teardown()
-
-    def resume_latest(
-        self,
-        module: BasePhiModule,
-        training: TrainingPlan | TrainStep,
-        state: TrainState,
-        batches: BatchSource | None = None,
-        *,
-        hyperparameters: Mapping[str, Any] | None = None,
-        datamodule: PhiDataModule | None = None,
-        sampling_key: jax.Array | None = None,
-        balancer_key: jax.Array | None = None,
-    ) -> FitResult:
-        """Restore the latest full checkpoint and continue fitting.
-
-        Args:
-            module: Application module supplied to :meth:`fit` after restoration.
-            training: Configured training plan, or compiled step paired with explicit `batches`.
-            state: Restore template matching the checkpoint structure.
-            batches: Optional explicit callable or finite iterable batch source.
-            hyperparameters: Optional resolved configuration logged before updates.
-            datamodule: Optional DataModule supplying the default source.
-            sampling_key: Explicit DataModule source-sampling key.
-            balancer_key: Explicit adaptive-balancer diagnostic key.
-
-        Returns:
-            Result from the resumed fit call.
-
-        Raises:
-            ValueError: If checkpointing is not configured.
-            FileNotFoundError: If no checkpoint is available.
-        """
-        if self.checkpoint_callback is None:
-            raise ValueError("`resume_latest()` requires a configured `ModelCheckpoint` callback.")
-        checkpoint_io = self.checkpoint_callback.checkpoint_io
-        try:
-            checkpoint_io.open()
-            latest_step = checkpoint_io.latest_step
-            if latest_step is None:
-                raise FileNotFoundError("No checkpoint is available for resumption.")
-            state = checkpoint_io.restore(state, latest_step)
-        finally:
-            checkpoint_io.close()
-        return self.fit(
-            module,
-            training,
-            state,
-            batches,
-            hyperparameters=hyperparameters,
-            datamodule=datamodule,
-            sampling_key=sampling_key,
-            balancer_key=balancer_key,
+            diagnostic_key = jax.random.fold_in(balancer_key, initial_step)
+            update_batches = self.prepare_batch(sample(diagnostic_key, update_plan.batch_sizes))
+        return _BalancerUpdateRuntime(
+            update=update_plan.update,
+            batches=update_batches,
+            every_n_steps=update_plan.every_n_steps,
+            update_start_step=update_plan.update_start_step,
         )
 
     def predict(
+        self,
+        result: FitResult,
+        batches: Iterable[Mapping[str, Any]] | None = None,
+        *,
+        datamodule: PhiDataModule | None = None,
+        ckpt_path: str | Path | None = None,
+        ckpt_step: int | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        return_predictions: bool = True,
+    ) -> np.ndarray | None:
+        """Predict from the bound module and functional state returned by :meth:`fit`.
+
+        Args:
+            result: Completed fit result containing the bound module and state.
+            batches: Optional finite prediction batch iterable. When omitted, use `datamodule`.
+            datamodule: Optional DataModule supplying prediction batches.
+            ckpt_path: Optional Orbax checkpoint root, or `"last"` for the configured callback's latest checkpoint.
+            ckpt_step: Exact checkpoint step, or `None` for the latest committed step.
+            metadata: Optional immutable metadata exposed to prediction callbacks.
+            return_predictions: Whether to concatenate and return host predictions.
+
+        Returns:
+            Concatenated host predictions, or `None` when collection is disabled or prediction data is unavailable.
+        """
+        return self.predict_state(
+            result.module,
+            result.state,
+            batches,
+            datamodule=datamodule,
+            ckpt_path=ckpt_path,
+            ckpt_step=ckpt_step,
+            metadata=metadata,
+            return_predictions=return_predictions,
+        )
+
+    def predict_state(
         self,
         module: BasePhiModule,
         state: TrainState,
@@ -693,7 +663,7 @@ class Trainer:
         return_predictions: bool = True,
         datamodule: PhiDataModule | None = None,
     ) -> np.ndarray | None:
-        """Restore optional checkpoint weights and run prediction under the configured precision policy.
+        """Predict from an explicitly bound module and functional state template.
 
         This follows Lightning's `ckpt_path` convention while preserving PhiJAX's explicit functional state. The
         supplied `state` defines the complete Orbax restore structure; only its model state is replaced for prediction.
@@ -725,17 +695,12 @@ class Trainer:
                 batches = datamodule.predict_batch_source()
                 if batches is None:
                     return None
-            restored_state = restore_checkpoint(
-                state,
-                ckpt_path,
-                weights_only=ckpt_path is not None,
-                step=ckpt_step,
-            )
+            restored_state = self._restore_state(state, ckpt_path, ckpt_step, weights_only=ckpt_path is not None)
             precision_context = (
                 nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
             )
             with precision_context:
-                return self._predict(
+                return self._prediction_loop.run(
                     module,
                     restored_state.model_state,
                     batches,
@@ -746,123 +711,56 @@ class Trainer:
             if datamodule is not None:
                 datamodule.teardown_stage("predict")
 
-    def _predict(
+    def _restore_state(
         self,
-        module: BasePhiModule,
-        model_state: Any,
-        batches: Iterable[Mapping[str, Any]],
+        state: TrainState,
+        ckpt_path: str | Path | None,
+        ckpt_step: int | None,
         *,
-        metadata: Mapping[str, Any] | None = None,
-        return_predictions: bool = True,
-    ) -> np.ndarray | None:
-        """Run fixed-size prediction batches with callback lifecycle dispatch.
-
-        Callbacks run before matching module hooks. Batch-end hooks receive each valid, unpadded output, while epoch-end
-        and predict-end hooks receive the final concatenated host array when collection is enabled.
+        weights_only: bool,
+        restore_callbacks: bool = False,
+    ) -> TrainState:
+        """Restore an explicit checkpoint path or the configured callback's latest state.
 
         Args:
-            module: Application module exposing :meth:`BasePhiModule.predict_step`.
-            model_state: Explicit restored model parameter PyTree.
-            batches: Finite iterable of prediction batches, optionally containing a Boolean `mask`.
-            metadata: Optional immutable task metadata exposed to prediction callbacks.
-            return_predictions: Whether to collect and concatenate batch predictions on the host. Set to `False` when
-                prediction callbacks stream results to external storage.
+            state: Fresh state or restore template.
+            ckpt_path: Explicit checkpoint root, `"last"`, or `None`.
+            ckpt_step: Optional explicit checkpoint step.
+            weights_only: Whether to replace only `model_state`.
+            restore_callbacks: Whether to stage callback state for restoration before fit-start hooks.
 
         Returns:
-            Concatenated host predictions in batch iteration order, or `None` when `return_predictions` is `False`.
+            Restored state, or `state` when no checkpoint is selected.
 
         Raises:
-            ValueError: If `batches` is empty.
-            BaseException: Re-raises prediction or callback failures after exception hooks and finalization.
+            ValueError: If `"last"` is combined with an explicit step or checkpointing is unavailable.
+            FileNotFoundError: If the configured callback has no committed checkpoint.
         """
-        model_state = self.strategy.place_state(model_state)
-        task_metadata = dict(metadata or {})
-        prediction_pool = getattr(batches, "pool", None)
-        total_batches = len(batches) if isinstance(batches, Sized) else None
-        context = PredictionContext(
-            outputs=None,
-            batch_index=None,
-            metadata=task_metadata,
-            total_batches=total_batches,
-            pool=prediction_pool,
-            is_global_zero=self.strategy.is_global_zero,
-        )
-        module_context = PhiModuleContext(step=0, metrics={})
-        lifecycle = TaskLifecycle(
-            self.callbacks,
-            module,
-            self.logger,
-            is_global_zero=self.strategy.is_global_zero,
-        )
-        outputs: list[np.ndarray] = []
-        batch_count = 0
+        if ckpt_path != "last":
+            if not restore_callbacks or ckpt_path is None:
+                return restore_checkpoint(state, ckpt_path, weights_only=weights_only, step=ckpt_step)
+            with OrbaxCheckpointIO(ckpt_path, max_to_keep=None, enable_async_checkpointing=False) as checkpoint_io:
+                restored = checkpoint_io.restore(state, ckpt_step)
+                self._pending_callback_states = checkpoint_io.restore_callback_states(ckpt_step)
+                return restored
+        if ckpt_step is not None:
+            raise ValueError("`ckpt_path='last'` cannot be combined with an explicit `ckpt_step`.")
+        if self.checkpoint_callback is None:
+            raise ValueError("`ckpt_path='last'` requires a configured `ModelCheckpoint` callback.")
+        checkpoint_io = self.checkpoint_callback.checkpoint_io
         try:
-            lifecycle.setup()
-            for callback in self.callbacks:
-                callback.on_predict_start(context)
-            module.on_predict_start(model_state, context)
-            for callback in self.callbacks:
-                callback.on_predict_epoch_start(context)
-            module.on_predict_epoch_start(model_state, context)
-            for batch_index, batch in enumerate(batches):
-                placed_batch = self.prepare_batch(batch)
-                context = PredictionContext(
-                    outputs=None,
-                    batch=placed_batch,
-                    batch_index=batch_index,
-                    total_batches=total_batches,
-                    metadata=task_metadata,
-                    pool=prediction_pool,
-                    is_global_zero=self.strategy.is_global_zero,
-                )
-                for callback in self.callbacks:
-                    callback.on_predict_batch_start(context)
-                module.on_predict_batch_start(model_state, context)
-                prediction = module.predict_step(model_state, placed_batch)
-                mask = placed_batch.get("mask")
-                if mask is not None:
-                    prediction = prediction[mask]
-                batch_count += 1
-                context = PredictionContext(
-                    outputs=prediction,
-                    batch=placed_batch,
-                    batch_index=batch_index,
-                    total_batches=total_batches,
-                    metadata=task_metadata,
-                    pool=prediction_pool,
-                    is_global_zero=self.strategy.is_global_zero,
-                )
-                for callback in self.callbacks:
-                    callback.on_predict_batch_end(context)
-                module.on_predict_batch_end(model_state, context)
-                if return_predictions:
-                    # Match Lightning's prediction loop by releasing accelerator outputs after every batch.
-                    outputs.append(np.asarray(jax.device_get(prediction)))
-            if batch_count == 0:
-                raise ValueError("Prediction requires at least one batch.")
-            combined = np.concatenate(outputs, axis=0) if return_predictions else None
-            context = PredictionContext(
-                outputs=combined,
-                batch_index=None,
-                total_batches=total_batches,
-                metadata=task_metadata,
-                pool=prediction_pool,
-                is_global_zero=self.strategy.is_global_zero,
-            )
-            for callback in self.callbacks:
-                callback.on_predict_epoch_end(context)
-            module.on_predict_epoch_end(model_state, context)
-            for callback in self.callbacks:
-                callback.on_predict_end(context)
-            module.on_predict_end(model_state, context)
-            lifecycle.finalize("success")
-            return combined
-        except BaseException as error:
-            lifecycle.handle_exception(error, context, module_context)
-            lifecycle.finalize("failed")
-            raise
+            checkpoint_io.open()
+            latest_step = checkpoint_io.latest_step
+            if latest_step is None:
+                raise FileNotFoundError("The configured checkpoint backend contains no committed state.")
+            if weights_only:
+                return checkpoint_io.restore_weights(state, latest_step)
+            restored = checkpoint_io.restore(state, latest_step)
+            if restore_callbacks:
+                self._pending_callback_states = checkpoint_io.restore_callback_states(latest_step)
+            return restored
         finally:
-            lifecycle.teardown()
+            checkpoint_io.close()
 
     def load_weights(self, state: TrainState, step: int | None = None) -> TrainState:
         """Load model weights while preserving fresh optimizer and run state.
@@ -940,61 +838,6 @@ class Trainer:
         self.close()
 
 
-class _FitSignalHandler:
-    """Convert process interruption signals into a trainer-owned graceful shutdown."""
-
-    def __init__(self, trainer: Trainer) -> None:
-        """Initialize signal bookkeeping for one fit call.
-
-        Args:
-            trainer: Trainer whose interruption state is updated by received signals.
-        """
-        self._trainer = trainer
-        self._previous: dict[int, Any] = {}
-        self._received = 0
-
-    def install(self) -> None:
-        """Install `SIGINT` and `SIGTERM` handlers when running on the main Python thread."""
-        if threading.current_thread() is not threading.main_thread():
-            return
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            self._previous[signum] = signal.getsignal(signum)
-            signal.signal(signum, self._handle_signal)
-
-    def restore(self) -> None:
-        """Restore every process signal handler replaced by :meth:`install`."""
-        for signum, handler in self._previous.items():
-            signal.signal(signum, handler)
-        self._previous.clear()
-
-    def _handle_signal(self, signum: int, frame: FrameType | None) -> None:
-        """Raise an interruption on the first signal and escalate repeated signals.
-
-        Args:
-            signum: Operating-system signal number.
-            frame: Current interpreter frame supplied by :mod:`signal`.
-
-        Raises:
-            KeyboardInterrupt: On the first `SIGINT`.
-            SystemExit: On the first `SIGTERM`, or a repeated signal whose previous handler cannot be called.
-        """
-        self._received += 1
-        if signum == signal.SIGTERM:
-            self._trainer.received_sigterm = True
-        if self._received == 1:
-            if signum == signal.SIGTERM:
-                raise SystemExit(128 + signum)
-            signal_name = signal.Signals(signum).name
-            raise KeyboardInterrupt(f"Received {signal_name}.")
-
-        previous = self._previous.get(signum, signal.SIG_DFL)
-        signal.signal(signum, previous)
-        if callable(previous):
-            previous(signum, frame)
-            return
-        raise SystemExit(128 + signum)
-
-
 def _unique_devices(devices: Sequence[JaxDevice]) -> tuple[JaxDevice, ...]:
     """Remove repeated JAX devices while preserving discovery order.
 
@@ -1033,16 +876,48 @@ def _gpu_backend_name(devices: Sequence[JaxDevice]) -> str:
     return "gpu"
 
 
-def _state_step(state: TrainState) -> int:
-    """Transfer the scalar optimizer step to a Python integer.
+def _normalize_seed(seed: int | jax.Array) -> jax.Array:
+    """Convert an integer or validate one unbatched JAX PRNG key.
 
     Args:
-        state: Functional training state.
+        seed: Python integer or typed or legacy JAX key.
 
     Returns:
-        Host integer optimizer step.
+        Unbatched JAX key without modifying any global random state.
+
+    Raises:
+        TypeError: If `seed` is Boolean, non-integral, or not a valid unbatched JAX key.
     """
-    return int(np.asarray(jax.device_get(state.step)))
+    if isinstance(seed, int) and not isinstance(seed, bool):
+        return jax.random.key(seed)
+    if not isinstance(seed, jax.Array):
+        raise TypeError("`seed` must be an integer or an unbatched JAX PRNG key.")
+    try:
+        key_data = jax.random.key_data(seed)
+    except (TypeError, ValueError) as error:
+        raise TypeError("`seed` must be an integer or an unbatched JAX PRNG key.") from error
+    if key_data.shape != (2,):
+        raise TypeError("`seed` must be an unbatched JAX PRNG key.")
+    return seed
+
+
+def _callback_identifiers(callbacks: Sequence[Callback]) -> tuple[str, ...]:
+    """Create stable identifiers including an occurrence index for repeated callback types.
+
+    Args:
+        callbacks: Ordered Trainer callback sequence.
+
+    Returns:
+        Stable fully qualified callback identifiers.
+    """
+    counts: dict[str, int] = {}
+    identifiers = []
+    for callback in callbacks:
+        base = f"{type(callback).__module__}.{type(callback).__qualname__}"
+        index = counts.get(base, 0)
+        counts[base] = index + 1
+        identifiers.append(f"{base}:{index}")
+    return tuple(identifiers)
 
 
 __all__ = ["BatchSource", "FitResult", "TrainStep", "Trainer"]

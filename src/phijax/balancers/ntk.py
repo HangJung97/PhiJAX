@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 
 from phijax.balancers.base import BalancerState, BalancerUpdatePlan
-from phijax.module import BasePhiModule
+from phijax.core import BasePhiModule
 from phijax.types import NamedBatches
 
 
@@ -112,6 +112,10 @@ class ExactNTKBalancer:
 
     Attributes:
         loss_names: Stable loss and mean-diagonal ordering.
+        update_every_n_steps: Positive optimizer-step interval between NTK updates.
+        update_start_step: Absolute optimizer step of the first NTK update.
+        kernel_size: Positive diagnostic sample count for every objective batch.
+        kernel_chunk_size: Number of diagnostic samples differentiated in parallel, or `None` for a full vectorization.
         eps: Positive mean-diagonal floor used for safe division.
         momentum: Moving-average coefficient applied to previous weights.
         initial_weights: Initial `float32` weight vector.
@@ -125,6 +129,10 @@ class ExactNTKBalancer:
         self,
         loss_names: Sequence[str],
         *,
+        update_every_n_steps: int,
+        kernel_size: int,
+        kernel_chunk_size: int | None = 1,
+        update_start_step: int | None = None,
         eps: float = 1.0e-10,
         moving_average_coefficient: float = 0.9,
         initial_weights: Mapping[str, float] | None = None,
@@ -133,21 +141,52 @@ class ExactNTKBalancer:
 
         Args:
             loss_names: Unique non-empty sequence defining loss and trace ordering.
+            update_every_n_steps: Positive optimizer-step interval between NTK updates.
+            kernel_size: Positive diagnostic sample count requested for every objective batch.
+            kernel_chunk_size: Positive number of diagnostic samples differentiated in parallel, or `None` for a full
+                :func:`jax.vmap`.
+            update_start_step: Nonnegative absolute optimizer step of the first update. `None` starts after one update
+                interval.
             eps: Positive mean-diagonal floor used to avoid division by zero.
             moving_average_coefficient: Previous-weight coefficient in `[0, 1)`.
             initial_weights: Optional initial weights keyed by loss name; unspecified names use `1.0`.
 
         Raises:
-            ValueError: If names are empty or duplicated, `eps` is not positive, or smoothing is outside `[0, 1)`.
+            TypeError: If update scheduling or kernel-size values have invalid types.
+            ValueError: If names are invalid, sizes are not positive, `eps` is not positive, or smoothing is outside
+                `[0, 1)`.
         """
         if not loss_names or len(set(loss_names)) != len(loss_names):
             raise ValueError("`loss_names` must be non-empty and unique.")
+        if isinstance(update_every_n_steps, bool) or not isinstance(update_every_n_steps, int):
+            raise TypeError("`update_every_n_steps` must be an integer.")
+        if update_every_n_steps < 1:
+            raise ValueError("`update_every_n_steps` must be positive.")
+        if isinstance(kernel_size, bool) or not isinstance(kernel_size, int):
+            raise TypeError("`kernel_size` must be an integer.")
+        if kernel_size < 1:
+            raise ValueError("`kernel_size` must be positive.")
+        if kernel_chunk_size is not None and (
+            isinstance(kernel_chunk_size, bool) or not isinstance(kernel_chunk_size, int)
+        ):
+            raise TypeError("`kernel_chunk_size` must be an integer or `None`.")
+        if update_start_step is not None and (
+            isinstance(update_start_step, bool) or not isinstance(update_start_step, int)
+        ):
+            raise TypeError("`update_start_step` must be an integer or `None`.")
+        if update_start_step is not None and update_start_step < 0:
+            raise ValueError("`update_start_step` must be nonnegative.")
+        kernel_chunk_size = _validate_kernel_chunk_size(kernel_chunk_size)
         if eps <= 0.0:
             raise ValueError("`eps` must be positive.")
         if not 0.0 <= moving_average_coefficient < 1.0:
             raise ValueError("`moving_average_coefficient` must be in `[0, 1)`.")
         configured = initial_weights or {}
         self.loss_names = tuple(loss_names)
+        self.update_every_n_steps = update_every_n_steps
+        self.update_start_step = update_every_n_steps if update_start_step is None else update_start_step
+        self.kernel_size = kernel_size
+        self.kernel_chunk_size = kernel_chunk_size
         self.eps = float(eps)
         self.momentum = float(moving_average_coefficient)
         self.initial_weights = jnp.asarray([configured.get(name, 1.0) for name in self.loss_names], dtype=jnp.float32)
@@ -300,40 +339,19 @@ class ExactNTKBalancer:
         self,
         module: BasePhiModule,
         batch_keys: Sequence[str],
-        options: Mapping[str, Any],
     ) -> BalancerUpdatePlan:
         """Describe an exact-NTK refresh with fixed diagnostic samples.
 
         Args:
             module: Module exposing one-at-a-time named residual streams.
             batch_keys: Stable objective batch keys sampled for every NTK refresh.
-            options: Resolved `kernel_size` and optional `kernel_chunk_size` values.
 
         Returns:
-            Update plan containing the compiled NTK update and fixed diagnostic batch sizes.
-
-        Raises:
-            TypeError: If `kernel_size` or `kernel_chunk_size` is Boolean.
-            ValueError: If options are missing, unsupported, or outside their valid ranges.
+            Update plan containing scheduling, the compiled NTK update, and fixed diagnostic batch sizes.
         """
-        settings = dict(options)
-        if "kernel_size" not in settings:
-            raise ValueError("Exact-NTK updates require `kernel_size`.")
-        kernel_size = settings.pop("kernel_size")
-        if isinstance(kernel_size, bool) or not isinstance(kernel_size, int):
-            raise TypeError("`kernel_size` must be an integer.")
-        if kernel_size < 1:
-            raise ValueError("`kernel_size` must be positive.")
-        configured_chunk_size = settings.pop("kernel_chunk_size", 1)
-        if configured_chunk_size is not None and (
-            isinstance(configured_chunk_size, bool) or not isinstance(configured_chunk_size, int)
-        ):
-            raise TypeError("`kernel_chunk_size` must be an integer or `None`.")
-        kernel_chunk_size = configured_chunk_size
-        if settings:
-            names = ", ".join(sorted(settings))
-            raise ValueError(f"Exact-NTK balancing received unsupported update options: {names}.")
         return BalancerUpdatePlan(
-            update=self.make_update(module, kernel_chunk_size=kernel_chunk_size),
-            batch_sizes=dict.fromkeys(batch_keys, kernel_size),
+            update=self.make_update(module, kernel_chunk_size=self.kernel_chunk_size),
+            every_n_steps=self.update_every_n_steps,
+            update_start_step=self.update_start_step,
+            batch_sizes=dict.fromkeys(batch_keys, self.kernel_size),
         )

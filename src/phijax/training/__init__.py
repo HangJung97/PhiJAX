@@ -1,4 +1,6 @@
-from phijax.module import BasePhiModule, PhiModule, PhiModuleContext
+from phijax.core import BasePhiModule, PhiModule, PhiModuleContext
+from phijax.metrics import TrainingOutput
+from phijax.training.assembly import build_training_plan
 from phijax.training.checkpointing import OrbaxCheckpointIO, restore_checkpoint
 from phijax.training.loggers import (
     ConsoleLogger,
@@ -8,10 +10,11 @@ from phijax.training.loggers import (
     TensorBoardLogger,
     WandbLogger,
 )
-from phijax.training.plans import BalancerUpdateSchedule, TrainingPlan
+from phijax.training.plans import TrainingPlan
 from phijax.training.precision import PrecisionMode, PrecisionPolicy, configure_precision
+from phijax.training.results import FitResult
 from phijax.training.state import TrainState, initialize_train_state
-from phijax.training.steps import make_train_step, with_balancer_updates
+from phijax.training.steps import make_train_step
 from phijax.training.strategies import (
     DataParallelStrategy,
     SingleDeviceStrategy,
@@ -19,10 +22,9 @@ from phijax.training.strategies import (
     create_strategy,
     initialize_distributed,
 )
-from phijax.training.trainer import FitResult, Trainer
+from phijax.training.trainer import Trainer
 
 __all__ = [
-    "BalancerUpdateSchedule",
     "BasePhiModule",
     "CSVLogger",
     "ConsoleLogger",
@@ -40,13 +42,14 @@ __all__ = [
     "TensorBoardLogger",
     "TrainState",
     "Trainer",
+    "TrainingOutput",
     "TrainingPlan",
     "WandbLogger",
+    "build_training_plan",
     "configure_precision",
     "create_strategy",
     "initialize_distributed",
     "initialize_train_state",
     "make_train_step",
     "restore_checkpoint",
-    "with_balancer_updates",
 ]

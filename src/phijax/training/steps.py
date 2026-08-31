@@ -4,11 +4,10 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 
-from phijax.balancers import BalancerUpdate
-from phijax.module import BasePhiModule
+from phijax.core import BasePhiModule
+from phijax.metrics import TrainingOutput
 from phijax.training.precision import PrecisionPolicy
 from phijax.training.state import TrainState
 from phijax.types import NamedBatches
@@ -35,7 +34,7 @@ def make_train_step(
 
     Returns:
         JIT-compiled function mapping a :class:`TrainState` and fixed-structure named batches to updated state and
-        scalar metrics.
+        named scalar metrics and fixed-shape diagnostics.
     """
     policy = PrecisionPolicy.from_name(precision)
 
@@ -50,25 +49,33 @@ def make_train_step(
             batches: Fixed-shape named objective batches.
 
         Returns:
-            Updated training state and scalar loss/weight metrics.
+            Updated training state plus named scalar metrics and fixed-shape diagnostics.
         """
 
-        def loss_fn(model_state: Any) -> tuple[jax.Array, dict[str, jax.Array]]:
+        def loss_fn(model_state: Any) -> tuple[jax.Array, tuple[dict[str, jax.Array], dict[str, jax.Array]]]:
             """Evaluate the balanced objective for differentiation.
 
             Args:
                 model_state: Candidate explicit model parameter state.
 
             Returns:
-                Weighted scalar total and the named unweighted scalar losses.
+                Weighted scalar total plus named losses and diagnostics.
             """
-            losses = dict(module.training_step(model_state, batches))
+            output = module.training_step(model_state, batches)
+            if isinstance(output, TrainingOutput):
+                losses = dict(output.losses)
+                diagnostics = dict(output.diagnostics)
+            else:
+                losses = dict(output)
+                diagnostics = {}
             total = balancer.combine(losses, state.balancer_state)
-            return total, losses
+            return total, (losses, diagnostics)
 
         batches = policy.cast_batch(batches)
 
-        def scaled_loss_fn(model_state: Any) -> tuple[jax.Array, tuple[jax.Array, dict[str, jax.Array]]]:
+        def scaled_loss_fn(
+            model_state: Any,
+        ) -> tuple[jax.Array, tuple[jax.Array, dict[str, jax.Array], dict[str, jax.Array]]]:
             """Scale the differentiated loss while preserving unscaled metrics.
 
             Args:
@@ -77,10 +84,12 @@ def make_train_step(
             Returns:
                 Scaled loss and unscaled total plus named losses.
             """
-            total, losses = loss_fn(model_state)
-            return total * state.loss_scale, (total, losses)
+            total, (losses, diagnostics) = loss_fn(model_state)
+            return total * state.loss_scale, (total, losses, diagnostics)
 
-        (_, (total, losses)), gradients = jax.value_and_grad(scaled_loss_fn, has_aux=True)(state.model_state)
+        (_, (total, losses, module_diagnostics)), gradients = jax.value_and_grad(scaled_loss_fn, has_aux=True)(
+            state.model_state
+        )
         gradients = jax.tree.map(lambda gradient: gradient / state.loss_scale, gradients)
         gradients_finite = jnp.asarray(
             all(jnp.issubdtype(gradient.dtype, jnp.inexact) for gradient in jax.tree.leaves(gradients))
@@ -132,7 +141,12 @@ def make_train_step(
             loss_scale=next_loss_scale,
             finite_steps=successful_steps,
         )
-        diagnostics = dict(balancer.diagnostics(state.balancer_state))
+        diagnostics = dict(module_diagnostics)
+        balancer_diagnostics = dict(balancer.diagnostics(state.balancer_state))
+        collisions = diagnostics.keys() & balancer_diagnostics.keys()
+        if collisions:
+            raise ValueError(f"Module and balancer diagnostics collide: {sorted(collisions)}.")
+        diagnostics.update(balancer_diagnostics)
         diagnostics["precision/loss_scale"] = state.loss_scale
         diagnostics["precision/gradients_finite"] = gradients_finite.astype(jnp.float32)
         metrics = module.format_training_metrics(total, losses, diagnostics)
@@ -141,55 +155,4 @@ def make_train_step(
     return jax.jit(train_step)
 
 
-def with_balancer_updates(
-    train_step: TrainStep,
-    update: BalancerUpdate,
-    batches: NamedBatches | None,
-    every_n_steps: int,
-    *,
-    skip_first_step: bool = True,
-) -> TrainStep:
-    """Add periodic functional balancer refreshes before compiled optimizer updates.
-
-    Scheduling stays on the host and the independently compiled `update` runs only when due. Keeping the diagnostic
-    executable separate prevents XLA from embedding an expensive adaptive-balancing branch in every ordinary
-    optimizer-step executable.
-
-    Args:
-        train_step: Compiled or transformable optimizer update.
-        update: Functional balancer update accepting model state, diagnostic batches, and balancer state.
-        batches: Optional fixed-shape diagnostic batches. `None` refreshes from the current training batches.
-        every_n_steps: Positive optimizer-step interval between updates.
-        skip_first_step: Whether to avoid an update when state step is zero.
-
-    Returns:
-        Host-scheduled training step that invokes separately compiled update and optimizer executables.
-
-    Raises:
-        ValueError: If `every_n_steps` is not positive.
-    """
-    if every_n_steps < 1:
-        raise ValueError("`every_n_steps` must be positive.")
-
-    def scheduled_step(state: TrainState, training_batches: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
-        """Refresh the balancer when due and apply one optimizer update.
-
-        Args:
-            state: Complete functional training state.
-            training_batches: Current fixed-structure objective batches.
-
-        Returns:
-            Updated training state and scalar metrics.
-        """
-        current_step = int(np.asarray(jax.device_get(state.step)))
-        due = current_step % every_n_steps == 0 and (not skip_first_step or current_step > 0)
-        if due:
-            update_batches = training_batches if batches is None else batches
-            balancer_state = update(state.model_state, update_batches, state.balancer_state)
-            state = replace(state, balancer_state=balancer_state)
-        return train_step(state, training_batches)
-
-    return scheduled_step
-
-
-__all__ = ["BalancerUpdate", "TrainStep", "make_train_step", "with_balancer_updates"]
+__all__ = ["TrainStep", "make_train_step"]

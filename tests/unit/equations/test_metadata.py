@@ -2,7 +2,7 @@ from functools import partial
 
 import pytest
 
-from phijax.equations import get_residual_names, residual_equation
+from phijax.equations import get_default_ntk_stream, get_residual_names, residual_equation
 
 
 def test_residual_equation_names_survive_configured_partials() -> None:
@@ -24,7 +24,26 @@ def test_residual_equation_names_survive_configured_partials() -> None:
     configured = partial(partial(equation, scale=2))
 
     assert get_residual_names(configured) == ("continuity", "momentum")
+    assert get_default_ntk_stream(configured) == "residual"
     assert configured(3) == 6
+
+
+def test_residual_equation_exposes_output_stream_through_nested_partials() -> None:
+    """Verify equation metadata carries an explicit default output stream."""
+
+    @residual_equation(names=("measurement",), default_ntk_stream="output")
+    def equation(value: int) -> int:
+        """Return a placeholder value.
+
+        Args:
+            value: Placeholder value.
+
+        Returns:
+            Unchanged placeholder value.
+        """
+        return value
+
+    assert get_default_ntk_stream(partial(partial(equation))) == "output"
 
 
 @pytest.mark.parametrize(
@@ -68,3 +87,10 @@ def test_get_residual_names_requires_equation_metadata() -> None:
 
     with pytest.raises(ValueError, match="configure `names` explicitly"):
         get_residual_names(equation)
+    assert get_default_ntk_stream(equation) == "residual"
+
+
+def test_residual_equation_rejects_unknown_default_ntk_stream() -> None:
+    """Verify invalid default balancing streams fail during decorator construction."""
+    with pytest.raises(ValueError, match="default_ntk_stream"):
+        residual_equation(names=("loss",), default_ntk_stream="unknown")  # type: ignore[arg-type]

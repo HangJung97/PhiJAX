@@ -44,17 +44,17 @@ The remaining lifecycle and normalization methods are:
 - `teardown_stage(stage)`, for releasing the active stage exactly once;
 - `prepare_data()`, for generating or downloading an artifact before loading it;
 - `prediction_pool()`, for declaring the ordered host pool represented by prediction chunks;
-- `normalization_pools()`, for selecting the coordinates used to derive network input mean and standard deviation;
-- `input_statistics()`, for overriding pool-derived normalization with exact continuous-distribution statistics; and
+- `normalization_pools()`, for selecting coordinates when an application opts into empirical normalization;
+- `input_statistics()`, which returns `None` by default and can return empirical or exact statistics; and
 - `teardown(stage)`, for releasing application-owned resources.
 
 Use NumPy in `prepare_data()` and host-pool builders so they do not initialize JAX. DataModules create host-backed
 samplers and prediction chunks. The Trainer prepares sampler state on the selected device and places or shards each
 batch before compiled execution.
 
-Pass the DataModule to `Trainer.fit()` so the Trainer can request, place, and iterate its training source. Pass it to
-`Trainer.predict()` for the same prediction lifecycle. Return `None` from `predict_batch_source()` when no prediction
-data exists. The Trainer will skip prediction callbacks and module hooks.
+Pass the DataModule to `Trainer.fit()` so the Trainer can request, place, and iterate its training source. Pass the
+returned `FitResult` and DataModule to `Trainer.predict()` for prediction. Return `None` from
+`predict_batch_source()` when no prediction data exists. The Trainer will skip prediction callbacks and module hooks.
 
 Like Lightning, `setup(stage)` assigns process-local data state instead of returning it. PhiJAX stores this state in
 the DataModule's host-side `pools` mapping. The source hooks are not called `dataloader` because they do not imply
@@ -81,14 +81,14 @@ application DataModule.
 
 Every pool is an immutable `HostPool`:
 
-| Field             | Required shape or meaning                                                          |
-| ----------------- | ---------------------------------------------------------------------------------- |
-| `inputs`          | Rank-two `[samples, input_features]` NumPy array                                   |
-| `targets`         | Rank-two `[samples, target_features]`; use `[samples, 0]` for an unsupervised pool |
-| `aux`             | Sample-wise arrays such as weights, normals, periods, or material coefficients     |
-| `metadata`        | Structural information that is not transferred into compiled training              |
-| `reference_shape` | Dense grid dimensions used to reconstruct flat predictions                         |
-| `flat_index`      | Integer indices mapping pool rows into the flattened reference grid                |
+| Field             | Required shape or meaning                                              |
+| ----------------- | ---------------------------------------------------------------------- |
+| `inputs`          | Rank-two `[samples, input_features]` NumPy array                       |
+| `targets`         | Optional rank-two targets; omission creates `[samples, 0]`             |
+| `aux`             | Optional sample-wise arrays such as weights, normals, or periods       |
+| `metadata`        | Optional structural information not transferred into compiled training |
+| `reference_shape` | Optional dense shape; omission uses `(sample_count,)`                  |
+| `flat_index`      | Optional reconstruction indices; omission uses `arange(sample_count)`  |
 
 `HostPool` copies and freezes its arrays. Every NumPy array in `aux` must share the leading input row count.
 
@@ -97,7 +97,7 @@ Batch-stream names are part of the application API. Every objective `batch_key` 
 continuous domain:
 
 ```text
-ResidualTerm(batch_key="pde")
+ResidualTerm(equation, batch_key="pde")
               |
               +--> DataModule training source
               +--> per-stream batch-size policy
@@ -109,18 +109,18 @@ Keep construction sizes separate from runtime batch sizes:
 
 ```python
 pde_size = 16_384
-batch_size = {"pde": 4_096}
+batch_sizes = {"pde": 4_096}
 ```
 
 These values mean:
 
 ```text
 pde_size          = finite candidate coordinates stored in the host pool
-batch_size["pde"] = candidate rows evaluated during one optimizer step
+batch_sizes["pde"] = candidate rows evaluated during one optimizer step
 ```
 
 For a continuously generated sampler such as `uniform_domain`, no finite `pde_size` exists. In that case,
-`batch_size["pde"]` is the number of newly generated coordinates per optimizer step.
+`batch_sizes["pde"]` is the number of newly generated coordinates per optimizer step.
 
 An application DataModule can expose a `pde_sampling` constructor option without changing its objective. In `fixed`
 mode, the DataModule builds `pde_size` candidates and selects random rows. In `uniform` mode, it creates no
@@ -128,11 +128,12 @@ mode, the DataModule builds `pde_size` candidates and selects random rows. In `u
 and global step make this sequence reproducible after resuming.
 
 For independent uniform coordinates on intervals `[a, b]`, normalization does not require a surrogate finite pool.
-An application can override `PhiDataModule.input_statistics()` with the exact values
+The base DataModule does not normalize inputs. An application can override `PhiDataModule.input_statistics()` with
+empirical pool statistics or the exact values
 `mean = (a + b) / 2` and `std = (b - a) / sqrt(12)`.
 
 Prediction batch size is a chunking policy, not a prediction-grid size. The grid size comes from `reference_shape`;
-`batch_size["predict"]` only limits the number of rows evaluated at once.
+`batch_sizes["predict"]` only limits the number of rows evaluated at once.
 
 ## Application DataModule pattern
 
@@ -161,7 +162,7 @@ data_module = HeatDataModule(
     boundary_size=256,
     pde_size=16_384,
     predict_shape=(101, 256),
-    batch_size={
+    batch_sizes={
         "initial": "all",
         "boundary": 128,
         "pde": 4_096,
@@ -170,7 +171,42 @@ data_module = HeatDataModule(
 )
 ```
 
-The Trainer only requires a `PhiDataModule`. It does not need to know how pools or sources were created.
+The Trainer only requires a `PhiDataModule`. It does not need to know how pools or sources were created. For aligned
+finite pools, `NamedBatchSource.from_pools()` reduces the training hook to one return statement:
+
+```python
+def train_batch_source(self, batch_keys, key):
+    return NamedBatchSource.from_pools(self.pools, self.batch_sizes, key, names=batch_keys)
+```
+
+## Inspect training data
+
+Prepare the fit stage before inspecting complete host pools or drawing a training batch. Calling a training source
+with step `0` is the PhiJAX equivalent of requesting the first batch from an iterable DataLoader:
+
+```python
+import jax
+import numpy as np
+
+data_module = HeatDataModule()
+data_module.prepare_stage("fit")
+
+try:
+    initial_coordinates = data_module.pools["initial"].inputs
+    print(initial_coordinates.shape)
+
+    source = data_module.train_batch_source(("initial", "boundary", "pde"), jax.random.key(0))
+    batch = source(0)
+    host_batch = jax.tree.map(lambda value: np.asarray(jax.device_get(value)), batch)
+    print(host_batch["pde"]["inputs"][:5])
+finally:
+    data_module.teardown_stage("fit")
+```
+
+Use `source(step)` to inspect later deterministic batches. Finite datasets can be viewed directly through
+`data_module.pools`; continuously generated collocation points exist only in sampled batches. During fitting,
+`Callback.on_train_batch_start()` can read the actual device-placed batch from `TrainerContext.batch`. Avoid copying
+every batch to the host because doing so synchronizes accelerator execution.
 
 ## Reusing array IO inside an application
 
@@ -209,7 +245,8 @@ arrays, bounds, templates, and the root key to the Strategy's root device. Sampl
 Trainer applies final precision conversion and data-parallel sharding to each batch.
 
 The source folds its root key with the global optimizer step. Repeating one step is deterministic, and a resumed run
-continues the same sampling sequence from its restored global step.
+continues the same sampling sequence from its restored global step. See
+[Randomness and reproducibility](reproducibility.md) for the complete seed and checkpoint behavior.
 
 `ChunkedPredictionSource` is finite and can be iterated more than once. It keeps the full prediction pool on the host,
 then slices and pads one fixed-size chunk at a time. `source.pool` exposes the original pool for dense reconstruction.
@@ -219,9 +256,9 @@ The default `PredictionWriter` receives the pool and joined outputs through `Pre
 `return_predictions=True` when using it. A streaming callback can instead write each batch from
 `on_predict_batch_end`. Only set `return_predictions=False` for this streaming case.
 
-## Testing an application DataModule
+## Testing a DataModule
 
-At minimum, test:
+Test at least the following behavior:
 
 - valid `fit` and `predict` setup stages;
 - pool names, coordinate order, target order, shapes, and dtypes;
@@ -233,8 +270,8 @@ At minimum, test:
 - empirical or exact input-statistics policy; and
 - invalid sizes, bounds, stages, and prediction chunk sizes.
 
-Use synthetic CPU-sized fixtures. Ordinary tests must not download data, require a GPU, or generate the full numerical
-reference artifact.
+Use small synthetic CPU fixtures. Tests should not download data, require a GPU, or generate a full reference
+artifact.
 
 Continue with [Building equations and objectives](objectives.md) to connect these batch names to scalar losses.
 

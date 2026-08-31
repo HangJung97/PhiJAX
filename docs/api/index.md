@@ -16,7 +16,8 @@ The installed release is available as `phijax.__version__`.
 
 ## Core conventions
 
-- Model, optimizer, balancer, PRNG, and step state are explicit JAX PyTrees.
+- Bound model, optimizer, balancer, PRNG, and step state are explicit JAX PyTrees.
+- `PhiModule` blueprints retain model factories and objectives without mutable initialized parameters.
 - A model application callable maps `(model_state, point)` to one output vector.
 - Host data uses NumPy until the trainer-selected strategy performs device placement.
 - Training arrays have fixed shapes and stable PyTree structures inside compiled computations.
@@ -52,16 +53,16 @@ Package-specific public aliases include:
 ## Import map
 
 ```python
-from phijax import DataModule, InitializedModel, LossBalancer, PhiModule, Trainer, TrainingPlan
-from phijax.balancers import ExactNTKBalancer, GradNormBalancer, StaticLossBalancer
-from phijax.callbacks import EarlyStopping, ModelCheckpoint, RichModelSummary, RichProgressBar
+from phijax import DataModule, ModelFactory, PhiModule, Trainer
+from phijax.balancers import BalancerUpdatePlan, ExactNTKBalancer, GradNormBalancer, StaticLossBalancer
+from phijax.callbacks import EarlyStopping, ModelCheckpoint, ProgressBar, RichModelSummary, RichProgressBar
 from phijax.data import HostPool, NamedBatchSource, PhiDataModule, create_sampler
 from phijax.evaluation import EvaluationResult, RegressionEvaluator
 from phijax.equations import burgers_1d, polar_navier_stokes, residual_equation
 from phijax.models import MLP, ModifiedMLP, PirateNet, build_mlp, build_modified_mlp, build_pirate_net
 from phijax.models import initialize_nnx_model
 from phijax.objectives import CompositeObjective, ResidualTerm
-from phijax.training import OrbaxCheckpointIO
+from phijax.training import OrbaxCheckpointIO, TrainState, TrainingPlan
 from phijax.utils import RankedLogger, resolve_seed, seed_everything
 ```
 

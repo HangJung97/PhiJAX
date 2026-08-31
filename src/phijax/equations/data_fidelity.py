@@ -51,7 +51,7 @@ def base_data_fidelity_residual(
     return residual if weight is None else weight * residual
 
 
-@residual_equation(names=("data",))
+@residual_equation(names=("data",), default_ntk_stream="output")
 def base_data_fidelity(
     model_apply: ModelApply,
     model_state: Any,
@@ -129,7 +129,7 @@ def phase_wrapped_residuals(
     return cosine, sine
 
 
-@residual_equation(names=("phase",))
+@residual_equation(names=("phase",), default_ntk_stream="output")
 def phase_wrapped_fidelity(
     model_apply: ModelApply,
     model_state: Any,

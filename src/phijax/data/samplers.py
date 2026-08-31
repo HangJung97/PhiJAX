@@ -315,7 +315,8 @@ def create_sampler(
         )
     if name == "space_time":
         time_axis = _pop_optional_int(settings, "time_axis", 0)
-        assert time_axis is not None
+        if time_axis is None:
+            raise ValueError("`time_axis` cannot be `None` for the `space_time` sampler.")
         time_bounds = _resolve_time_bounds(pool, settings.pop("time_bounds", None), time_axis)
         replace = _pop_bool(settings, "replace", True)
         sort_axis = _pop_optional_int(settings, "sort_axis", time_axis)

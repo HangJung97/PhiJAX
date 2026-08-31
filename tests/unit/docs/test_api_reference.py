@@ -104,6 +104,7 @@ def test_top_level_api_exposes_beta_runtime_contracts() -> None:
         "DataModule",
         "InitializedModel",
         "LossBalancer",
+        "ModelFactory",
         "PhiModule",
         "TrainState",
         "Trainer",
@@ -113,7 +114,24 @@ def test_top_level_api_exposes_beta_runtime_contracts() -> None:
     }
 
     assert expected <= set(phijax.__all__)
+    assert "BalancerUpdateConfig" not in phijax.__all__
+    assert "BalancerUpdateSchedule" not in phijax.__all__
     assert phijax.DataModule is phijax.PhiDataModule
+
+
+def test_reorganized_module_contract_imports() -> None:
+    """Verify canonical module imports resolve and the removed 0.1 deep path stays unavailable."""
+    import phijax
+    from phijax.core import BasePhiModule, PhiModule, PhiModuleContext
+    from phijax.training import FitResult, Trainer
+
+    assert phijax.BasePhiModule is BasePhiModule
+    assert phijax.PhiModule is PhiModule
+    assert phijax.PhiModuleContext is PhiModuleContext
+    assert phijax.FitResult is FitResult
+    assert phijax.Trainer is Trainer
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("phijax.module")
 
 
 def test_application_guides_do_not_direct_users_into_the_framework_package() -> None:

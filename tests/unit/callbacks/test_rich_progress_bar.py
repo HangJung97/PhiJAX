@@ -42,8 +42,8 @@ def test_rich_progress_bar_displays_selected_loss_and_metric() -> None:
 
     callback.setup()
     callback.on_fit_start(initial)
-    assert callback.on_train_batch_end(first) is False
-    assert callback.on_train_batch_end(final) is False
+    callback.on_train_metrics(first)
+    callback.on_train_metrics(final)
     callback.on_fit_end(final)
     callback.teardown()
 
@@ -63,7 +63,7 @@ def test_rich_progress_bar_refreshes_device_metrics_at_configured_interval(monke
     Args:
         monkeypatch: Pytest fixture used to observe device transfers.
     """
-    import phijax.callbacks.rich_progress_bar as progress_module
+    import phijax.callbacks.progress_bar as progress_module
 
     transfers: list[object] = []
 
@@ -85,7 +85,7 @@ def test_rich_progress_bar_refreshes_device_metrics_at_configured_interval(monke
     callback.on_fit_start(TrainerContext(state=None, step=0, metrics={}))
 
     for step in range(1, 4):
-        callback.on_train_batch_end(
+        callback.on_train_metrics(
             TrainerContext(state=None, step=step, metrics={"train/loss": jnp.asarray(float(step))})
         )
 
@@ -93,8 +93,8 @@ def test_rich_progress_bar_refreshes_device_metrics_at_configured_interval(monke
     callback.teardown()
 
 
-def test_rich_progress_bar_automatically_discovers_losses_and_balancer_weights() -> None:
-    """Verify default selection includes application losses and weights but omits precision diagnostics."""
+def test_rich_progress_bar_defaults_to_total_loss() -> None:
+    """Verify default selection omits detailed losses, weights, and precision diagnostics."""
     stream = io.StringIO()
     callback = RichProgressBar(total=1, console=_console(stream))
     context = TrainerContext(
@@ -111,14 +111,14 @@ def test_rich_progress_bar_automatically_discovers_losses_and_balancer_weights()
 
     callback.setup()
     callback.on_fit_start(TrainerContext(state=None, step=0, metrics={}))
-    callback.on_train_batch_end(context)
+    callback.on_train_metrics(context)
     callback.on_fit_end(context)
 
     rendered = " ".join(stream.getvalue().split())
     assert "train/loss: 3.000e+00" in rendered
-    assert "train/loss/fidelity/data: 2.000e+00" in rendered
-    assert "train/loss/boundary/no_slip: 1.000e+00" in rendered
-    assert "train/weight/fidelity/data: 5.000e-01" in rendered
+    assert "train/loss/fidelity/data" not in rendered
+    assert "train/loss/boundary/no_slip" not in rendered
+    assert "train/weight/fidelity/data" not in rendered
     assert "train/precision/" not in rendered
 
 
@@ -150,7 +150,7 @@ def test_rich_progress_bar_displays_prediction_batch_progress() -> None:
         ({"total": 1, "refresh_rate": 0}, "`refresh_rate` must be positive"),
         ({"total": 1, "description": " "}, "`description` must not be empty"),
         ({"total": 1, "predict_description": " "}, "`predict_description` must not be empty"),
-        ({"total": 1, "metric_names": ("loss", "loss")}, "must not contain duplicates"),
+        ({"total": 1, "metric_names": ("loss", "loss")}, "unique non-empty"),
     ],
 )
 def test_rich_progress_bar_rejects_invalid_configuration(kwargs: dict[str, object], message: str) -> None:
@@ -171,5 +171,5 @@ def test_rich_progress_bar_rejects_non_scalar_selected_metrics() -> None:
     callback.on_fit_start(TrainerContext(state=None, step=0, metrics={}))
 
     with pytest.raises(ValueError, match="must be scalar"):
-        callback.on_train_batch_end(TrainerContext(state=None, step=1, metrics={"train/loss": jnp.asarray([1.0, 2.0])}))
+        callback.on_train_metrics(TrainerContext(state=None, step=1, metrics={"train/loss": jnp.asarray([1.0, 2.0])}))
     callback.teardown()

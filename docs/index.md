@@ -1,6 +1,6 @@
 # PhiJAX documentation
 
-PhiJAX is a typed JAX framework for physics-informed neural networks (PINNs). It provides reusable tools for numerical
+PhiJAX is a JAX framework for physics-informed neural networks (PINNs). It provides reusable tools for numerical
 code and training. New applications can build on PhiJAX while keeping their datasets, domain-specific logic, and
 runnable workflows in a separate project.
 
@@ -19,6 +19,8 @@ Follow these pages in order:
 - [Data](guides/datasets.md): implement a `PhiDataModule`, immutable host pools, and explicit-key batch sources.
 - [Equations and objectives](guides/objectives.md): compose differentiable residuals into named scalar losses.
 - [Loss balancers](guides/balancers.md): implement static or adaptive functional loss weighting.
+- [Randomness and reproducibility](guides/reproducibility.md): understand PRNG streams, sampling, and checkpoint
+  continuation.
 - [Models](api/models.md): use MLP, Modified MLP, PirateNet, or adapt a custom Flax NNX architecture.
 - [Hooks and lifecycle](api/hooks.md): choose module and callback extension points from the exact Trainer call order.
 - [Troubleshooting](guides/troubleshooting.md): diagnose accelerator selection, memory, compilation, and lifecycle
@@ -33,15 +35,17 @@ entrypoints, config groups, and a small Burgers example. Projects created from t
 ## Runtime ownership
 
 ```text
-Application DataModule -> host batch source -----------------+
-Model factory -> InitializedModel -> PhiModule --------------+--> Trainer -> compiled update
-Objective -> named losses -> LossBalancer -> TrainingPlan ---+
+Model factory + objective ---> PhiModule blueprint ----+
+DataModule -------------------> named batches ---------+---> Trainer.fit() ---> FitResult ---> Trainer.predict()
+Optimizer + seed --------------------------------------+
+LossBalancer + update policy (optional) ---------------+
 ```
 
-The Trainer runs hooks, places data, restores checkpoints, logs metrics, and cleans up resources. Model, optimizer,
-balancer, and PRNG state remain explicit. Neither the Trainer nor the numerical APIs read Hydra configuration.
+The Trainer initializes and binds the model, creates explicit optimizer and PRNG state, compiles updates, runs hooks,
+places data, restores checkpoints, logs metrics, and cleans up resources. Neither the Trainer nor the numerical APIs
+read Hydra configuration.
 
 ## Beta stability
 
-PhiJAX `0.1.0b1` supports the names documented in package `__all__` declarations. Prediction artifacts use schema
+PhiJAX `0.2.0b1` supports the names documented in package `__all__` declarations. Prediction artifacts use schema
 version 2. Checkpoints include a versioned manifest and restore only within a compatible PhiJAX major/minor line.

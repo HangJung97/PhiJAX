@@ -19,6 +19,8 @@ def heat_equation(model_apply, model_state, batch, *, stream="residual"):
 
 ::: phijax.equations.get_residual_names
 
+::: phijax.equations.get_default_ntk_stream
+
 ## Data fidelity
 
 `base_data_fidelity` supports direct component supervision, optional sample weights, vector projection, and target
