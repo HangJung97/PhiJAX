@@ -15,6 +15,8 @@ on_fit_start
   compiled update
   on_train_batch_end -> bool
   training_metrics   -> scalar metric mapping
+  module logging collection
+  on_train_metrics
 on_fit_end
 
 on_predict_start
@@ -35,6 +37,8 @@ hooks.
 
 `training_metrics` is a read-only extension point evaluated after the module batch-end hook. Metric names must be
 non-empty and may not replace metrics produced by the compiled step, the module, or another callback.
+`on_train_metrics` then receives the complete metric mapping. It is the appropriate hook for checkpoint ranking and
+display updates that need metrics from every provider.
 
 ::: phijax.callbacks.TrainerContext
 
@@ -68,6 +72,10 @@ This lets prediction reuse the same Trainer and in-memory state after training f
 `trainer.log_every_n_steps` and always records the final rate. Unlike a Lightning scheduler, a raw Optax schedule has
 no `interval` field. PhiJAX therefore avoids evaluating the schedule on steps that will not be logged.
 
+Like Lightning, this callback requires an experiment logger. Fitting raises before requesting the first batch when
+`LearningRateMonitor` is enabled with `logger=False`, `logger=None`, or an empty logger collection. The default
+`logger=True` is valid.
+
 Like Lightning, `log_momentum` and `log_weight_decay` add `-momentum` and `-weight_decay` metrics.
 `log_key_prefix` is added to every key. These optional values must be supplied because Optax transformations do not
 expose inspectable parameter groups.
@@ -80,19 +88,66 @@ expose inspectable parameter groups.
 checkpoint callback. The callback opens its backend when fitting starts and closes it during teardown. Custom backends
 must support repeated `open()` and `close()` calls and must be able to reopen for later tasks.
 
+Set `monitor`, `mode`, and `save_top_k` to retain the best checkpoints by an available scalar metric. `save_last=True`
+keeps the terminal state independently. Public `best_model_path`, `best_model_score`, and `last_model_path` attributes
+expose the resolved results. Checkpoints also persist callback state, including ranking and learning-rate bookkeeping.
+
 ::: phijax.callbacks.CheckpointIO
 
 ::: phijax.callbacks.ModelCheckpoint
 
 ## Model summary
 
+`Trainer(enable_model_summary=True)` adds `ModelSummary` when no summary callback is supplied. Pass
+`RichModelSummary` to replace it, or set `enable_model_summary=False` for no automatic summary. A Trainer rejects
+multiple summary callbacks and prints summaries only on global rank zero.
+
+::: phijax.callbacks.ModelSummary
+
 ::: phijax.callbacks.RichModelSummary
 
 ## Progress bar
 
-When `metric_names` is omitted, the Rich progress bar automatically discovers the `train/loss` and `train/weight`
-namespaces. During prediction it uses `PredictionContext.total_batches` to display finite batch progress without
-transferring prediction values to the host. It should usually run only on global rank zero.
+When no progress callback is supplied, `Trainer(enable_progress_bar=True)` adds `TQDMProgressBar`. Set
+`enable_progress_bar=False` for quiet library, test, or batch-scheduler execution.
+
+All progress callbacks also provide `enable()`, `disable()`, and `is_enabled` for temporary runtime control. Most
+applications should use the Trainer option instead of managing callback state directly.
+
+::: phijax.callbacks.ProgressBar
+
+::: phijax.callbacks.TQDMProgressBar
+
+Supplying `RichProgressBar`, which extends `ProgressBar`, replaces TQDM. A Trainer accepts at most one progress
+callback, avoiding duplicate output. Both implementations refresh device metrics only at their configured interval.
+
+By default, both displays show `train/loss`, every `train/loss/<name>`, every `train/weight/<name>`, and the primary
+logger version as `v_num`. Learning rates and other diagnostics still reach loggers without entering the display.
+Override `ProgressBar.get_metrics()` to change standard fields, or pass `metric_names` for an exact ordered selection.
+During prediction, the callbacks use `PredictionContext.total_batches` without transferring prediction values to the
+host.
+
+## Module logging and diagnostics
+
+Every scalar produced by the compiled step is sent to configured loggers by default. Total loss, individual losses,
+and balancer weights are also shown in the progress bar. A `PhiModule` subclass can override either destination after
+calling the standard host-side hook:
+
+```python
+def on_train_batch_end(self, model_state, context):
+    model_state, metrics = super().on_train_batch_end(model_state, context)
+    self.log("train/loss/pde/heat", metrics["train/loss/pde/heat"], prog_bar=False)
+    self.log("train/residual/mean_abs", metrics["train/residual/mean_abs"], prog_bar=True)
+    return model_state, metrics
+```
+
+`self.log()` queues the device value without transferring it. It is available only during the module batch-end hook;
+calling it from the compiled `training_step()` raises an error. Set `logger=False` to suppress persistence or
+`prog_bar=True` to display a scalar. Array diagnostics remain in `callback_metrics` and cannot be routed to scalar
+loggers or progress displays without an explicit reduction.
+
+The Trainer exposes the latest complete, persisted, and displayed mappings as `callback_metrics`, `logged_metrics`,
+and `progress_bar_metrics`. Callback `training_metrics()` values are logger-only by default.
 
 ::: phijax.callbacks.RichProgressBarTheme
 
@@ -108,9 +163,19 @@ from phijax.training import Trainer
 
 callbacks = (
     EarlyStopping(monitor="train/loss", patience=1_000),
-    RichProgressBar(),
+    RichProgressBar(total=10_000),
 )
 trainer = Trainer(max_steps=10_000, callbacks=callbacks)
+```
+
+Disable progress without changing the remaining callback list:
+
+```python
+trainer = Trainer(
+    max_steps=10_000,
+    callbacks=(EarlyStopping(monitor="train/loss", patience=1_000),),
+    enable_progress_bar=False,
+)
 ```
 
 See [Configuration integrations](configuration.md) for optional Hydra-based callback construction.

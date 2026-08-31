@@ -1,10 +1,47 @@
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
 
-from phijax.models import MLP, FactorizedDense, PeriodicFeatures, initialize_nnx_model
+from phijax.models import (
+    MLP,
+    FactorizedDense,
+    InitializedModel,
+    PeriodicFeatures,
+    build_mlp,
+    build_modified_mlp,
+    build_pirate_net,
+    initialize_nnx_model,
+)
+
+
+@pytest.mark.parametrize(
+    ("builder", "architecture"),
+    [
+        (build_mlp, {"hidden": (4,)}),
+        (build_modified_mlp, {"hidden_dim": 4, "num_layers": 1}),
+        (build_pirate_net, {"hidden_dim": 4, "num_blocks": 1}),
+    ],
+)
+def test_model_builders_skip_optional_input_normalization(
+    builder: Callable[..., InitializedModel],
+    architecture: dict[str, object],
+) -> None:
+    """Verify built-in factories work when a DataModule supplies no input statistics.
+
+    Args:
+        builder: Built-in initialized-model factory.
+        architecture: Small architecture options for the selected factory.
+    """
+    initialized = builder(jax.random.key(0), input_dim=2, output_dim=1, **architecture)
+
+    outputs = initialized.apply(initialized.state, jnp.ones((3, 2), dtype=jnp.float32))
+
+    assert outputs.shape == (3, 1)
+    assert bool(jnp.all(jnp.isfinite(outputs)))
 
 
 def test_factorized_dense_reconstructs_finite_weight() -> None:

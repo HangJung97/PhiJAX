@@ -12,8 +12,11 @@ equation residuals
 ResidualTerm ----> named scalar losses ----> LossBalancer ----> total loss
        |
        v
-CompositeObjective ----> PhiModule ----> TrainingPlan ----> Trainer.fit()
+CompositeObjective ----> bound PhiModule ----> TrainingPlan ----> Trainer.fit_state()
 ```
+
+For the common API, `Trainer.fit()` creates the `TrainingPlan` internally. The diagram shows the resolved numerical
+path that advanced users can construct directly with `fit_state()`.
 
 The pieces have distinct responsibilities:
 
@@ -22,9 +25,9 @@ The pieces have distinct responsibilities:
 | equation callable    | Evaluate physical residual arrays from a model, explicit state, and one batch |
 | `ResidualTerm`       | Reduce residual arrays into stable, named scalar losses                       |
 | `CompositeObjective` | Combine independent initial, boundary, data, and PDE terms                    |
-| `PhiModule`          | Bind a model application callable to the unweighted objective                 |
+| `PhiModule`          | Describe a model factory and its unweighted objective                         |
 | `LossBalancer`       | Combine named losses and expose weight diagnostics                            |
-| `TrainingPlan`       | Bind the compiled optimizer step to the batch names it requires               |
+| `TrainingPlan`       | Advanced contract binding a compiled update to its required batches           |
 | `Trainer`            | Run lifecycle hooks, place batches, restore checkpoints, log, and clean up    |
 
 The optimizer and balancer remain outside `PhiModule`. You can change either one without creating a new module or
@@ -36,14 +39,19 @@ managers after success, interruption, or failure. Applications can call `fit()` 
 
 ## Explicit model and training state
 
-An `InitializedModel` contains three values:
+A `ModelFactory` receives a model key, optional normalization statistics, and the Trainer precision policy. It returns
+an `InitializedModel` containing three values:
 
 - `apply`, a pure callable mapping `(model_state, point)` to a prediction;
 - `state`, the differentiable parameter and variable PyTree; and
 - `summary`, an optional architecture-summary callable.
 
-`TrainState` adds optimizer state, loss-balancer state, a PRNG key, the global step, and precision state. This explicit
-state can move between devices and checkpoints without hidden mutable model attributes.
+`TrainState` adds optimizer state, loss-balancer state, independent model-runtime, sampling, and balancer PRNG keys,
+the global step, and precision state. This explicit state can move between devices and checkpoints without hidden
+mutable model attributes.
+
+`PhiModule` begins as an uninitialized blueprint. `Trainer.fit()` binds its factory to a separate module instance and
+returns that instance as `FitResult.module`; it does not mutate the blueprint.
 
 ## Data vocabulary
 
@@ -57,13 +65,16 @@ The data API distinguishes storage from sampling:
 | `PhiDataModule` | Application-owned lifecycle that constructs pools and exposes training/prediction data |
 
 The DataModule does not choose a device. The Trainer prepares sampler state and places each batch immediately before
-the compiled update.
+the compiled update. Input normalization is opt-in: override `input_statistics()` when a model should receive a mean
+and standard deviation; the base DataModule returns `None`.
 
 ## Reproducible randomness
 
 PhiJAX does not hide JAX random keys. Model initialization, training state, sampling, and adaptive-balancer diagnostics
-receive separate keys. A named training source folds its root key with the restored global step, so resumed training
-continues the same sampling sequence.
+receive separate keys. `Trainer.fit()` splits its root in the stable order `model`, `runtime`, `sampling`, `balancer`.
+A named training source folds its key with the restored global step, so resumed training continues the same sampling
+sequence. See [Randomness and reproducibility](../guides/reproducibility.md) for stream ownership, checkpoint behavior,
+and the limits of cross-platform determinism.
 
 ## Where Hydra fits
 

@@ -12,6 +12,7 @@ class _ScalarObjective:
     """Implement the generic scalar-loss objective contract structurally."""
 
     loss_names = ("data",)
+    batch_keys = ("data",)
 
     def losses(
         self,

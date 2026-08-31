@@ -23,8 +23,9 @@ For a configuration-first project layout, start from
 [`phijax-hydra-template`](https://github.com/HangJung97/phijax-hydra-template) and customize its entrypoints, Hydra
 configs, and application DataModules.
 
-> **Beta API:** PhiJAX `0.1.0b1` defines the first supported public API. Minor changes may still occur before `1.0`.
-> Checkpoints can be restored by compatible PhiJAX releases from the same major and minor version.
+> **Beta API:** PhiJAX is under active development. Breaking changes may occur between major versions and during the
+> beta period before `1.0`. PhiJAX `0.2.0b1` defines the current supported public API. Checkpoints can be restored by
+> compatible PhiJAX releases from the same major and minor version.
 
 [Quickstart](https://hangjung97.github.io/PhiJAX/getting-started/quickstart/) |
 [Guides](https://hangjung97.github.io/PhiJAX/guides/datasets/) |
@@ -80,6 +81,9 @@ pip install "phijax[cuda13,wandb,tensorboard]"
 
 Replace `cuda13` with `cuda12` for a CUDA 12 environment; do not install both CUDA extras together.
 
+Experimental TPU environments can use `pip install "phijax[tpu]"`. The TPU, CUDA 12, and CUDA 13 extras are mutually
+exclusive.
+
 See the [installation guide](https://hangjung97.github.io/PhiJAX/getting-started/installation/) for environment
 verification and development setup.
 
@@ -98,24 +102,34 @@ JAX_PLATFORMS=cpu uv run --no-sync python examples/quickstart.py
 `JAX_PLATFORMS=cpu` keeps the whole process strictly CPU-only. This is stronger than selecting
 `Trainer(accelerator="cpu")`, which controls PhiJAX placement without changing JAX's process-wide default backend.
 
+To run the same example on an available NVIDIA GPU:
+
+```bash
+uv sync --extra cuda13
+XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  uv run --no-sync python examples/quickstart.py --accelerator gpu
+```
+
+Replace `cuda13` with `cuda12` when using the CUDA 12 extra. Disabling preallocation prevents JAX from reserving most
+GPU memory at startup, which is helpful on shared or memory-constrained systems.
+
 Read the [annotated quickstart](https://hangjung97.github.io/PhiJAX/getting-started/quickstart/) for the equation,
 complete source, and an explanation of each runtime object.
 
 ## Core workflow
 
-PhiJAX keeps each part of a PINN workflow explicit:
+PhiJAX keeps each part of a PINN workflow explicit while assembling the common training path for you:
 
 ```text
-DataModule -> named batches ---------------------------> Trainer
-                                                               |
-InitializedModel -> PhiModule -> named objective losses -------+-> TrainingPlan -> compiled update
-                                                               |
-LossBalancer -> weights and diagnostics -----------------------+
+Model factory + objective ---> PhiModule blueprint ----+
+DataModule -------------------> named batches ---------+---> Trainer.fit() ---> FitResult ---> Trainer.predict()
+Optimizer + seed --------------------------------------+
+LossBalancer + update policy (optional) ---------------+
 ```
 
-The Trainer prepares data sources, moves batches to devices, runs hooks, restores checkpoints, and cleans up resources.
-`TrainState` holds the model, optimizer, balancer, PRNG, and step values. `TrainingPlan` defines the pure compiled
-update.
+The Trainer initializes the model, splits independent PRNG streams, prepares data sources, compiles the update, moves
+batches to devices, runs hooks, restores checkpoints, and cleans up resources. `FitResult` returns the bound module and
+explicit `TrainState` for prediction or advanced workflows.
 
 Application DataModules implement `setup()`, `train_batch_source()`, and optionally `predict_batch_source()`.
 Prediction is skipped cleanly when a DataModule has no prediction source.
@@ -124,10 +138,12 @@ Prediction is skipped cleanly when a DataModule has no prediction source.
 
 ## Core APIs
 
-- `Trainer`, `TrainingPlan`, and `TrainState` separate runtime orchestration from compiled state.
+- `Trainer.fit()` assembles the common application workflow; `fit_state()` exposes explicit state and plan control.
+- `Trainer.predict()` consumes a `FitResult`; `predict_state()` supports checkpoint templates and custom state.
+- `TrainingPlan` and `TrainState` remain public advanced contracts for custom compiled execution.
 - `BasePhiModule` and `PhiModule` provide overridable fit and prediction hooks without owning optimizers or balancers.
 - `PhiDataModule` owns host data and explicit-key batch sources. The Trainer owns device placement.
-- `InitializedModel` lets any JAX model factory return an apply callable, functional state, and optional summary.
+- `ModelFactory` and `InitializedModel` let any JAX architecture expose a pure apply callable, state, and summary.
 - `LossBalancer` supports arbitrary JAX-compatible state and exposes diagnostics without a prescribed state layout.
 - Derivative, equation, objective, callback, logger, evaluation, and artifact APIs can be reused across projects.
 - Hydra instantiation helpers and OmegaConf resolvers are available under `phijax.integrations` without coupling the

@@ -5,8 +5,8 @@ from phijax.callbacks.base import Callback, TrainerContext
 log = logging.getLogger(__name__)
 
 
-class RichModelSummary(Callback):
-    """Print a Rich network summary at fit start using the module's configured summary provider.
+class ModelSummary(Callback):
+    """Print a network summary at fit start using the module's configured summary provider.
 
     Attributes:
         max_depth: Maximum displayed module depth, or `-1` for every level.
@@ -14,6 +14,7 @@ class RichModelSummary(Callback):
         compute_flops: Whether to estimate forward-pass floating-point operations.
         compute_vjp_flops: Whether to estimate reverse-pass floating-point operations.
         rank_zero_only: Whether to suppress output outside global rank zero.
+        warn_if_unavailable: Whether to warn when the module has no summary provider.
     """
 
     def __init__(
@@ -24,6 +25,7 @@ class RichModelSummary(Callback):
         compute_flops: bool = False,
         compute_vjp_flops: bool = False,
         rank_zero_only: bool = True,
+        warn_if_unavailable: bool = True,
     ) -> None:
         """Initialize model-summary display policy.
 
@@ -33,6 +35,7 @@ class RichModelSummary(Callback):
             compute_flops: Whether to estimate forward-pass floating-point operations.
             compute_vjp_flops: Whether to estimate reverse-pass floating-point operations.
             rank_zero_only: Whether to suppress output outside global rank zero.
+            warn_if_unavailable: Whether to warn when no summary can be rendered.
 
         Raises:
             ValueError: If `max_depth` is below `-1` or `console_width` is not positive.
@@ -46,6 +49,7 @@ class RichModelSummary(Callback):
         self.compute_flops = compute_flops
         self.compute_vjp_flops = compute_vjp_flops
         self.rank_zero_only = rank_zero_only
+        self.warn_if_unavailable = warn_if_unavailable
 
     def on_fit_start(self, context: TrainerContext) -> None:
         """Print the configured model summary before the first training batch.
@@ -56,7 +60,8 @@ class RichModelSummary(Callback):
         if self.rank_zero_only and not context.is_global_zero:
             return
         if context.module is None:
-            log.warning("Model summary skipped because the trainer context does not contain a module.")
+            if self.warn_if_unavailable:
+                log.warning("Model summary skipped because the trainer context does not contain a module.")
             return
         summary = context.module.summarize_model(
             context.state.model_state,
@@ -66,10 +71,15 @@ class RichModelSummary(Callback):
             compute_vjp_flops=self.compute_vjp_flops,
         )
         if summary is None:
-            module_name = type(context.module).__name__
-            log.warning(f"Model summary skipped because <{module_name}> has no summary provider.")
+            if self.warn_if_unavailable:
+                module_name = type(context.module).__name__
+                log.warning(f"Model summary skipped because <{module_name}> has no summary provider.")
             return
         print(summary, flush=True)
 
 
-__all__ = ["RichModelSummary"]
+class RichModelSummary(ModelSummary):
+    """Select the Rich-capable model summary provider as an explicit display callback."""
+
+
+__all__ = ["ModelSummary", "RichModelSummary"]

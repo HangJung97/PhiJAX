@@ -6,7 +6,6 @@ import jax
 from numpy.typing import NDArray
 
 from phijax.data.pools import HostPool
-from phijax.data.pools import input_statistics as pool_input_statistics
 from phijax.data.sources import PredictionBatchSource, TrainingBatchSource
 
 type DataStage = Literal["fit", "predict"]
@@ -134,17 +133,17 @@ class PhiDataModule(ABC):
             raise ValueError("Input normalization requires at least one non-prediction pool.")
         return selected
 
-    def input_statistics(self) -> tuple[NDArray[Any], NDArray[Any]]:
-        """Resolve model-input normalization statistics for this application.
+    def input_statistics(self) -> tuple[NDArray[Any], NDArray[Any]] | None:
+        """Return optional model-input normalization statistics.
 
-        The default computes empirical statistics from :meth:`normalization_pools`. Applications backed by a
-        continuous sampling distribution may override this method to return exact distribution statistics without
-        materializing a finite normalization pool.
+        The base implementation disables input normalization. Applications can opt in by overriding this method and
+        returning empirical statistics from :func:`phijax.data.input_statistics` or exact statistics for a continuous
+        sampling distribution.
 
         Returns:
-            Per-coordinate mean and safely positive standard deviation arrays.
+            Per-coordinate mean and safely positive standard deviation arrays, or `None` to skip normalization.
         """
-        return pool_input_statistics(self.normalization_pools())
+        return None
 
     def teardown(self, stage: DataStage) -> None:
         """Release application resources after one lifecycle stage.

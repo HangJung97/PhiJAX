@@ -15,14 +15,18 @@ theme:
     - navigation.top
     - toc.follow
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
+    - scheme: slate
       primary: deep purple
       accent: purple
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
       primary: deep purple
       accent: purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
 
 plugins:
   - search
@@ -61,6 +65,7 @@ markdown_extensions:
 
 extra_javascript:
   - javascripts/mathjax.js
+  - javascripts/shortcuts.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
@@ -69,10 +74,12 @@ nav:
       - Installation: getting-started/installation.md
       - Heat-equation quickstart: getting-started/quickstart.md
       - Core concepts: getting-started/concepts.md
+      - Migrating from 0.1: getting-started/migration-0.2.md
   - Guides:
       - Datasets: guides/datasets.md
       - Equations and objectives: guides/objectives.md
       - Loss balancers: guides/balancers.md
+      - Randomness and reproducibility: guides/reproducibility.md
       - Troubleshooting: guides/troubleshooting.md
   - API reference:
       - Overview: api/index.md

@@ -24,6 +24,8 @@ def _state(step: int) -> TrainState:
         optimizer_state=(),
         balancer_state=BalancerState(weights=jnp.ones(1), traces=jnp.zeros(1)),
         rng_key=jax.random.key(step),
+        sampling_key=jax.random.key(step + 1),
+        balancer_key=jax.random.key(step + 2),
         step=jnp.asarray(step, jnp.int32),
         loss_scale=jnp.asarray(1.0, jnp.float32),
         finite_steps=jnp.asarray(0, jnp.int32),

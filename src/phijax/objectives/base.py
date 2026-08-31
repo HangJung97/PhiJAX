@@ -19,6 +19,15 @@ class ObjectiveTerm(Protocol):
         """
         ...
 
+    @property
+    def batch_keys(self) -> Sequence[str]:
+        """Return batch names required by this objective term.
+
+        Returns:
+            Ordered unique batch names.
+        """
+        ...
+
     def losses(
         self,
         model_apply: ModelApply,
@@ -68,6 +77,15 @@ class Objective(Protocol):
 
         Returns:
             Ordered unique loss names.
+        """
+        ...
+
+    @property
+    def batch_keys(self) -> Sequence[str]:
+        """Return batch names required by the complete objective.
+
+        Returns:
+            Ordered unique batch names.
         """
         ...
 

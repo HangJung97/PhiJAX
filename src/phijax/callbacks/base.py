@@ -17,6 +17,9 @@ class TrainerContext:
         is_global_zero: Whether the callback is running on the global rank-zero process.
         should_log: Whether the trainer logger cadence selects the current completed step.
         is_fit_end: Whether the context represents the terminal state of a fit pass.
+        batch: Device-placed training batch during `on_train_batch_start`, or `None` for other fit hooks.
+        has_logger: Whether the Trainer was configured with at least one experiment logger.
+        callback_states: Host callback states included in a checkpoint request.
     """
 
     state: Any
@@ -26,6 +29,9 @@ class TrainerContext:
     is_global_zero: bool = True
     should_log: bool = False
     is_fit_end: bool = False
+    batch: Any | None = None
+    has_logger: bool = False
+    callback_states: Mapping[str, Mapping[str, Any]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +80,15 @@ class Callback:
     bookkeeping or write artifacts, but numerical model and optimizer changes belong in compiled functions.
     """
 
+    def connect(self, trainer: Any) -> None:
+        """Connect the callback to its owning Trainer before a task begins.
+
+        Args:
+            trainer: Host Trainer coordinating callback hooks.
+        """
+        del trainer
+        return None
+
     def setup(self) -> None:
         """Prepare external callback resources before a task starts."""
         return None
@@ -91,7 +106,7 @@ class Callback:
         """Handle the beginning of one training iteration.
 
         Args:
-            context: Trainer context before the compiled update.
+            context: Trainer context containing the device-placed batch before module transformations.
         """
         del context
         return None
@@ -118,6 +133,15 @@ class Callback:
         """
         del context
         return {}
+
+    def on_train_metrics(self, context: TrainerContext) -> None:
+        """Handle the complete metric mapping for one optimizer step.
+
+        Args:
+            context: Post-update context after module and callback metrics have been merged.
+        """
+        del context
+        return None
 
     def on_fit_end(self, context: TrainerContext) -> None:
         """Handle the end of a successful or callback-stopped fit call.
@@ -213,6 +237,26 @@ class Callback:
     def teardown(self) -> None:
         """Release callback resources after the owning task terminates."""
         return None
+
+    def state_dict(self) -> Mapping[str, Any]:
+        """Return JSON-compatible persistent callback state.
+
+        Returns:
+            Callback state stored with checkpoints, empty for stateless callbacks.
+        """
+        return {}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore persistent callback state.
+
+        Args:
+            state: State previously returned by :meth:`state_dict`.
+
+        Raises:
+            ValueError: If a stateless callback receives non-empty state.
+        """
+        if state:
+            raise ValueError(f"{type(self).__name__} does not define persistent callback state.")
 
 
 __all__ = [

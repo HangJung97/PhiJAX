@@ -1,21 +1,18 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
-import jax
 import optax
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
 from phijax.balancers import LossBalancer
 from phijax.callbacks import Callback
-from phijax.data import DataStage, PhiDataModule
-from phijax.models import InitializedModel
-from phijax.module import BasePhiModule
+from phijax.core import BasePhiModule
+from phijax.data import PhiDataModule
+from phijax.models import ModelFactory
 from phijax.objectives import Objective
 from phijax.training.loggers import ExperimentLogger, LoggerCollection
-from phijax.training.precision import PrecisionPolicy
 from phijax.training.trainer import Trainer
-from phijax.types import ModelApply, ModelSummaryFunction
 
 
 def instantiate_enabled(config: DictConfig | None) -> tuple[Any, ...]:
@@ -77,7 +74,7 @@ def instantiate_trainer(config: DictConfig, callbacks: Sequence[Callback] = ()) 
     Raises:
         TypeError: If `config` does not instantiate :class:`Trainer`.
     """
-    trainer = instantiate(config, callbacks=tuple(callbacks), loggers=())
+    trainer = instantiate(config, callbacks=tuple(callbacks), logger=False)
     if not isinstance(trainer, Trainer):
         raise TypeError("The `trainer` config must instantiate `Trainer`.")
     return trainer
@@ -120,15 +117,14 @@ def instantiate_objective(config: DictConfig) -> Objective:
     return objective
 
 
-def instantiate_data_module(config: DictConfig, stage: DataStage) -> PhiDataModule:
-    """Instantiate and set up one configured DataModule stage.
+def instantiate_data_module(config: DictConfig) -> PhiDataModule:
+    """Instantiate one configured DataModule without preparing a runtime stage.
 
     Args:
         config: Hydra-instantiable DataModule configuration.
-        stage: Initial `fit` or `predict` stage.
 
     Returns:
-        Prepared DataModule with pools for `stage`.
+        Unprepared DataModule whose stage lifecycle is owned by :class:`phijax.Trainer`.
 
     Raises:
         TypeError: If `config` does not instantiate :class:`PhiDataModule`.
@@ -136,59 +132,41 @@ def instantiate_data_module(config: DictConfig, stage: DataStage) -> PhiDataModu
     data_module = instantiate(config)
     if not isinstance(data_module, PhiDataModule):
         raise TypeError("The `data` config must instantiate `PhiDataModule`.")
-    data_module.prepare_stage(stage)
     return data_module
 
 
-def instantiate_model(
-    config: DictConfig,
-    precision: PrecisionPolicy,
-    data_module: PhiDataModule,
-    key: jax.Array,
-) -> InitializedModel:
-    """Instantiate a configured network and its explicit model state.
+def instantiate_model_factory(config: DictConfig) -> ModelFactory:
+    """Instantiate a lazy model factory from one Hydra target.
 
     Args:
-        config: Hydra-instantiable network configuration.
-        precision: Trainer precision policy applied during model construction.
-        data_module: Prepared DataModule supplying input normalization statistics.
-        key: Explicit model initialization key.
+        config: Hydra-instantiable model-builder configuration.
 
     Returns:
-        Validated pure model application, explicit state, and optional summary.
+        Callable retaining architecture options while leaving key, normalization, and precision unbound.
 
     Raises:
-        TypeError: If the configured factory does not return :class:`~phijax.models.InitializedModel`.
+        TypeError: If the configured target cannot produce a callable factory.
     """
-    mean, std = data_module.input_statistics()
-    initialized = instantiate(
-        config,
-        key=key,
-        precision=precision.mode,
-        input_mean=mean,
-        input_std=std,
-    )
-    if not isinstance(initialized, InitializedModel):
-        raise TypeError("The configured model factory must return `InitializedModel`.")
-    return initialized
+    factory = instantiate(config, _partial_=True)
+    if not isinstance(factory, Callable):
+        raise TypeError("The configured model target must produce a callable factory.")
+    return factory
 
 
 def instantiate_module(
     config: DictConfig,
-    model_apply: ModelApply,
+    model: ModelFactory,
     objective: Objective,
     *,
     name: str,
-    model_summary: ModelSummaryFunction | None = None,
 ) -> BasePhiModule:
-    """Instantiate a configurable application module around runtime model objects.
+    """Instantiate a configurable application module blueprint.
 
     Args:
         config: Hydra-instantiable module configuration.
-        model_apply: Pure explicit-state network application callable.
+        model: Lazy initialized-model factory.
         objective: Instantiated objective producing named scalar losses.
         name: Human-readable application identity.
-        model_summary: Optional network-summary callable.
 
     Returns:
         Module implementing the trainer-facing lifecycle and computation contract.
@@ -198,10 +176,9 @@ def instantiate_module(
     """
     module = instantiate(
         config,
-        model_apply=model_apply,
+        model=model,
         objective=objective,
         name=name,
-        model_summary=model_summary,
     )
     if not isinstance(module, BasePhiModule):
         raise TypeError("The module config must instantiate `BasePhiModule`.")
@@ -212,7 +189,7 @@ def instantiate_balancer(config: DictConfig, loss_names: Sequence[str]) -> Any:
     """Instantiate and validate one loss balancer.
 
     Args:
-        config: Hydra-instantiable balancer factory configuration.
+        config: Directly Hydra-instantiable balancer configuration containing `_target_` and constructor options.
         loss_names: Stable objective loss names injected into the balancer.
 
     Returns:
@@ -256,7 +233,7 @@ def build_trainer(config: DictConfig) -> Trainer:
     """
     callbacks = instantiate_callbacks(config.get("callbacks"))
     trainer = instantiate_trainer(config.trainer, callbacks)
-    trainer.logger = instantiate_loggers(config.get("logger"), trainer)
+    trainer.set_logger(instantiate_loggers(config.get("logger"), trainer))
     return trainer
 
 
@@ -267,7 +244,7 @@ __all__ = [
     "instantiate_data_module",
     "instantiate_enabled",
     "instantiate_loggers",
-    "instantiate_model",
+    "instantiate_model_factory",
     "instantiate_module",
     "instantiate_objective",
     "instantiate_optimizer",

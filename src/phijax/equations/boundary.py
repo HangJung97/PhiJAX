@@ -68,7 +68,7 @@ def free_slip_residual(velocity: jax.Array, target: jax.Array, normals: jax.Arra
     return jnp.sum(velocity_residual * normals, axis=-1, keepdims=True)
 
 
-@residual_equation(names=("free_slip",))
+@residual_equation(names=("free_slip",), default_ntk_stream="output")
 def free_slip_boundary(
     model_apply: ModelApply,
     model_state: Any,

@@ -8,6 +8,9 @@ import pytest
 from phijax import PhiModule, PhiModuleContext
 from phijax.balancers import ExactNTKBalancer
 from phijax.callbacks import PredictionContext
+from phijax.metrics import _collect_module_metrics
+from phijax.models import InitializedModel
+from phijax.training import PrecisionPolicy
 from phijax.types import ModelApply, NamedBatches
 
 
@@ -30,6 +33,15 @@ class _ConfiguredObjective:
             Stable objective loss names.
         """
         return self._loss_names
+
+    @property
+    def batch_keys(self) -> tuple[str, ...]:
+        """Return the configured data route.
+
+        Returns:
+            One stable batch key.
+        """
+        return ("data",)
 
     def losses(
         self,
@@ -109,14 +121,36 @@ def _model_apply(model_state: dict[str, jax.Array], inputs: jax.Array) -> jax.Ar
     return model_state["weight"] * inputs
 
 
+def _bind(module: PhiModule) -> PhiModule:
+    """Bind one test blueprint to its configured initialized model.
+
+    Args:
+        module: Uninitialized module blueprint.
+
+    Returns:
+        Bound shallow copy ready for numerical evaluation.
+    """
+    bound, _ = module.prepare_model(
+        key=jax.random.key(0),
+        input_mean=jnp.zeros(1),
+        input_std=jnp.ones(1),
+        precision=PrecisionPolicy.from_name("32-true"),
+    )
+    return bound
+
+
 def test_phi_module_delegates_forward_losses_prediction_and_residuals() -> None:
     """Verify the concrete module adapts a configured model and objective to every computation API."""
-    module = PhiModule(_model_apply, _ResidualObjective(), name="scalar PINN")
+    blueprint = PhiModule(InitializedModel(_model_apply, {}), _ResidualObjective(), name="scalar PINN")
+    module = _bind(blueprint)
     model_state = {"weight": jnp.asarray(2.0)}
     batches = {"data": {"inputs": jnp.asarray([[1.0], [3.0]])}}
 
     assert module.name == "scalar PINN"
     assert module.loss_names == ("data",)
+    assert module.batch_keys == ("data",)
+    with pytest.raises(RuntimeError, match="uninitialized"):
+        blueprint(model_state, jnp.asarray([2.0]))
     assert jnp.array_equal(module(model_state, jnp.asarray([2.0])), jnp.asarray([4.0]))
     assert float(module.training_step(model_state, batches)["data"]) == 20.0
     metrics = module.format_training_metrics(
@@ -134,12 +168,20 @@ def test_phi_module_delegates_forward_losses_prediction_and_residuals() -> None:
     assert jnp.array_equal(module.residual_stream("data", model_state, batches), jnp.asarray([[2.0], [6.0]]))
 
 
-def test_phi_module_default_lifecycle_hooks_preserve_explicit_values() -> None:
-    """Verify default host hooks are no-ops suitable for configuration-driven modules."""
-    module = PhiModule(_model_apply, _ConfiguredObjective())
+def test_phi_module_default_lifecycle_hooks_preserve_values_and_declare_metrics() -> None:
+    """Verify default host hooks preserve values and explicitly declare scalar metric destinations."""
+    module = _bind(PhiModule(InitializedModel(_model_apply, {}), _ConfiguredObjective()))
     model_state = {"weight": jnp.asarray(2.0)}
     batch = {"data": {"inputs": jnp.ones((1, 1))}}
-    context = PhiModuleContext(step=3, metrics={"loss": jnp.asarray(1.0)})
+    context = PhiModuleContext(
+        step=3,
+        metrics={
+            "train/loss": jnp.asarray(1.0),
+            "train/loss/data": jnp.asarray(0.5),
+            "train/weight/data": jnp.asarray(1.0),
+            "train/residual/by_region": jnp.ones(2),
+        },
+    )
     prediction_context = PredictionContext(outputs=None, batch_index=None, metadata={})
 
     assert module.setup() is None
@@ -147,9 +189,17 @@ def test_phi_module_default_lifecycle_hooks_preserve_explicit_values() -> None:
     returned_state, returned_batch = module.on_train_batch_start(model_state, batch, context)
     assert returned_state is model_state
     assert returned_batch is batch
-    returned_state, returned_metrics = module.on_train_batch_end(model_state, context)
+    with _collect_module_metrics() as collector:
+        returned_state, returned_metrics = module.on_train_batch_end(model_state, context)
     assert returned_state is model_state
     assert returned_metrics is context.metrics
+    assert set(collector.records) == {"train/loss", "train/loss/data", "train/weight/data"}
+    assert collector.records["train/loss"].logger is True
+    assert collector.records["train/loss"].prog_bar is True
+    assert collector.records["train/loss/data"].logger is True
+    assert collector.records["train/loss/data"].prog_bar is True
+    assert collector.records["train/weight/data"].logger is True
+    assert collector.records["train/weight/data"].prog_bar is True
     assert module.on_fit_end(model_state, context) is model_state
     assert module.on_predict_start(model_state, prediction_context) is None
     assert module.on_predict_epoch_start(model_state, prediction_context) is None
@@ -160,6 +210,14 @@ def test_phi_module_default_lifecycle_hooks_preserve_explicit_values() -> None:
     assert module.on_exception(RuntimeError("test"), context) is None
     assert module.teardown() is None
     assert module.summarize_model(model_state) is None
+
+
+def test_phi_module_log_requires_the_host_batch_end_hook() -> None:
+    """Verify module logging cannot introduce Python effects into compiled training code."""
+    module = _bind(PhiModule(InitializedModel(_model_apply, {}), _ConfiguredObjective()))
+
+    with pytest.raises(RuntimeError, match="only during `on_train_batch_end`"):
+        module.log("train/loss", jnp.asarray(1.0), prog_bar=True)
 
 
 def test_phi_module_delegates_optional_model_summary() -> None:
@@ -190,7 +248,7 @@ def test_phi_module_delegates_optional_model_summary() -> None:
         return "summary"
 
     model_state = {"weight": jnp.asarray(2.0)}
-    module = PhiModule(_model_apply, _ConfiguredObjective(), model_summary=summarize)
+    module = _bind(PhiModule(InitializedModel(_model_apply, {}, summarize), _ConfiguredObjective()))
 
     summary = module.summarize_model(model_state, max_depth=2, console_width=80, compute_flops=True)
 
@@ -200,10 +258,12 @@ def test_phi_module_delegates_optional_model_summary() -> None:
 
 def test_phi_module_subclass_forward_is_used_by_objective_and_external_balancer() -> None:
     """Verify subclass computation feeds losses and the separately owned pointwise-mean NTK balancer."""
-    module = _OffsetPhiModule(_model_apply, _ResidualObjective())
+    module = _bind(_OffsetPhiModule(InitializedModel(_model_apply, {}), _ResidualObjective()))
     model_state = {"weight": jnp.asarray(2.0)}
     batches = {"data": {"inputs": jnp.asarray([[1.0], [3.0]])}}
-    balancer = ExactNTKBalancer(module.loss_names, moving_average_coefficient=0.0)
+    balancer = ExactNTKBalancer(
+        module.loss_names, update_every_n_steps=1, kernel_size=1, moving_average_coefficient=0.0
+    )
 
     losses = module.training_step(model_state, batches)
     balancer_state = balancer.make_update(module)(model_state, batches, balancer.initialize())
@@ -215,15 +275,29 @@ def test_phi_module_subclass_forward_is_used_by_objective_and_external_balancer(
 
 def test_phi_module_rejects_unsupported_residuals_and_invalid_configuration() -> None:
     """Verify concrete modules fail early for invalid identity, callable, names, and residual contracts."""
-    module = PhiModule(_model_apply, _ConfiguredObjective())
+    module = _bind(PhiModule(InitializedModel(_model_apply, {}), _ConfiguredObjective()))
     with pytest.raises(TypeError, match="ResidualObjective"):
         module.residual_stream("data", {"weight": jnp.asarray(1.0)}, {"data": {"inputs": jnp.ones((1, 1))}})
-    with pytest.raises(TypeError, match="model_apply"):
+    with pytest.raises(TypeError, match="model"):
         PhiModule(None, _ConfiguredObjective())  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match="model_summary"):
-        PhiModule(_model_apply, _ConfiguredObjective(), model_summary=1)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="name"):
-        PhiModule(_model_apply, _ConfiguredObjective(), name=" ")
+        PhiModule(InitializedModel(_model_apply, {}), _ConfiguredObjective(), name=" ")
     for names in ((), ("data", "data"), ("",)):
         with pytest.raises(ValueError, match="loss names"):
-            PhiModule(_model_apply, _ConfiguredObjective(names))
+            PhiModule(InitializedModel(_model_apply, {}), _ConfiguredObjective(names))
+
+    def invalid_factory(**kwargs: Any) -> object:
+        """Return an invalid model value for contract validation.
+
+        Args:
+            **kwargs: Model-preparation values ignored by this invalid factory.
+
+        Returns:
+            Plain object outside the initialized-model contract.
+        """
+        del kwargs
+        return object()
+
+    invalid_module = PhiModule(invalid_factory, _ConfiguredObjective())
+    with pytest.raises(TypeError, match="InitializedModel"):
+        _bind(invalid_module)

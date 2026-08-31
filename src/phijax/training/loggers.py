@@ -3,10 +3,12 @@ import logging
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import yaml
 
 from phijax.utils.pylogger import get_colorlogger
 from phijax.utils.utils import register_task_finalizer
@@ -14,6 +16,36 @@ from phijax.utils.utils import register_task_finalizer
 
 class ExperimentLogger:
     """Define the minimal interface shared by experiment-logging backends."""
+
+    def setup(self) -> None:
+        """Prepare task-local logger resources idempotently."""
+
+    @property
+    def name(self) -> str:
+        """Return the logger or experiment name.
+
+        Returns:
+            Stable logger name.
+        """
+        return type(self).__name__
+
+    @property
+    def version(self) -> int | str | None:
+        """Return the experiment version when available.
+
+        Returns:
+            Integer or string version, or `None` for unversioned loggers.
+        """
+        return None
+
+    @property
+    def log_dir(self) -> Path | None:
+        """Return the local run directory when available.
+
+        Returns:
+            Local run directory, or `None` for remote or stream loggers.
+        """
+        return None
 
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
         """Record resolved experiment parameters.
@@ -28,6 +60,9 @@ class ExperimentLogger:
         Args:
             metrics: Host scalar metric mapping.
             step: Optimizer step associated with `metrics`.
+
+        Raises:
+            RuntimeError: If TensorBoard does not create an event writer.
         """
 
     def log_artifact(self, path: str | Path) -> None:
@@ -59,6 +94,46 @@ class LoggerCollection(ExperimentLogger):
             loggers: Logging backends receiving every operation.
         """
         self.loggers = tuple(loggers)
+
+    def __bool__(self) -> bool:
+        """Return whether the collection contains a configured backend.
+
+        Returns:
+            Whether at least one logger is configured.
+        """
+        return bool(self.loggers)
+
+    def setup(self) -> None:
+        """Prepare every configured backend for a new task."""
+        for logger in self.loggers:
+            logger.setup()
+
+    @property
+    def name(self) -> str:
+        """Return the primary logger name.
+
+        Returns:
+            First backend name, or this collection's class name when empty.
+        """
+        return self.loggers[0].name if self.loggers else type(self).__name__
+
+    @property
+    def version(self) -> int | str | None:
+        """Return the primary logger version.
+
+        Returns:
+            First backend version, or `None` when empty.
+        """
+        return self.loggers[0].version if self.loggers else None
+
+    @property
+    def log_dir(self) -> Path | None:
+        """Return the primary local log directory.
+
+        Returns:
+            First backend log directory, or `None` when empty.
+        """
+        return self.loggers[0].log_dir if self.loggers else None
 
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
         """Forward hyperparameters to all backends.
@@ -159,27 +234,74 @@ class CSVLogger(ExperimentLogger):
         path: Destination CSV path.
     """
 
-    def __init__(self, save_dir: str | Path, filename: str = "metrics.csv") -> None:
+    def __init__(
+        self,
+        save_dir: str | Path,
+        filename: str = "metrics.csv",
+        *,
+        name: str = "csv",
+        version: int | str | None = None,
+    ) -> None:
         """Initialize a long-form CSV logger.
 
         Args:
             save_dir: Directory containing the metrics file.
             filename: CSV filename within `save_dir`.
+            name: Logger or experiment name.
+            version: Optional run version displayed by progress callbacks.
         """
-        self.path = Path(save_dir) / filename
+        self._log_dir = Path(save_dir)
+        self._name = name
+        self._version = version
+        self.path = self._log_dir / filename
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file: Any = None
+        self._writer: Any = None
+        self.setup()
+
+    def setup(self) -> None:
+        """Open the CSV stream for a new task when it is currently closed."""
+        if self._file is not None and not self._file.closed:
+            return
         self._file = self.path.open("a", encoding="utf-8", newline="")
         self._writer = csv.writer(self._file)
         if self.path.stat().st_size == 0:
             self._writer.writerow(("step", "metric", "value"))
 
+    @property
+    def name(self) -> str:
+        """Return the experiment name.
+
+        Returns:
+            Configured experiment name.
+        """
+        return self._name
+
+    @property
+    def version(self) -> int | str | None:
+        """Return the experiment version.
+
+        Returns:
+            Configured version.
+        """
+        return self._version
+
+    @property
+    def log_dir(self) -> Path:
+        """Return the local run directory.
+
+        Returns:
+            Directory containing metrics and hyperparameters.
+        """
+        return self._log_dir
+
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
-        """Leave configuration persistence to Hydra's resolved config artifact.
+        """Write resolved parameters to `hparams.yaml`.
 
         Args:
             parameters: Resolved experiment configuration.
         """
-        del parameters
+        _write_hyperparameters(self.log_dir, parameters)
 
     def log_metrics(self, metrics: Mapping[str, float], step: int) -> None:
         """Append one row per scalar metric.
@@ -214,11 +336,19 @@ class CSVLogger(ExperimentLogger):
 class TensorBoardLogger(ExperimentLogger):
     """Write scalar summaries using TensorBoard's dependency-light event writer."""
 
-    def __init__(self, save_dir: str | Path) -> None:
+    def __init__(
+        self,
+        save_dir: str | Path,
+        *,
+        name: str = "tensorboard",
+        version: int | str | None = None,
+    ) -> None:
         """Initialize TensorBoard event logging.
 
         Args:
             save_dir: Directory receiving TensorBoard event files.
+            name: Logger or experiment name.
+            version: Optional run version displayed by progress callbacks.
 
         Raises:
             ModuleNotFoundError: If the optional `tensorboard` extra is not installed.
@@ -230,16 +360,52 @@ class TensorBoardLogger(ExperimentLogger):
                 "TensorBoard logging requires `uv sync --extra tensorboard` in addition to a JAX backend extra."
             ) from error
         self.save_dir = Path(save_dir)
+        self._name = name
+        self._version = version
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        self._writer = writer_class(str(self.save_dir))
+        self._writer_class = writer_class
+        self._writer: Any | None = None
+        self.setup()
+
+    def setup(self) -> None:
+        """Create a TensorBoard writer for a new task when needed."""
+        if self._writer is None:
+            self._writer = self._writer_class(str(self.save_dir))
+
+    @property
+    def name(self) -> str:
+        """Return the experiment name.
+
+        Returns:
+            Configured experiment name.
+        """
+        return self._name
+
+    @property
+    def version(self) -> int | str | None:
+        """Return the experiment version.
+
+        Returns:
+            Configured version.
+        """
+        return self._version
+
+    @property
+    def log_dir(self) -> Path:
+        """Return the TensorBoard run directory.
+
+        Returns:
+            Directory containing event files and hyperparameters.
+        """
+        return self.save_dir
 
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
-        """Leave configuration persistence to Hydra's resolved config artifact.
+        """Write resolved parameters to `hparams.yaml`.
 
         Args:
             parameters: Resolved experiment configuration.
         """
-        del parameters
+        _write_hyperparameters(self.log_dir, parameters)
 
     def log_metrics(self, metrics: Mapping[str, float], step: int) -> None:
         """Write scalar TensorBoard summaries.
@@ -252,7 +418,10 @@ class TensorBoardLogger(ExperimentLogger):
         summary_class = import_module("tensorboard.compat.proto.summary_pb2").Summary
 
         values = [summary_class.Value(tag=name, simple_value=float(value)) for name, value in sorted(metrics.items())]
-        self._writer.add_event(event_class(wall_time=time.time(), step=step, summary=summary_class(value=values)))
+        writer = self._writer
+        if writer is None:
+            raise RuntimeError("TensorBoard did not create an event writer.")
+        writer.add_event(event_class(wall_time=time.time(), step=step, summary=summary_class(value=values)))
 
     def log_artifact(self, path: str | Path) -> None:
         """Ignore artifacts because the scalar writer has no artifact store.
@@ -269,8 +438,10 @@ class TensorBoardLogger(ExperimentLogger):
             status: Terminal run status, unused by this backend.
         """
         del status
-        self._writer.flush()
-        self._writer.close()
+        if self._writer is not None:
+            self._writer.flush()
+            self._writer.close()
+            self._writer = None
 
 
 class WandbLogger(ExperimentLogger):
@@ -348,8 +519,38 @@ class WandbLogger(ExperimentLogger):
         if self.run is None:
             raise RuntimeError("`wandb.init()` did not return an active run.")
         self.artifact_type = artifact_type
+        self._name = project
+        self._version = run_id
+        self._log_dir = resolved_save_dir
         self._finished = False
         register_task_finalizer(self.finalize)
+
+    @property
+    def name(self) -> str:
+        """Return the W&B project name.
+
+        Returns:
+            Configured project name.
+        """
+        return self._name
+
+    @property
+    def version(self) -> str | None:
+        """Return the configured W&B run identifier.
+
+        Returns:
+            Stable run identifier, or `None` when W&B generated it.
+        """
+        return self._version
+
+    @property
+    def log_dir(self) -> Path | None:
+        """Return the local W&B storage directory.
+
+        Returns:
+            Configured local directory, or `None`.
+        """
+        return self._log_dir
 
     def log_hyperparameters(self, parameters: Mapping[str, Any]) -> None:
         """Update the W&B run configuration.
@@ -409,6 +610,65 @@ def scalar_metrics(metrics: Mapping[str, Any]) -> dict[str, float]:
     return result
 
 
+def create_default_logger(default_root_dir: str | Path, *, is_global_zero: bool = True) -> LoggerCollection:
+    """Create a versioned local TensorBoard logger with a CSV fallback.
+
+    Args:
+        default_root_dir: Parent directory containing the `phijax_logs` experiment directory.
+        is_global_zero: Whether this process owns filesystem logging.
+
+    Returns:
+        One configured local logger on global rank zero, otherwise an empty collection.
+    """
+    if not is_global_zero:
+        return LoggerCollection()
+    root = Path(default_root_dir).expanduser().resolve() / "phijax_logs"
+    version_number = _next_version(root)
+    run_dir = root / f"version_{version_number}"
+    try:
+        tensorboard_available = find_spec("tensorboard") is not None
+    except (ImportError, ValueError):
+        tensorboard_available = False
+    logger: ExperimentLogger
+    if tensorboard_available:
+        logger = TensorBoardLogger(run_dir, name="phijax_logs", version=version_number)
+    else:
+        logger = CSVLogger(run_dir, name="phijax_logs", version=version_number)
+    return LoggerCollection((logger,))
+
+
+def _next_version(root: Path) -> int:
+    """Find the next unused integer run version.
+
+    Args:
+        root: Experiment directory containing `version_N` children.
+
+    Returns:
+        Smallest nonnegative version not already present.
+    """
+    existing = {
+        int(path.name.removeprefix("version_"))
+        for path in root.glob("version_*")
+        if path.is_dir() and path.name.removeprefix("version_").isdigit()
+    }
+    version_number = 0
+    while version_number in existing:
+        version_number += 1
+    return version_number
+
+
+def _write_hyperparameters(log_dir: Path, parameters: Mapping[str, Any]) -> None:
+    """Write one human-readable hyperparameter mapping.
+
+    Args:
+        log_dir: Existing local run directory.
+        parameters: Resolved experiment parameters.
+    """
+    path = log_dir / "hparams.yaml"
+    with path.open("w", encoding="utf-8") as file:
+        yaml.safe_dump(dict(parameters), file, sort_keys=True, default_flow_style=False)
+
+
 __all__ = [
     "CSVLogger",
     "ConsoleLogger",
@@ -416,5 +676,6 @@ __all__ = [
     "LoggerCollection",
     "TensorBoardLogger",
     "WandbLogger",
+    "create_default_logger",
     "scalar_metrics",
 ]

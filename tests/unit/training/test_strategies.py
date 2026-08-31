@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -74,6 +76,16 @@ def test_create_strategy_reports_backend_failures(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(jax, "devices", fail_devices)
     with pytest.raises(RuntimeError, match="No usable `tpu`"):
         create_strategy("tpu")
+
+
+def test_create_strategy_discovers_mocked_tpu_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify experimental TPU selection uses the same explicit placement contract as other backends."""
+    device = SimpleNamespace(platform="tpu", process_index=0, id=0)
+    monkeypatch.setattr(jax, "devices", lambda backend=None: (device,) if backend in {None, "tpu"} else ())
+    strategy = create_strategy("tpu", 1)
+
+    assert isinstance(strategy, SingleDeviceStrategy)
+    assert strategy.root_device is device
 
 
 def test_initialize_distributed_delegates_once(monkeypatch: pytest.MonkeyPatch) -> None:

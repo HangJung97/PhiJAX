@@ -84,6 +84,46 @@ class NamedBatchSource:
     batch_sizes: Mapping[str, BatchSize]
     key: jax.Array
 
+    @classmethod
+    def from_pools(
+        cls,
+        pools: Mapping[str, HostPool],
+        batch_sizes: Mapping[str, BatchSize],
+        key: jax.Array,
+        *,
+        names: tuple[str, ...] | None = None,
+        replace: bool = True,
+        sort_axes: Mapping[str, int | None] | None = None,
+    ) -> Self:
+        """Construct aligned finite-row samplers from named host pools.
+
+        Args:
+            pools: Finite host pools keyed by application batch name.
+            batch_sizes: Sampling policies keyed by the same names.
+            key: Explicit root key folded with each optimizer step.
+            names: Optional stable subset and ordering. The batch-size declaration order is used when omitted.
+            replace: Whether sampled rows may repeat.
+            sort_axes: Optional input-coordinate sort axis per selected pool.
+
+        Returns:
+            Deterministic named source containing one :class:`RandomRowSampler` per selected pool.
+
+        Raises:
+            KeyError: If a selected name is absent from `pools` or `batch_sizes`.
+            ValueError: If selected names are empty or duplicated.
+        """
+        selected = tuple(batch_sizes) if names is None else tuple(names)
+        if not selected or len(set(selected)) != len(selected):
+            raise ValueError("`names` must contain unique non-empty pool names.")
+        if any(not name or not name.strip() for name in selected):
+            raise ValueError("`names` must contain unique non-empty pool names.")
+        axes = dict(sort_axes or {})
+        samplers = {
+            name: RandomRowSampler(pools[name].fields(), replace=replace, sort_axis=axes.get(name)) for name in selected
+        }
+        policies = {name: batch_sizes[name] for name in selected}
+        return cls(samplers, policies, key)
+
     def __post_init__(self) -> None:
         """Validate sampler names and batch-size policies.
 

@@ -79,8 +79,9 @@ those properties fixed between steps.
 
 ## A DataModule reports that another stage is active
 
-One DataModule cannot own `fit` and `predict` simultaneously. Pass it to `Trainer.fit()` or `Trainer.predict()` and let
-the Trainer prepare and tear down the stage. When manually calling `prepare_stage()`, pair it with
+One DataModule cannot own fitting and prediction simultaneously. Pass it to `Trainer.fit()` and then pass the returned
+`FitResult` to `Trainer.predict()`. The Trainer prepares and tears down each stage. When manually calling
+`prepare_stage()`, pair it with
 `teardown_stage()` before starting a different stage.
 
 ## Prediction returns `None`
@@ -91,5 +92,6 @@ DataModule. Implement both `predict_batch_source()` and `prediction_pool()` when
 ## A checkpoint cannot be restored
 
 PhiJAX checkpoints include a version manifest and are restored only within a compatible PhiJAX major/minor line.
+PhiJAX 0.1 and 0.2 use different `TrainState` layouts and checkpoint schemas.
 Verify that the model-state structure, optimizer, balancer, precision policy, and installed PhiJAX version match the
 checkpoint. Use weights-only restoration when intentionally changing optimizer or balancer policy.

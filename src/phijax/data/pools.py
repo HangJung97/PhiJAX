@@ -42,7 +42,7 @@ def _immutable_mapping(values: Mapping[str, Any] | None) -> Mapping[str, Any]:
     return MappingProxyType(frozen)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class HostPool:
     """Represent one immutable host-side subset with stable row ordering.
 
@@ -62,30 +62,53 @@ class HostPool:
     reference_shape: tuple[int, ...]
     flat_index: NDArray[Any]
 
-    def __post_init__(self) -> None:
-        """Copy arrays, validate leading dimensions, and freeze storage.
+    def __init__(
+        self,
+        inputs: NDArray[Any],
+        targets: NDArray[Any] | None = None,
+        aux: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        reference_shape: tuple[int, ...] | None = None,
+        flat_index: NDArray[Any] | None = None,
+    ) -> None:
+        """Copy arrays, fill safe defaults, validate dimensions, and freeze storage.
+
+        Args:
+            inputs: Rank-two coordinate array with shape `[samples, input_features]`.
+            targets: Optional rank-two target array. Omission creates a zero-width array.
+            aux: Optional sample-wise auxiliary arrays.
+            metadata: Optional structural or reconstruction metadata.
+            reference_shape: Optional dense reconstruction shape. Omission uses `(sample_count,)`.
+            flat_index: Optional flattened reconstruction indices. Omission uses sequential row indices.
 
         Raises:
             ValueError: If `inputs` or `targets` is not rank two, or if any sample-wise array has a mismatched leading
                 row count.
         """
-        inputs = _immutable_array(self.inputs)
-        targets = _immutable_array(self.targets)
-        flat_index = _immutable_array(self.flat_index)
-        if inputs.ndim != 2 or targets.ndim != 2:
+        frozen_inputs = _immutable_array(inputs)
+        if frozen_inputs.ndim != 2:
+            raise ValueError("Pool `inputs` must be a rank-two array.")
+        frozen_targets = _immutable_array(
+            np.empty((frozen_inputs.shape[0], 0), dtype=frozen_inputs.dtype) if targets is None else targets
+        )
+        frozen_flat_index = _immutable_array(
+            np.arange(frozen_inputs.shape[0], dtype=np.int64) if flat_index is None else flat_index
+        )
+        if frozen_targets.ndim != 2:
             raise ValueError("Pool `inputs` and `targets` must be rank-two arrays.")
-        if targets.shape[0] != inputs.shape[0] or flat_index.shape[0] != inputs.shape[0]:
+        if frozen_targets.shape[0] != frozen_inputs.shape[0] or frozen_flat_index.shape[0] != frozen_inputs.shape[0]:
             raise ValueError("Pool arrays must share the same leading row count.")
-        aux = _immutable_mapping(self.aux)
-        for name, value in aux.items():
-            if isinstance(value, np.ndarray) and value.shape[0] != inputs.shape[0]:
+        frozen_aux = _immutable_mapping(aux)
+        for name, value in frozen_aux.items():
+            if isinstance(value, np.ndarray) and value.shape[0] != frozen_inputs.shape[0]:
                 raise ValueError(f"Auxiliary field `{name}` does not match the pool row count.")
-        object.__setattr__(self, "inputs", inputs)
-        object.__setattr__(self, "targets", targets)
-        object.__setattr__(self, "flat_index", flat_index)
-        object.__setattr__(self, "aux", aux)
-        object.__setattr__(self, "metadata", _immutable_mapping(self.metadata))
-        object.__setattr__(self, "reference_shape", tuple(int(value) for value in self.reference_shape))
+        resolved_shape = (frozen_inputs.shape[0],) if reference_shape is None else reference_shape
+        object.__setattr__(self, "inputs", frozen_inputs)
+        object.__setattr__(self, "targets", frozen_targets)
+        object.__setattr__(self, "flat_index", frozen_flat_index)
+        object.__setattr__(self, "aux", frozen_aux)
+        object.__setattr__(self, "metadata", _immutable_mapping(metadata))
+        object.__setattr__(self, "reference_shape", tuple(int(value) for value in resolved_shape))
 
     def fields(self) -> Mapping[str, NDArray[Any]]:
         """Collect dense sample-wise fields for one device transfer.

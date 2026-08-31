@@ -40,6 +40,23 @@ def test_host_pool_copies_and_freezes_arrays() -> None:
         pool.inputs[0, 0] = -1.0
 
 
+def test_host_pool_supplies_safe_unsupervised_and_reconstruction_defaults() -> None:
+    """Verify omitted pool fields produce immutable aligned defaults."""
+    inputs = np.arange(6, dtype=np.float32).reshape(3, 2)
+
+    pool = HostPool(inputs)
+
+    assert pool.targets is not None
+    assert pool.flat_index is not None
+    assert pool.targets.shape == (3, 0)
+    assert pool.targets.dtype == inputs.dtype
+    assert pool.reference_shape == (3,)
+    assert not pool.targets.flags.writeable
+    np.testing.assert_array_equal(pool.flat_index, np.arange(3, dtype=np.int64))
+    assert dict(pool.aux) == {}
+    assert dict(pool.metadata) == {}
+
+
 def test_host_pool_recursively_freezes_nested_metadata() -> None:
     """Verify application metadata mappings and their arrays cannot mutate after pool construction."""
     source_values = np.asarray([1.0, 2.0])
@@ -126,6 +143,28 @@ def test_named_sampler_source_preserves_all_rows_and_step_determinism() -> None:
     assert first["random"]["inputs"].shape == (3, 3)
 
 
+def test_named_sampler_source_constructs_ordered_random_samplers_from_pools() -> None:
+    """Verify the finite-pool shorthand preserves requested ordering and deterministic sampling."""
+    pools = {"first": _pool(), "second": _pool()}
+    source = NamedBatchSource.from_pools(
+        pools,
+        {"first": 2, "second": "all"},
+        jax.random.key(8),
+        names=("second", "first"),
+        replace=False,
+        sort_axes={"first": 0},
+    )
+
+    assert tuple(source.samplers) == ("second", "first")
+    assert tuple(source.batch_sizes) == ("second", "first")
+    np.testing.assert_array_equal(source(3)["second"]["inputs"], _pool().inputs)
+    np.testing.assert_array_equal(source(3)["first"]["inputs"], source(3)["first"]["inputs"])
+    with pytest.raises(KeyError, match="missing"):
+        NamedBatchSource.from_pools(pools, {"missing": 1}, jax.random.key(0))
+    with pytest.raises(ValueError, match="unique non-empty"):
+        NamedBatchSource.from_pools(pools, {"first": 1}, jax.random.key(0), names=("first", "first"))
+
+
 def test_named_sampler_source_prepares_persistent_state_on_selected_device() -> None:
     """Verify Trainer-facing preparation transfers sampler storage and keys exactly once per prepared source."""
     source = NamedBatchSource(
@@ -205,6 +244,8 @@ def test_sampler_names_and_generated_field_semantics_are_validated() -> None:
     """Verify short-name selection rejects unknown policies and varying generated templates."""
     with pytest.raises(ValueError, match="Unknown sampler name"):
         create_sampler("unknown", _pool())
+    with pytest.raises(ValueError, match="time_axis"):
+        create_sampler("space_time", _pool(), options={"time_axis": None})
     with pytest.raises(ValueError, match="varies by row"):
         create_sampler(
             "uniform_domain",

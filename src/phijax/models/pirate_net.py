@@ -361,8 +361,8 @@ def build_pirate_net(
     key: jax.Array,
     input_dim: int,
     output_dim: int,
-    input_mean: ArrayLike,
-    input_std: ArrayLike,
+    input_mean: ArrayLike | None = None,
+    input_std: ArrayLike | None = None,
     *,
     precision: str | PrecisionPolicy | None = None,
     **model_kwargs: Any,
@@ -373,8 +373,8 @@ def build_pirate_net(
         key: JAX PRNG key for deterministic parameter initialization.
         input_dim: Width of the physical input coordinate vector.
         output_dim: Width of the predicted output vector.
-        input_mean: Array-like per-coordinate input normalization mean.
-        input_std: Array-like per-coordinate input normalization standard deviation.
+        input_mean: Optional array-like per-coordinate input normalization mean.
+        input_std: Optional array-like per-coordinate input normalization standard deviation.
         precision: Optional model precision policy.
         **model_kwargs: Architecture options forwarded to :class:`PirateNet`.
 
@@ -384,10 +384,15 @@ def build_pirate_net(
     policy = PrecisionPolicy.from_name(precision or "32-true")
     resolved_kwargs = policy.apply_model_dtype_defaults(model_kwargs)
     model = PirateNet(input_dim, output_dim, rngs=nnx.Rngs(params=key), **resolved_kwargs)
+    if (input_mean is None) != (input_std is None):
+        raise ValueError("`input_mean` and `input_std` must either both be provided or both be `None`.")
+    call_kwargs = None
+    if input_mean is not None and input_std is not None:
+        call_kwargs = {"input_mean": jnp.asarray(input_mean), "input_std": jnp.asarray(input_std)}
     return initialize_nnx_model(
         model,
         example_inputs=jnp.zeros((1, input_dim), dtype=policy.derivative_dtype),
-        call_kwargs={"input_mean": jnp.asarray(input_mean), "input_std": jnp.asarray(input_std)},
+        call_kwargs=call_kwargs,
     )
 
 

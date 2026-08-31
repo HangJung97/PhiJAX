@@ -6,7 +6,8 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 
 from phijax.balancers.base import BalancerState, BalancerUpdatePlan
-from phijax.module import BasePhiModule
+from phijax.core import BasePhiModule
+from phijax.metrics import TrainingOutput
 from phijax.types import NamedBatches
 
 
@@ -37,7 +38,9 @@ def _loss_gradient_norm(
         Returns:
             Scalar loss selected by `name`.
         """
-        return module.training_step(current_state, batches)[name]
+        output = module.training_step(current_state, batches)
+        losses = output.losses if isinstance(output, TrainingOutput) else output
+        return losses[name]
 
     gradients = jax.grad(scalar_loss)(model_state)
     flattened_gradients, _ = ravel_pytree(gradients)
@@ -56,6 +59,8 @@ class GradNormBalancer:
 
     Attributes:
         loss_names: Stable loss and gradient-norm ordering.
+        update_every_n_steps: Positive optimizer-step interval between weight updates.
+        update_start_step: Absolute optimizer step of the first weight update.
         eps: Nonnegative relative denominator regularizer.
         momentum: Moving-average coefficient applied to previous weights.
         initial_weights: Initial `float32` weight vector.
@@ -65,6 +70,8 @@ class GradNormBalancer:
         self,
         loss_names: Sequence[str],
         *,
+        update_every_n_steps: int,
+        update_start_step: int | None = None,
         eps: float = 1.0e-5,
         moving_average_coefficient: float = 0.9,
         initial_weights: Mapping[str, float] | None = None,
@@ -73,21 +80,38 @@ class GradNormBalancer:
 
         Args:
             loss_names: Unique non-empty sequence defining loss and diagnostic ordering.
+            update_every_n_steps: Positive optimizer-step interval between gradient-norm updates.
+            update_start_step: Nonnegative absolute optimizer step of the first update. `None` starts after one update
+                interval.
             eps: Nonnegative multiplier regularizing each gradient-norm denominator.
             moving_average_coefficient: Previous-weight coefficient in `[0, 1)`.
             initial_weights: Optional initial weights keyed by loss name; unspecified names use `1.0`.
 
         Raises:
-            ValueError: If names are empty or duplicated, `eps` is negative, or smoothing is outside `[0, 1)`.
+            TypeError: If update scheduling values have invalid types.
+            ValueError: If names are invalid, the update interval is not positive, `eps` is negative, or smoothing is
+                outside `[0, 1)`.
         """
         if not loss_names or len(set(loss_names)) != len(loss_names):
             raise ValueError("`loss_names` must be non-empty and unique.")
+        if isinstance(update_every_n_steps, bool) or not isinstance(update_every_n_steps, int):
+            raise TypeError("`update_every_n_steps` must be an integer.")
+        if update_every_n_steps < 1:
+            raise ValueError("`update_every_n_steps` must be positive.")
+        if update_start_step is not None and (
+            isinstance(update_start_step, bool) or not isinstance(update_start_step, int)
+        ):
+            raise TypeError("`update_start_step` must be an integer or `None`.")
+        if update_start_step is not None and update_start_step < 0:
+            raise ValueError("`update_start_step` must be nonnegative.")
         if eps < 0.0:
             raise ValueError("`eps` must be nonnegative.")
         if not 0.0 <= moving_average_coefficient < 1.0:
             raise ValueError("`moving_average_coefficient` must be in `[0, 1)`.")
         configured = initial_weights or {}
         self.loss_names = tuple(loss_names)
+        self.update_every_n_steps = update_every_n_steps
+        self.update_start_step = update_every_n_steps if update_start_step is None else update_start_step
         self.eps = float(eps)
         self.momentum = float(moving_average_coefficient)
         self.initial_weights = jnp.asarray([configured.get(name, 1.0) for name in self.loss_names], dtype=jnp.float32)
@@ -210,26 +234,22 @@ class GradNormBalancer:
         self,
         module: BasePhiModule,
         batch_keys: Sequence[str],
-        options: Mapping[str, Any],
     ) -> BalancerUpdatePlan:
         """Describe a gradient-norm refresh using the current training batches.
 
         Args:
             module: Module producing named unweighted scalar losses.
             batch_keys: Available objective batch keys, retained for the shared adaptive-balancer contract.
-            options: Balancer-specific update options, which gradient-norm balancing does not accept.
 
         Returns:
             Update plan that reuses the current training batches.
-
-        Raises:
-            ValueError: If unsupported balancer-specific options are configured.
         """
         del batch_keys
-        if options:
-            names = ", ".join(sorted(options))
-            raise ValueError(f"Gradient-norm balancing does not accept update options: {names}.")
-        return BalancerUpdatePlan(update=self.make_update(module))
+        return BalancerUpdatePlan(
+            update=self.make_update(module),
+            every_n_steps=self.update_every_n_steps,
+            update_start_step=self.update_start_step,
+        )
 
 
 __all__ = ["GradNormBalancer"]

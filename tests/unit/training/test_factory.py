@@ -7,20 +7,20 @@ import pytest
 from omegaconf import OmegaConf
 
 from phijax.balancers import BalancerUpdatePlan
-from phijax.callbacks import EarlyStopping
+from phijax.callbacks import EarlyStopping, ModelSummary, TQDMProgressBar
+from phijax.core import BasePhiModule, PhiModule
 from phijax.data import PhiDataModule
 from phijax.integrations.hydra import (
     build_trainer,
-    configure_training,
+    instantiate_balancer,
     instantiate_data_module,
     instantiate_enabled,
-    instantiate_model,
+    instantiate_model_factory,
     instantiate_module,
 )
 from phijax.integrations.hydra import factory as factory_module
 from phijax.models import InitializedModel
-from phijax.module import BasePhiModule, PhiModule
-from phijax.training import ConsoleLogger, Trainer, TrainingPlan
+from phijax.training import ConsoleLogger, Trainer, TrainingPlan, build_training_plan
 from phijax.types import NamedBatches
 
 
@@ -35,6 +35,15 @@ class _TestObjective:
             Single test loss name.
         """
         return ("loss",)
+
+    @property
+    def batch_keys(self) -> tuple[str, ...]:
+        """Return the synthetic training route.
+
+        Returns:
+            One stable batch key.
+        """
+        return ("data",)
 
     def losses(
         self,
@@ -65,25 +74,57 @@ class _AdaptiveBalancer:
 
     def __init__(self) -> None:
         """Initialize an empty build-call record."""
-        self.build_call: tuple[object, tuple[str, ...], dict[str, Any]] | None = None
+        self.build_call: tuple[object, tuple[str, ...]] | None = None
+        self.loss_names = ("loss",)
+
+    def initialize(self) -> jax.Array:
+        """Create one scalar synthetic balancer state.
+
+        Returns:
+            Unit scalar state.
+        """
+        return jax.numpy.ones(1)
+
+    def combine(self, losses: dict[str, jax.Array], state: jax.Array) -> jax.Array:
+        """Return the fixture's single scalar loss.
+
+        Args:
+            losses: Scalar loss mapping.
+            state: Unused synthetic balancer state.
+
+        Returns:
+            Configured scalar loss.
+        """
+        del state
+        return losses["loss"]
+
+    def diagnostics(self, state: jax.Array) -> dict[str, jax.Array]:
+        """Expose no additional diagnostics.
+
+        Args:
+            state: Unused synthetic balancer state.
+
+        Returns:
+            Empty diagnostic mapping.
+        """
+        del state
+        return {}
 
     def build_update_plan(
         self,
         module: object,
         batch_keys: tuple[str, ...],
-        options: dict[str, Any],
     ) -> BalancerUpdatePlan:
         """Return one fixed-diagnostic update plan.
 
         Args:
             module: Configured application module.
             batch_keys: Required named training batches.
-            options: Resolved balancer-specific update options.
 
         Returns:
             Synthetic update plan using two diagnostic rows per batch.
         """
-        self.build_call = (module, batch_keys, options)
+        self.build_call = (module, batch_keys)
 
         def update(model_state: Any, batches: NamedBatches, balancer_state: Any) -> Any:
             """Preserve synthetic balancer state.
@@ -99,7 +140,12 @@ class _AdaptiveBalancer:
             del model_state, batches
             return balancer_state
 
-        return BalancerUpdatePlan(update, dict.fromkeys(batch_keys, 2))
+        return BalancerUpdatePlan(
+            update,
+            every_n_steps=25,
+            update_start_step=5,
+            batch_sizes=dict.fromkeys(batch_keys, 2),
+        )
 
 
 def _model_apply(model_state: Any, inputs: jax.Array) -> jax.Array:
@@ -152,73 +198,74 @@ def _custom_model_factory(
     return InitializedModel(apply, {"weight": jax.numpy.asarray(2.0)})
 
 
-def test_hydra_integration_exports_factory_and_assembly_helpers() -> None:
-    """Verify optional integration helpers remain available without eager model imports."""
+def test_hydra_integration_exports_factory_helpers() -> None:
+    """Verify optional integration factories remain available without eager model imports."""
     assert callable(instantiate_data_module)
-    assert callable(instantiate_model)
-    assert callable(configure_training)
+    assert callable(instantiate_model_factory)
+    assert callable(instantiate_balancer)
 
 
-def test_instantiate_model_accepts_a_generic_initialized_model() -> None:
-    """Verify model assembly is independent of MLP and NNX graph details."""
-    data_module = MagicMock(spec=PhiDataModule)
-    data_module.input_statistics.return_value = (
-        np.asarray([1.0], dtype=np.float32),
-        np.asarray([2.0], dtype=np.float32),
-    )
+def test_instantiate_model_factory_remains_lazy_until_runtime_values_are_available() -> None:
+    """Verify Hydra binds architecture options without initializing model state."""
     config = OmegaConf.create({"_target_": f"{__name__}._custom_model_factory"})
 
-    initialized = instantiate_model(config, MagicMock(mode="32-true"), data_module, jax.random.key(0))
+    factory = instantiate_model_factory(config)
+    initialized = factory(
+        key=jax.random.key(0),
+        precision="32-true",
+        input_mean=np.asarray([1.0], dtype=np.float32),
+        input_std=np.asarray([2.0], dtype=np.float32),
+    )
 
     assert isinstance(initialized, InitializedModel)
     assert initialized.summary is None
     np.testing.assert_allclose(initialized.apply(initialized.state, jax.numpy.asarray([[3.0]])), [[2.0]])
 
 
-def test_configure_training_returns_data_independent_adaptive_plan() -> None:
-    """Verify assembly declares source requirements without constructing or sampling a DataModule."""
+def test_core_assembly_returns_data_independent_adaptive_plan() -> None:
+    """Verify core assembly declares source requirements without constructing or sampling a DataModule."""
     train_step = MagicMock()
     trainer = MagicMock(spec=Trainer)
     trainer.compile_train_step.return_value = train_step
     module = MagicMock(spec=BasePhiModule)
+    module.loss_names = ("loss",)
+    module.batch_keys = ("initial", "pde")
     balancer = _AdaptiveBalancer()
     optimizer = MagicMock()
-    config = OmegaConf.create(
-        {
-            "objective": {
-                "terms": {
-                    "first": {"batch_key": "initial"},
-                    "second": {"batch_key": "pde"},
-                    "third": {"batch_key": "pde"},
-                }
-            },
-            "balancer": {
-                "update": {
-                    "every_n_steps": 25,
-                    "skip_first_step": False,
-                    "kernel_chunk_size": 8,
-                }
-            },
-        }
-    )
-
-    plan = configure_training(config, trainer, module, balancer, optimizer)
+    plan = build_training_plan(trainer, module, balancer, optimizer)
 
     assert isinstance(plan, TrainingPlan)
     assert plan.train_step is train_step
     assert plan.batch_keys == ("initial", "pde")
     assert plan.balancer_update is not None
     assert plan.balancer_update.every_n_steps == 25
-    assert plan.balancer_update.skip_first_step is False
-    assert plan.balancer_update.plan.batch_sizes == {"initial": 2, "pde": 2}
-    assert balancer.build_call == (module, ("initial", "pde"), {"kernel_chunk_size": 8})
+    assert plan.balancer_update.update_start_step == 5
+    assert plan.balancer_update.batch_sizes == {"initial": 2, "pde": 2}
+    assert balancer.build_call == (module, ("initial", "pde"))
+
+
+def test_instantiate_balancer_accepts_a_flat_hydra_target() -> None:
+    """Verify balancer settings live directly on the Hydra-instantiable node."""
+    config = OmegaConf.create(
+        {
+            "_target_": "phijax.balancers.GradNormBalancer",
+            "update_every_n_steps": 25,
+            "update_start_step": 5,
+        }
+    )
+
+    balancer = instantiate_balancer(config, ("loss",))
+    plan = balancer.build_update_plan(MagicMock(spec=BasePhiModule), ("data",))
+
+    assert plan.every_n_steps == 25
+    assert plan.update_start_step == 5
 
 
 def test_instantiate_module_supports_a_custom_hydra_target() -> None:
     """Verify applications can replace the default module without changing entrypoint code."""
     config = OmegaConf.create({"_target_": f"{__name__}._CustomPhiModule"})
 
-    module = instantiate_module(config, _model_apply, _TestObjective(), name="custom")
+    module = instantiate_module(config, _custom_model_factory, _TestObjective(), name="custom")
 
     assert isinstance(module, BasePhiModule)
     assert isinstance(module, _CustomPhiModule)
@@ -226,7 +273,7 @@ def test_instantiate_module_supports_a_custom_hydra_target() -> None:
     assert module.loss_names == ("loss",)
 
 
-def test_instantiate_data_module_prepares_the_requested_stage(
+def test_instantiate_data_module_defers_stage_preparation_to_trainer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify DataModule construction completes its host lifecycle before assembly.
@@ -237,26 +284,22 @@ def test_instantiate_data_module_prepares_the_requested_stage(
     data_module = MagicMock(spec=PhiDataModule)
     monkeypatch.setattr(factory_module, "instantiate", lambda config: data_module)
 
-    result = instantiate_data_module(OmegaConf.create({"_target_": "unused"}), "fit")
+    result = instantiate_data_module(OmegaConf.create({"_target_": "unused"}))
 
     assert result is data_module
-    data_module.prepare_stage.assert_called_once_with("fit")
+    data_module.prepare_stage.assert_not_called()
 
 
-def test_instantiate_data_module_propagates_stage_preparation_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify DataModule stage-preparation failures propagate from the lifecycle owner.
+def test_instantiate_data_module_rejects_an_invalid_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify configured data targets must implement the DataModule contract.
 
     Args:
         monkeypatch: Pytest attribute patch helper.
     """
-    data_module = MagicMock(spec=PhiDataModule)
-    data_module.prepare_stage.side_effect = RuntimeError("synthetic setup failure")
-    monkeypatch.setattr(factory_module, "instantiate", lambda config: data_module)
+    monkeypatch.setattr(factory_module, "instantiate", lambda config: object())
 
-    with pytest.raises(RuntimeError, match="synthetic setup failure"):
-        instantiate_data_module(OmegaConf.create({"_target_": "unused"}), "predict")
-
-    data_module.prepare_stage.assert_called_once_with("predict")
+    with pytest.raises(TypeError, match="PhiDataModule"):
+        instantiate_data_module(OmegaConf.create({"_target_": "unused"}))
 
 
 def test_build_trainer_instantiates_enabled_hydra_services() -> None:
@@ -288,8 +331,10 @@ def test_build_trainer_instantiates_enabled_hydra_services() -> None:
     )
     trainer = build_trainer(config)
     assert isinstance(trainer, Trainer)
-    assert len(trainer.callbacks) == 1
+    assert len(trainer.callbacks) == 3
     assert isinstance(trainer.callbacks[0], EarlyStopping)
+    assert type(trainer.callbacks[1]) is TQDMProgressBar
+    assert type(trainer.callbacks[2]) is ModelSummary
     assert len(trainer.logger.loggers) == 1
     assert isinstance(trainer.logger.loggers[0], ConsoleLogger)
 

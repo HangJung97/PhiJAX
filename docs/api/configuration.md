@@ -9,13 +9,26 @@ and experiment composition, use the
 
 ## Hydra factories
 
-The factory helpers instantiate callbacks, loggers, a Trainer, DataModule, initialized model, objective, PhiModule,
-loss balancer, and optimizer. `configure_training()` combines those objects into a `TrainingPlan`. The Trainer then
-constructs and places the DataModule source during `fit()`.
+The factory helpers instantiate callbacks, loggers, a Trainer, DataModule, lazy model factory, objective, PhiModule,
+loss balancer, and optimizer. A balancer config is directly instantiable and does not need an intermediate `factory`
+field:
+
+```yaml
+model:
+  balancer:
+    _target_: phijax.balancers.ExactNTKBalancer
+    update_every_n_steps: 100
+    update_start_step: 100
+    kernel_size: 256
+    kernel_chunk_size: 1
+```
+
+The project passes `model.balancer` to `instantiate_balancer()`. Use `Trainer.fit()` for ordinary training or the core
+`build_training_plan()` function when an advanced `fit_state()` workflow needs an explicit plan.
 
 ::: phijax.integrations.hydra.instantiate_data_module
 
-::: phijax.integrations.hydra.instantiate_model
+::: phijax.integrations.hydra.instantiate_model_factory
 
 ::: phijax.integrations.hydra.instantiate_module
 
@@ -34,8 +47,6 @@ constructs and places the DataModule source during `fit()`.
 ::: phijax.integrations.hydra.instantiate_trainer
 
 ::: phijax.integrations.hydra.build_trainer
-
-::: phijax.integrations.hydra.configure_training
 
 ## OmegaConf resolvers
 

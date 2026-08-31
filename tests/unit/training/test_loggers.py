@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from phijax.training import ConsoleLogger, CSVLogger, ExperimentLogger, LoggerCollection, TensorBoardLogger, WandbLogger
-from phijax.training.loggers import scalar_metrics
+from phijax.training.loggers import create_default_logger, scalar_metrics
 
 
 class _MemoryLogger(ExperimentLogger):
@@ -81,6 +81,98 @@ def test_csv_logger_writes_long_form_dynamic_metrics(tmp_path: Path) -> None:
     logger.finalize("success")
     rows = (tmp_path / "metrics.csv").read_text(encoding="utf-8").splitlines()
     assert rows == ["step,metric,value", "1,loss/a,1.0", "1,loss/b,2.0", "2,loss/c,3.0"]
+
+
+def test_default_logger_uses_versioned_csv_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Verify dependency-safe default logging allocates consecutive local versions.
+
+    Args:
+        monkeypatch: Pytest fixture used to hide TensorBoard.
+        tmp_path: Temporary logging root.
+    """
+    monkeypatch.setattr("phijax.training.loggers.find_spec", lambda name: None)
+    first = create_default_logger(tmp_path)
+    first.log_hyperparameters({"seed": 3})
+    first.finalize("success")
+    second = create_default_logger(tmp_path)
+    second.finalize("success")
+
+    assert isinstance(first.loggers[0], CSVLogger)
+    assert first.name == "phijax_logs"
+    assert first.version == 0
+    assert first.log_dir == tmp_path / "phijax_logs" / "version_0"
+    assert second.version == 1
+    assert (first.log_dir / "hparams.yaml").read_text(encoding="utf-8") == "seed: 3\n"
+
+
+def test_default_logger_does_not_create_files_outside_global_rank(tmp_path: Path) -> None:
+    """Verify only global rank zero owns local logger resources."""
+    logger = create_default_logger(tmp_path, is_global_zero=False)
+
+    assert not logger
+    assert not (tmp_path / "phijax_logs").exists()
+
+
+def test_default_logger_prefers_tensorboard_when_available(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Verify TensorBoard takes precedence over the CSV fallback when importable.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate dependency discovery.
+        tmp_path: Temporary logging root.
+    """
+    created: list[tuple[Path, str, int | str | None]] = []
+
+    class FakeTensorBoardLogger(ExperimentLogger):
+        """Record default TensorBoard construction without importing its optional dependency."""
+
+        def __init__(self, save_dir: str | Path, *, name: str, version: int | str | None) -> None:
+            """Capture resolved default logger fields.
+
+            Args:
+                save_dir: Versioned run directory.
+                name: Default experiment name.
+                version: Allocated run version.
+            """
+            self._log_dir = Path(save_dir)
+            self._name = name
+            self._version = version
+            self._log_dir.mkdir(parents=True)
+            created.append((self._log_dir, name, version))
+
+        @property
+        def name(self) -> str:
+            """Return the captured logger name.
+
+            Returns:
+                Configured logger name.
+            """
+            return self._name
+
+        @property
+        def version(self) -> int | str | None:
+            """Return the captured logger version.
+
+            Returns:
+                Configured logger version.
+            """
+            return self._version
+
+        @property
+        def log_dir(self) -> Path:
+            """Return the captured run directory.
+
+            Returns:
+                Versioned run directory.
+            """
+            return self._log_dir
+
+    monkeypatch.setattr("phijax.training.loggers.find_spec", lambda name: object())
+    monkeypatch.setattr("phijax.training.loggers.TensorBoardLogger", FakeTensorBoardLogger)
+    logger = create_default_logger(tmp_path)
+
+    expected = tmp_path / "phijax_logs" / "version_0"
+    assert created == [(expected, "phijax_logs", 0)]
+    assert logger.log_dir == expected
 
 
 def test_scalar_metrics_rejects_vector_values() -> None:

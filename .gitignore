@@ -33,6 +33,7 @@ wheels/
 .ruff_cache/
 htmlcov/
 site/
+phijax_logs/
 .coverage
 .coverage.*
 nosetests.xml

@@ -4,6 +4,15 @@ import pytest
 from phijax.callbacks import LearningRateMonitor, TrainerContext
 
 
+def test_learning_rate_monitor_requires_configured_logger() -> None:
+    """Verify fitting fails before metrics are evaluated when logging is disabled."""
+    monitor = LearningRateMonitor(lambda step: step)
+    with pytest.raises(RuntimeError, match="Cannot use `LearningRateMonitor` with a Trainer that has no logger"):
+        monitor.on_fit_start(TrainerContext(state=None, step=0, metrics={}, has_logger=False))
+
+    monitor.on_fit_start(TrainerContext(state=None, step=0, metrics={}, has_logger=True))
+
+
 def test_learning_rate_monitor_reports_the_rate_used_by_each_completed_step() -> None:
     """Verify completed trainer steps map back to the optimizer's zero-based schedule count."""
     monitor = LearningRateMonitor(lambda step: 0.1 * 0.5**step, log_key_prefix="train/")

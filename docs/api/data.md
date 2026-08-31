@@ -14,17 +14,19 @@ teardown("fit" | "predict")
 ```
 
 `prepare_data` may generate or obtain shared artifacts. Build process-local NumPy pools in `setup`.
-`prepare_stage(stage)` runs these methods at most once until `teardown_stage(stage)` releases the stage. The factory
-prepares the initial stage before requesting model normalization statistics. The Trainer then retrieves sources and
-handles teardown. Return `None` from `predict_batch_source()` to skip prediction. Prediction sources must be finite and
-repeatable; training sources may sample indefinitely from the global optimizer step.
+`prepare_stage(stage)` runs these methods at most once until `teardown_stage(stage)` releases the stage. The Trainer
+prepares fitting before requesting optional model normalization statistics, then retrieves sources and handles
+teardown. The base `input_statistics()` returns `None`; override it to opt into input normalization. Return `None` from
+`predict_batch_source()` to skip prediction. Prediction sources must be finite and repeatable; training sources may
+sample indefinitely from the global optimizer step.
 
 ::: phijax.data.PhiDataModule
 
 ## Host pools
 
-`inputs` and `targets` are rank-two NumPy arrays with a shared sample axis. Unsupervised pools use a zero-width target
-array. Array-valued `aux` fields share the sample axis. `reference_shape` and `flat_index` reconstruct dense predictions.
+`inputs` is a rank-two NumPy array. Omit `targets` for an automatically created zero-width target array. `aux` and
+`metadata` default to immutable empty mappings. When omitted, `reference_shape` becomes `(sample_count,)` and
+`flat_index` becomes `arange(sample_count)`. Array-valued `aux` fields share the sample axis.
 
 ::: phijax.data.HostPool
 
@@ -75,7 +77,23 @@ leading dimension.
 checkpoint therefore continues the same sampling sequence. The `"all"` batch-size policy works only with finite row
 sources.
 
-`ChunkedPredictionSource` pads its final host batch and supplies a Boolean `mask`; `Trainer.predict` removes padded rows
+`NamedBatchSource.from_pools()` is the concise path for aligned finite datasets. It creates ordered
+`RandomRowSampler` instances and validates requested pool names and batch-size policies.
+
+Define one batch-size policy per pool in the DataModule, then reuse the objective's inferred order:
+
+```python
+self.batch_sizes = {"initial": "all", "boundary": 128, "pde": 4096}
+
+
+def train_batch_source(self, batch_keys, key):
+    return NamedBatchSource.from_pools(self.pools, self.batch_sizes, key, names=batch_keys)
+```
+
+An integer samples that many rows on every optimizer step. The `"all"` policy uses every row and is available only
+for finite pools.
+
+`ChunkedPredictionSource` pads its final host batch and supplies a Boolean `mask`; prediction removes padded rows
 before output assembly.
 
 ::: phijax.data.TrainingBatchSource

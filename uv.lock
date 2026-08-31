@@ -9,6 +9,12 @@ resolution-markers = [
 conflicts = [[
     { package = "phijax", extra = "cuda12" },
     { package = "phijax", extra = "cuda13" },
+], [
+    { package = "phijax", extra = "cuda12" },
+    { package = "phijax", extra = "tpu" },
+], [
+    { package = "phijax", extra = "cuda13" },
+    { package = "phijax", extra = "tpu" },
 ]]
 
 [[package]]
@@ -220,7 +226,7 @@ name = "click"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu') or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
 wheels = [
@@ -241,7 +247,7 @@ name = "colorlog"
 version = "6.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu') or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8c/55/ba79756cb90c8d69d599d57785398ac87bba7b19c80e87f4e8a562197c93/colorlog-6.12.0.tar.gz", hash = "sha256:2a7924c1dadf18b22a0eb8b06d1c7b01d5341707ec1641eb6fcc4fde0c3e8e5f", size = 18151, upload-time = "2026-07-23T13:40:40.71Z" }
 wheels = [
@@ -599,12 +605,17 @@ wheels = [
 
 [package.optional-dependencies]
 cuda12 = [
-    { name = "jax-cuda12-plugin", extra = ["with-cuda"], marker = "extra == 'extra-6-phijax-cuda12'" },
+    { name = "jax-cuda12-plugin", extra = ["with-cuda"], marker = "extra == 'extra-6-phijax-cuda12' or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
     { name = "jaxlib" },
 ]
 cuda13 = [
-    { name = "jax-cuda13-plugin", extra = ["with-cuda"], marker = "extra == 'extra-6-phijax-cuda13'" },
+    { name = "jax-cuda13-plugin", extra = ["with-cuda"], marker = "extra == 'extra-6-phijax-cuda13' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu')" },
     { name = "jaxlib" },
+]
+tpu = [
+    { name = "jaxlib" },
+    { name = "libtpu" },
+    { name = "requests" },
 ]
 
 [[package]]
@@ -749,6 +760,19 @@ wheels = [
 ]
 
 [[package]]
+name = "libtpu"
+version = "0.0.46"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/66/347b5cde406248b0f1a2e2238e968bfaf90ca7760885654c18fdf0de5882/libtpu-0.0.46-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:194872987833569e68c2d7cac134cedd0832f440c470474ccbfe301a7fd23212", size = 216541591, upload-time = "2026-08-14T02:10:50.212Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/e2/7d2f7f2e97b8bca0e60b92a1b2a2ad96e51e700cdd41f0f836da7c4dccf6/libtpu-0.0.46-cp313-cp313-manylinux_2_31_x86_64.whl", hash = "sha256:8fde472da618fd21b1168bf6cb3df9bd863d55308b3e2e748066aff7b44c4df7", size = 216541695, upload-time = "2026-08-14T02:10:01.459Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/ea/d7434598da84e1bf746e965bfa0eb670fd2a8d2b27c14be117657da1cc11/libtpu-0.0.46-cp314-cp314-manylinux_2_31_x86_64.whl", hash = "sha256:917f5b4bd60709a70d4f07a0313eae6e44ccbf5c7498bbef33811cee145a7dbe", size = 216541446, upload-time = "2026-08-14T02:09:49.518Z" },
+    { url = "https://files.pythonhosted.org/packages/81/90/bf9f8ae3f3370ca5feebf46bab2229dfd795be6571dbd73523bdf246c1c4/libtpu-0.0.46-cp314-cp314t-manylinux_2_31_x86_64.whl", hash = "sha256:fad3da473a678850ccd4b2db60b653d561650264185ed9a0caa23f26804a36bf", size = 216542408, upload-time = "2026-08-14T02:10:11.862Z" },
+    { url = "https://files.pythonhosted.org/packages/51/ec/60c90a00bc6f2be8cd4eea1212dcf8c475082782662e1ad5b9dd6b162b5e/libtpu-0.0.46-cp315-cp315-manylinux_2_31_x86_64.whl", hash = "sha256:3d0419799048f75d4e87392341b5e670d4bf2b38ef19021ba9cd914c389b2c39", size = 216541440, upload-time = "2026-08-14T02:10:35.411Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/4c/ebb056ad2993141697fbf36c4711dc0af9a29e72c060aa9bf9791b3d5ad8/libtpu-0.0.46-cp315-cp315t-manylinux_2_31_x86_64.whl", hash = "sha256:b2d795104855a854d4a29b77819bc19d1cafaa6bccc3d3692e1baed9d7f5eb7c", size = 216542417, upload-time = "2026-08-14T02:10:24.054Z" },
+]
+
+[[package]]
 name = "markdown"
 version = "3.10.3"
 source = { registry = "https://pypi.org/simple" }
@@ -869,7 +893,7 @@ version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu') or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
     { name = "ghp-import" },
     { name = "jinja2" },
     { name = "markdown" },
@@ -1546,7 +1570,7 @@ dependencies = [
     { name = "humanize" },
     { name = "jax" },
     { name = "msgpack" },
-    { name = "nest-asyncio", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13')" },
+    { name = "nest-asyncio", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu') or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
     { name = "numpy" },
     { name = "prometheus-client" },
     { name = "protobuf" },
@@ -1555,7 +1579,7 @@ dependencies = [
     { name = "simplejson" },
     { name = "tensorstore" },
     { name = "typing-extensions" },
-    { name = "uvloop", marker = "sys_platform != 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13')" },
+    { name = "uvloop", marker = "sys_platform != 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu') or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d6/b2/7f709a61337465826c7d2acdb98285fa6270e90ba59b76a1f42bcb18bfe2/orbax_checkpoint-0.12.4.tar.gz", hash = "sha256:5e6e14b6ca4a7979e04e6769afa0a39dd535bb4b9bf9af64bdf5b55ca44eb795", size = 749838, upload-time = "2026-08-12T21:05:15.856Z" }
 wheels = [
@@ -1591,7 +1615,7 @@ wheels = [
 
 [[package]]
 name = "phijax"
-version = "0.1.0b1"
+version = "0.2.0b1"
 source = { editable = "." }
 dependencies = [
     { name = "colorlog" },
@@ -1604,20 +1628,25 @@ dependencies = [
     { name = "omegaconf" },
     { name = "optax" },
     { name = "orbax-checkpoint" },
+    { name = "pyyaml" },
     { name = "rich" },
     { name = "rootutils" },
     { name = "scipy" },
+    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
 cuda12 = [
-    { name = "jax", extra = ["cuda12"], marker = "extra == 'extra-6-phijax-cuda12'" },
+    { name = "jax", extra = ["cuda12"], marker = "extra == 'extra-6-phijax-cuda12' or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
 ]
 cuda13 = [
-    { name = "jax", extra = ["cuda13"], marker = "extra == 'extra-6-phijax-cuda13'" },
+    { name = "jax", extra = ["cuda13"], marker = "extra == 'extra-6-phijax-cuda13' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu')" },
 ]
 tensorboard = [
     { name = "tensorboard" },
+]
+tpu = [
+    { name = "jax", extra = ["tpu"], marker = "extra == 'extra-6-phijax-tpu' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra != 'extra-6-phijax-cuda12' and extra != 'extra-6-phijax-cuda13')" },
 ]
 wandb = [
     { name = "wandb" },
@@ -1667,18 +1696,21 @@ requires-dist = [
     { name = "jax", specifier = "==0.11.1" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda12'", specifier = "==0.11.1" },
     { name = "jax", extras = ["cuda13"], marker = "extra == 'cuda13'", specifier = "==0.11.1" },
+    { name = "jax", extras = ["tpu"], marker = "extra == 'tpu'", specifier = "==0.11.1" },
     { name = "mat73", specifier = ">=0.65,<1" },
     { name = "numpy", specifier = ">=2.4,<3" },
     { name = "omegaconf", specifier = "==2.3.1" },
     { name = "optax", specifier = "==0.2.8" },
     { name = "orbax-checkpoint", specifier = "==0.12.4" },
+    { name = "pyyaml", specifier = ">=6.0.3,<7" },
     { name = "rich", specifier = ">=15,<16" },
     { name = "rootutils", specifier = ">=1.0.7,<2" },
     { name = "scipy", specifier = ">=1.17,<2" },
     { name = "tensorboard", marker = "extra == 'tensorboard'", specifier = ">=2.20,<3" },
+    { name = "tqdm", specifier = ">=4.67,<5" },
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.29,<0.30" },
 ]
-provides-extras = ["cuda12", "cuda13", "tensorboard", "wandb"]
+provides-extras = ["cuda12", "cuda13", "tpu", "tensorboard", "wandb"]
 
 [package.metadata.requires-dev]
 all = [
@@ -2002,7 +2034,7 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu') or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -2377,6 +2409,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b5/0d/cbc231244789b634a5796b1bdddc704806c94cdf13cc7ad2d66d8616ef53/tensorstore-0.1.85-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:19a3a809948a96eb44a6da72eef04f8ba44086d52f1e8122b84938890551fa2e", size = 15499976, upload-time = "2026-08-05T15:35:47.733Z" },
     { url = "https://files.pythonhosted.org/packages/9c/e4/c6c573e4b75410bbd8ce541b1222f04fec9a87dff5298ee85b2267d0805b/tensorstore-0.1.85-cp314-cp314t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:da1b05a99b568dbf8f807efe307d7832f31cb1db35b3bc4144f3740dc7a04cae", size = 19986971, upload-time = "2026-08-05T15:35:50.451Z" },
     { url = "https://files.pythonhosted.org/packages/66/91/02d93b2d718e33d0c50e06445ab7518b3b8f391dea5c55838f9f9ff9f9cc/tensorstore-0.1.85-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:82df9ad8e1df057f38203d12475a2929f36032a5a5224ac584851ed89e64622c", size = 21599959, upload-time = "2026-08-05T15:35:53.617Z" },
+]
+
+[[package]]
+name = "tqdm"
+version = "4.70.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu') or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/21/3b/6c24bec5be5e743ffd99576daa5cc077722fc7d5bbc00bd133fa0c698dc6/tqdm-4.70.0.tar.gz", hash = "sha256:55b0b0dbd97462d06ebee91e4dac24ed4d4702be82b24f07e6c1d27e08cea220", size = 795438, upload-time = "2026-07-27T11:33:15.271Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl", hash = "sha256:7f585706bfddbdebf89daac705b2dfcc16890130727d3197ca62c732b4310953", size = 80184, upload-time = "2026-07-27T11:33:13.167Z" },
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from phijax.equations.metadata import get_residual_names
+from phijax.equations.metadata import get_default_ntk_stream, get_residual_names
 from phijax.types import ModelApply, NamedBatches, ResidualFunction, ResidualGroup, ResidualGroups, ResidualStream
 
 
@@ -25,22 +25,22 @@ class ResidualTerm:
 
     def __init__(
         self,
-        names: Sequence[str] | None = None,
-        residual_fn: ResidualFunction | None = None,
+        residual_fn: ResidualFunction,
         *,
         batch_key: str,
-        ntk_stream: ResidualStream = "residual",
+        names: Sequence[str] | None = None,
+        ntk_stream: ResidualStream | None = None,
     ) -> None:
         """Initialize a generic residual term.
 
         Args:
+            residual_fn: Configured equation callable returning one residual group per name.
+            batch_key: Key selecting the equation batch from the named training batches.
             names: Optional non-empty unique scalar loss names ordered like the equation's residual groups. When
                 omitted, names are formed as `batch_key/local_name` from metadata attached to `residual_fn` by
                 :func:`phijax.equations.residual_equation`.
-            residual_fn: Configured equation callable returning one residual group per name.
-            batch_key: Key selecting the equation batch from the named training batches.
-            ntk_stream: Either `"residual"` for equation-residual sensitivities or `"output"` for an equation that
-                explicitly supports output-based NTK diagnostics.
+            ntk_stream: Optional stream override. When omitted, the equation metadata selects `"residual"` or
+                `"output"`.
 
         Raises:
             TypeError: If `residual_fn` is not callable.
@@ -48,7 +48,8 @@ class ResidualTerm:
         """
         if not callable(residual_fn):
             raise TypeError("`residual_fn` must be callable.")
-        if ntk_stream not in ("residual", "output"):
+        resolved_stream = get_default_ntk_stream(residual_fn) if ntk_stream is None else ntk_stream
+        if resolved_stream not in ("residual", "output"):
             raise ValueError("`ntk_stream` must be either 'residual' or 'output'.")
         resolved_batch_key = _validate_name(batch_key)
         if names is None:
@@ -60,7 +61,8 @@ class ResidualTerm:
         self.loss_names = resolved_names
         self.residual_fn = residual_fn
         self.batch_key = resolved_batch_key
-        self.ntk_stream: ResidualStream = ntk_stream
+        self.batch_keys = (resolved_batch_key,)
+        self.ntk_stream: ResidualStream = resolved_stream
 
     def losses(
         self,
