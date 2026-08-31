@@ -70,12 +70,16 @@ framework package. Hydra and OmegaConf are supported integrations, not assumptio
   extend, or debug the API.
 - Keep guides task-oriented and scannable. Use descriptive headings, short examples, tables for exact mappings, and
   diagrams only when they clarify relationships or ordering.
+- Put testing guidance in a separate section near the end of a guide. Keep common mistakes, troubleshooting, and next
+  steps after it. API reference pages should describe validation and errors instead of repository test procedures.
 - Preserve technical precision while simplifying prose. Do not replace established JAX, PINN, mathematical, or public
   API terms with vague wording.
 - Avoid filler, promotional language, unnecessary qualifiers, and long lists embedded in prose. Prefer a short list
   when readers need to compare three or more items.
 - Keep code examples executable and aligned with the supported public API. Explain non-obvious state ownership, array
   shapes, coordinate order, PRNG behavior, and device placement close to the example that uses them.
+- Before adopting a framework convention, compare its primary documentation or source with mature projects such as
+  JAX, Lightning, PyTorch, or MONAI. Adapt the useful parts to PhiJAX without claiming unsupported API parity.
 - Do not add module-level docstrings at the top of Python files.
 - Add complete Google-style docstrings to every class, function, method, private helper, and private method.
 - In docstrings, use single backticks for variables, parameters, attributes, config keys, array shapes, and literals.
