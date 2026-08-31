@@ -13,6 +13,7 @@ from phijax.data import PhiDataModule
 from phijax.integrations.hydra import (
     build_trainer,
     instantiate_balancer,
+    instantiate_callbacks,
     instantiate_data_module,
     instantiate_enabled,
     instantiate_model_factory,
@@ -302,7 +303,7 @@ def test_instantiate_data_module_rejects_an_invalid_target(monkeypatch: pytest.M
         instantiate_data_module(OmegaConf.create({"_target_": "unused"}))
 
 
-def test_build_trainer_instantiates_enabled_hydra_services() -> None:
+def test_build_trainer_instantiates_hydra_services() -> None:
     """Verify config-first construction wires callbacks and logger adapters into the trainer."""
     config = OmegaConf.create(
         {
@@ -315,12 +316,7 @@ def test_build_trainer_instantiates_enabled_hydra_services() -> None:
             "callbacks": {
                 "early_stopping": {
                     "_target_": "phijax.callbacks.EarlyStopping",
-                    "enabled": True,
                     "patience": 2,
-                },
-                "disabled": {
-                    "_target_": "phijax.callbacks.EarlyStopping",
-                    "enabled": False,
                 },
             },
             "logger": {
@@ -337,6 +333,43 @@ def test_build_trainer_instantiates_enabled_hydra_services() -> None:
     assert type(trainer.callbacks[2]) is ModelSummary
     assert len(trainer.logger.loggers) == 1
     assert isinstance(trainer.logger.loggers[0], ConsoleLogger)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_instantiate_callbacks_rejects_enabled_option(enabled: bool) -> None:
+    """Verify callback presence, rather than an `enabled` field, controls instantiation.
+
+    Args:
+        enabled: Legacy callback flag value under test.
+    """
+    config = OmegaConf.create(
+        {
+            "early_stopping": {
+                "_target_": "phijax.callbacks.EarlyStopping",
+                "enabled": enabled,
+                "patience": 2,
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="removed `enabled` option"):
+        instantiate_callbacks(config)
+
+
+def test_instantiate_callbacks_rejects_null_entries() -> None:
+    """Verify disabled callbacks must be removed from the composed config."""
+    config = OmegaConf.create({"early_stopping": None})
+
+    with pytest.raises(ValueError, match="omit the entry"):
+        instantiate_callbacks(config)
+
+
+def test_instantiate_callbacks_requires_target() -> None:
+    """Verify every configured callback names a Hydra target."""
+    config = OmegaConf.create({"early_stopping": {"patience": 2}})
+
+    with pytest.raises(ValueError, match="must define `_target_`"):
+        instantiate_callbacks(config)
 
 
 def test_instantiate_enabled_ignores_placeholders_without_targets() -> None:

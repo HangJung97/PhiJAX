@@ -38,6 +38,15 @@ The project passes `model.balancer` to `instantiate_balancer()`. Use `Trainer.fi
 
 ::: phijax.integrations.hydra.instantiate_optimizer
 
+Callback entries are active when they are present in the composed configuration. To disable a callback, remove its
+entry from the config or use Hydra's deletion override:
+
+```bash
+python train.py '~callbacks.early_stopping'
+```
+
+Do not add an `enabled` field or leave a named callback set to `null`.
+
 ::: phijax.integrations.hydra.instantiate_callbacks
 
 ::: phijax.integrations.hydra.instantiate_enabled

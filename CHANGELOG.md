@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Removed the Hydra callback `enabled` option. Omit a callback entry or delete it with a Hydra override to disable it.
+
 ## [0.2.0b1] - 2026-08-31
 
 ### Added

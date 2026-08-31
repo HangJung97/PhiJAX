@@ -44,7 +44,7 @@ def instantiate_enabled(config: DictConfig | None) -> tuple[Any, ...]:
 
 
 def instantiate_callbacks(config: DictConfig | None) -> tuple[Callback, ...]:
-    """Instantiate and validate enabled callback configurations.
+    """Instantiate and validate callback configurations.
 
     Args:
         config: Optional callback configuration mapping.
@@ -53,12 +53,27 @@ def instantiate_callbacks(config: DictConfig | None) -> tuple[Callback, ...]:
         Ordered callback instances.
 
     Raises:
-        TypeError: If an enabled entry does not instantiate :class:`Callback`.
+        TypeError: If an entry is not a mapping or does not instantiate :class:`Callback`.
+        ValueError: If an entry is null, lacks `_target_`, or uses the removed `enabled` option.
     """
-    callbacks = instantiate_enabled(config)
-    if any(not isinstance(callback, Callback) for callback in callbacks):
-        raise TypeError("Every enabled callback config must instantiate `Callback`.")
-    return callbacks
+    if config is None:
+        return ()
+    entries = (("callback", config),) if "_target_" in config else tuple(config.items())
+    callbacks: list[Callback] = []
+    for name, node in entries:
+        if node is None:
+            raise ValueError(f"Callback `{name}` is null; omit the entry to disable it.")
+        if not isinstance(node, DictConfig):
+            raise TypeError(f"Callback `{name}` must be a Hydra configuration mapping.")
+        if "enabled" in node:
+            raise ValueError(f"Callback `{name}` uses the removed `enabled` option; omit the entry to disable it.")
+        if "_target_" not in node:
+            raise ValueError(f"Callback `{name}` must define `_target_`.")
+        callback = instantiate(node)
+        if not isinstance(callback, Callback):
+            raise TypeError(f"Callback `{name}` must instantiate `Callback`.")
+        callbacks.append(callback)
+    return tuple(callbacks)
 
 
 def instantiate_trainer(config: DictConfig, callbacks: Sequence[Callback] = ()) -> Trainer:
