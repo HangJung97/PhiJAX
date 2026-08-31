@@ -1,9 +1,9 @@
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, cast
 
 import optax
 from hydra.utils import instantiate
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from phijax.balancers import LossBalancer
 from phijax.callbacks import Callback
@@ -115,6 +115,28 @@ def instantiate_loggers(config: DictConfig | None) -> LoggerCollection:
             raise TypeError(f"Logger `{name}` must instantiate `ExperimentLogger`.")
         loggers.append(logger)
     return LoggerCollection(loggers)
+
+
+def to_hyperparameters(config: DictConfig, *, resolve: bool = False) -> dict[str, Any]:
+    """Convert a composed Hydra config into logger-ready plain containers.
+
+    The Trainer owns the actual rank-safe logger call when the returned mapping is passed to
+    :meth:`phijax.Trainer.fit` or :meth:`phijax.Trainer.fit_state`.
+
+    Args:
+        config: Composed root Hydra configuration.
+        resolve: Whether to resolve OmegaConf interpolations before conversion.
+
+    Returns:
+        Plain nested mapping accepted by the Trainer's `hyperparameters` argument.
+
+    Raises:
+        TypeError: If `config` does not contain a mapping at its root.
+    """
+    parameters = OmegaConf.to_container(config, resolve=resolve)
+    if not isinstance(parameters, dict):
+        raise TypeError("The root hyperparameter configuration must be a mapping.")
+    return cast(dict[str, Any], parameters)
 
 
 def instantiate_objective(config: DictConfig) -> Objective:
@@ -265,4 +287,5 @@ __all__ = [
     "instantiate_objective",
     "instantiate_optimizer",
     "instantiate_trainer",
+    "to_hyperparameters",
 ]

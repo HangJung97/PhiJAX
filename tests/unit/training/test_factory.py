@@ -19,6 +19,7 @@ from phijax.integrations.hydra import (
     instantiate_model_factory,
     instantiate_module,
     instantiate_trainer,
+    to_hyperparameters,
 )
 from phijax.integrations.hydra import factory as factory_module
 from phijax.models import InitializedModel
@@ -362,6 +363,17 @@ def test_instantiate_trainer_accepts_preconstructed_loggers() -> None:
 
     assert trainer.logger is loggers
     assert not hasattr(trainer, "set_logger")
+
+
+def test_to_hyperparameters_converts_nested_hydra_values() -> None:
+    """Verify Trainer hyperparameters do not retain OmegaConf containers."""
+    config = OmegaConf.create({"seed": 7, "model": {"width": 32}, "description": "${model.width} units"})
+
+    unresolved = to_hyperparameters(config)
+    resolved = to_hyperparameters(config, resolve=True)
+
+    assert unresolved == {"seed": 7, "model": {"width": 32}, "description": "${model.width} units"}
+    assert resolved == {"seed": 7, "model": {"width": 32}, "description": "32 units"}
 
 
 @pytest.mark.parametrize("enabled", [True, False])

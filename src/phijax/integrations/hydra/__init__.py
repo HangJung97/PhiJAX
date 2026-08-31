@@ -9,6 +9,7 @@ from phijax.integrations.hydra.factory import (
     instantiate_objective,
     instantiate_optimizer,
     instantiate_trainer,
+    to_hyperparameters,
 )
 from phijax.integrations.omegaconf import import_from_module, register_omegaconf_resolvers
 
@@ -25,4 +26,5 @@ __all__ = [
     "instantiate_optimizer",
     "instantiate_trainer",
     "register_omegaconf_resolvers",
+    "to_hyperparameters",
 ]
