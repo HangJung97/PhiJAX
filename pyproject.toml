@@ -52,7 +52,7 @@ tensorboard = ["tensorboard>=2.20,<3"]
 wandb = ["wandb>=0.29,<0.30"]
 
 [build-system]
-requires = ["uv_build>=0.11,<0.13"]
+requires = ["uv_build>=0.12,<0.13"]
 build-backend = "uv_build"
 
 [dependency-groups]
