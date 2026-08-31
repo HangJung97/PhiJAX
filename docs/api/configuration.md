@@ -38,9 +38,17 @@ The project passes `model.balancer` to `instantiate_balancer()`. Use `Trainer.fi
 
 ::: phijax.integrations.hydra.instantiate_optimizer
 
-::: phijax.integrations.hydra.instantiate_callbacks
+Callback and logger entries are active when they are present in the composed configuration. To disable one, remove its
+entry from the config or use Hydra's deletion override:
 
-::: phijax.integrations.hydra.instantiate_enabled
+```bash
+python train.py '~callbacks.early_stopping'
+```
+
+The complete `callbacks` or `logger` group may be `null`. Named entries must define `_target_`; do not add an `enabled`
+field or leave a named entry set to `null`.
+
+::: phijax.integrations.hydra.instantiate_callbacks
 
 ::: phijax.integrations.hydra.instantiate_loggers
 
