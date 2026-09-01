@@ -159,8 +159,10 @@ result = trainer.fit(
 )
 ```
 
-The balancer diagnostics expose every current weight as `weight/<loss_name>`. Advanced applications can initialize the
-balancer state directly and pass an explicit plan to `Trainer.fit_state()`.
+The balancer diagnostics expose every current weight as `weight/<loss_name>`. `PhiModule` adds the `train/` prefix, so
+users see `train/weight/<loss_name>` in progress metrics and experiment logs. See
+[Logged metrics](../api/balancers.md#logged-metrics) for the additional diagnostics produced by adaptive built-ins.
+Advanced applications can initialize the balancer state directly and pass an explicit plan to `Trainer.fit_state()`.
 
 ## Adaptive custom balancers
 
