@@ -1,11 +1,14 @@
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import jax
 import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from phijax.types import JaxDevice
+
+type Accelerator = Literal["auto", "cpu", "gpu", "tpu"]
+type DeviceSelection = int | Sequence[int] | Literal["auto"]
 
 
 class Strategy:
@@ -194,8 +197,8 @@ class DataParallelStrategy(Strategy):
 
 
 def create_strategy(
-    accelerator: str = "auto",
-    devices: int | Sequence[int] | str = 1,
+    accelerator: Accelerator = "auto",
+    devices: DeviceSelection = 1,
 ) -> Strategy:
     """Create a single-device or data-parallel strategy from visible JAX devices.
 
@@ -262,7 +265,9 @@ def initialize_distributed(
 
 
 __all__ = [
+    "Accelerator",
     "DataParallelStrategy",
+    "DeviceSelection",
     "SingleDeviceStrategy",
     "Strategy",
     "create_strategy",

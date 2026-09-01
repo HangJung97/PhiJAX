@@ -41,8 +41,10 @@ The installed release is available as `phijax.__version__`.
 Package-specific public aliases include:
 
 - `BatchSize`, `DevicePool`, `ArrayFormat`, and `DataStage` in `phijax.data`;
-- `CallbackContext` in `phijax.callbacks`; and
-- `PrecisionMode` in `phijax.training`.
+- `CallbackContext`, `MonitorMode`, and `LoggingInterval` in `phijax.callbacks`;
+- `Activation`, `ActivationName`, `Initializer`, and `InitializationName` in `phijax.models`; and
+- `Accelerator`, `DeviceSelection`, `PrecisionMode`, `PrecisionAlias`, `PrecisionName`, and `MatmulPrecision` in
+  `phijax.training`.
 
 ::: phijax.types.JaxDevice
 

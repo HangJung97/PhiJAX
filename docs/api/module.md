@@ -88,40 +88,38 @@ class HeatModule(BasePhiModule):
 ::: phijax.core.PhiModuleContext
 
 ::: phijax.core.BasePhiModule
-
-options:
-members:
-\- loss_names
-\- batch_keys
-\- forward
-\- training_step
-\- log
-\- format_training_metrics
-\- residual_stream
-\- summarize_model
-\- predict_step
-\- on_predict_start
-\- on_predict_epoch_start
-\- on_predict_batch_start
-\- on_predict_batch_end
-\- on_predict_epoch_end
-\- on_predict_end
-\- setup
-\- on_fit_start
-\- on_train_batch_start
-\- on_train_batch_end
-\- on_fit_end
-\- on_exception
-\- teardown
+    options:
+      members:
+        - loss_names
+        - batch_keys
+        - forward
+        - training_step
+        - log
+        - format_training_metrics
+        - residual_stream
+        - summarize_model
+        - predict_step
+        - on_predict_start
+        - on_predict_epoch_start
+        - on_predict_batch_start
+        - on_predict_batch_end
+        - on_predict_epoch_end
+        - on_predict_end
+        - setup
+        - on_fit_start
+        - on_train_batch_start
+        - on_train_batch_end
+        - on_fit_end
+        - on_exception
+        - teardown
 
 ::: phijax.core.PhiModule
-
-options:
-members:
-\- loss_names
-\- batch_keys
-\- prepare_model
-\- forward
-\- summarize_model
-\- training_step
-\- residual_stream
+    options:
+      members:
+        - loss_names
+        - batch_keys
+        - prepare_model
+        - forward
+        - summarize_model
+        - training_step
+        - residual_stream

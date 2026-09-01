@@ -1,8 +1,10 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from phijax.data.pools import HostPool
+
+type MonitorMode = Literal["min", "max"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +264,7 @@ class Callback:
 __all__ = [
     "Callback",
     "CallbackContext",
+    "MonitorMode",
     "PostprocessingContext",
     "PredictionContext",
     "TrainerContext",

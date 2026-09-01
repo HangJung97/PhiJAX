@@ -53,6 +53,21 @@ trainer = Trainer(
 )
 ```
 
+The most common runtime options are:
+
+| Argument               | Supported values                                                                   | Default     |
+| ---------------------- | ---------------------------------------------------------------------------------- | ----------- |
+| `accelerator`          | `"auto"`, `"cpu"`, `"gpu"`, `"tpu"`                                                | `"auto"`    |
+| `devices`              | Positive count, device-index sequence, or `"auto"`                                 | `1`         |
+| `precision`            | `"64-true"`, `"32-true"`, `"16-true"`, `"bf16-true"`, `"16-mixed"`, `"bf16-mixed"` | `"32-true"` |
+| `matmul_precision`     | `None`, `"default"`, `"high"`, `"highest"`                                         | `None`      |
+| `logger`               | `True`, `False`, `None`, one logger, or an iterable of loggers                     | `True`      |
+| `enable_progress_bar`  | Boolean                                                                            | `True`      |
+| `enable_model_summary` | Boolean                                                                            | `True`      |
+
+`strategy` replaces `accelerator` and `devices` when supplied. See the generated signature below for less common
+loss-scaling, callback, logging, and compilation-cache options.
+
 The default display uses TQDM and shows total loss, individual losses, and balancer weights. A plain model summary is
 printed before the first batch. Explicit Rich callbacks replace these defaults. See [Callbacks](callbacks.md) for
 display customization and [Experiment loggers](loggers.md) for versioned local logging.
@@ -144,21 +159,20 @@ signal status.
 ::: phijax.training.TrainingPlan
 
 ::: phijax.training.Trainer
-
-options:
-members:
-\- print_environment_info
-\- initialize_state
-\- compile_train_step
-\- prepare_batch_source
-\- prepare_batch
-\- fit
-\- fit_state
-\- predict
-\- predict_state
-\- load_weights
-\- latest_checkpoint
-\- close
+    options:
+      members:
+        - print_environment_info
+        - initialize_state
+        - compile_train_step
+        - prepare_batch_source
+        - prepare_batch
+        - fit
+        - fit_state
+        - predict
+        - predict_state
+        - load_weights
+        - latest_checkpoint
+        - close
 
 ::: phijax.training.build_training_plan
 
@@ -202,6 +216,9 @@ logging them. The Trainer reports diagnostics but does not interpret them or use
 
 ## Precision
 
+The public aliases `PrecisionMode`, `PrecisionAlias`, and `PrecisionName` describe accepted precision strings.
+`MatmulPrecision` describes the separate matrix-multiplication setting.
+
 | Mode         | Parameter dtype | Compute dtype | Output dtype | Dynamic loss scaling |
 | ------------ | --------------- | ------------- | ------------ | -------------------- |
 | `64-true`    | float64         | float64       | float64      | No                   |
@@ -227,6 +244,8 @@ level. Matmul precision controls dot-product arithmetic and does not change para
 ::: phijax.training.configure_precision
 
 ## Strategies
+
+`Accelerator` and `DeviceSelection` describe the values accepted by `Trainer` and `create_strategy()`.
 
 `SingleDeviceStrategy` places complete state and batches on one selected backend device. `DataParallelStrategy`
 replicates state and shards non-scalar batch leaves over their leading dimension. Batch sizes must be divisible by the

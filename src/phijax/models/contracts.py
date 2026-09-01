@@ -8,7 +8,7 @@ import jax
 from phijax.types import ModelApply, ModelSummaryFunction
 
 if TYPE_CHECKING:
-    from phijax.training.precision import PrecisionPolicy
+    from phijax.training.precision import PrecisionName, PrecisionPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +39,7 @@ class ModelFactory(Protocol):
         key: jax.Array,
         input_mean: jax.typing.ArrayLike | None,
         input_std: jax.typing.ArrayLike | None,
-        precision: str | PrecisionPolicy,
+        precision: PrecisionName | PrecisionPolicy,
     ) -> InitializedModel:
         """Initialize a pure model application and its explicit state.
 

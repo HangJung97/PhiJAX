@@ -15,6 +15,9 @@ type PrecisionMode = Literal[
     "16-mixed",
     "bf16-mixed",
 ]
+type PrecisionAlias = Literal["float64", "float32", "float16", "bfloat16", "64", "32", "16", "bf16"]
+type PrecisionName = PrecisionMode | PrecisionAlias
+type MatmulPrecision = Literal["default", "high", "highest"]
 
 
 _ALIASES: dict[str, PrecisionMode] = {
@@ -60,7 +63,7 @@ class PrecisionPolicy:
     @classmethod
     def from_name(
         cls,
-        precision: str | PrecisionPolicy = "32-true",
+        precision: PrecisionName | PrecisionPolicy = "32-true",
         *,
         derivative_dtype: Any | None = None,
         initial_loss_scale: float = 32768.0,
@@ -157,7 +160,7 @@ class PrecisionPolicy:
         return jax.tree.map(lambda value: _cast_floating(value, self.derivative_dtype), batch)
 
 
-def configure_precision(precision: str) -> None:
+def configure_precision(precision: PrecisionName) -> None:
     """Apply process-wide JAX settings required before array initialization.
 
     Args:
@@ -189,4 +192,11 @@ def _cast_floating(value: Any, dtype: jnp.dtype) -> Any:
     return value
 
 
-__all__ = ["PrecisionMode", "PrecisionPolicy", "configure_precision"]
+__all__ = [
+    "MatmulPrecision",
+    "PrecisionAlias",
+    "PrecisionMode",
+    "PrecisionName",
+    "PrecisionPolicy",
+    "configure_precision",
+]

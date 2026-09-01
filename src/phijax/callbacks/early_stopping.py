@@ -1,4 +1,4 @@
-from phijax.callbacks.base import Callback, TrainerContext
+from phijax.callbacks.base import Callback, MonitorMode, TrainerContext
 
 
 class EarlyStopping(Callback):
@@ -15,7 +15,7 @@ class EarlyStopping(Callback):
         self,
         monitor: str = "train/loss",
         patience: int = 100,
-        mode: str = "min",
+        mode: MonitorMode = "min",
         min_delta: float = 0.0,
     ) -> None:
         """Initialize metric-based early stopping.

@@ -4,7 +4,7 @@ import jax
 import optax
 from flax import struct
 
-from phijax.training.precision import PrecisionPolicy
+from phijax.training.precision import PrecisionName, PrecisionPolicy
 
 
 @struct.dataclass
@@ -39,7 +39,7 @@ def initialize_train_state(
     optimizer: optax.GradientTransformation,
     balancer_state: Any,
     key: jax.Array,
-    precision: str | PrecisionPolicy = "32-true",
+    precision: PrecisionName | PrecisionPolicy = "32-true",
     *,
     sampling_key: jax.Array | None = None,
     balancer_key: jax.Array | None = None,
