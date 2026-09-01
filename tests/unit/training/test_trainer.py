@@ -1182,7 +1182,7 @@ def test_learning_rate_monitor_contributes_fit_and_logger_metrics() -> None:
     trainer = Trainer(
         max_steps=3,
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
-        callbacks=(LearningRateMonitor(lambda step: 0.1 * 0.5**step, log_key_prefix="train/"),),
+        callbacks=(LearningRateMonitor(lambda step: 0.1 * 0.5**step, optimizer_name="Adam"),),
         loggers=(experiment_logger,),
         log_every_n_steps=1,
     )
@@ -1194,8 +1194,8 @@ def test_learning_rate_monitor_contributes_fit_and_logger_metrics() -> None:
         lambda _: {"increment": jnp.asarray(1.0)},
     )
 
-    assert result.metrics["train/lr"] == pytest.approx(0.025)
-    assert [metrics["train/lr"] for metrics in experiment_logger.metrics] == pytest.approx([0.1, 0.05, 0.025])
+    assert result.metrics["optimizer/lr-Adam"] == pytest.approx(0.025)
+    assert [metrics["optimizer/lr-Adam"] for metrics in experiment_logger.metrics] == pytest.approx([0.1, 0.05, 0.025])
 
 
 def test_learning_rate_monitor_defaults_to_trainer_logging_cadence() -> None:
@@ -1218,7 +1218,7 @@ def test_learning_rate_monitor_defaults_to_trainer_logging_cadence() -> None:
     trainer = Trainer(
         max_steps=4,
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
-        callbacks=(LearningRateMonitor(schedule, log_key_prefix="train/"),),
+        callbacks=(LearningRateMonitor(schedule, optimizer_name="Adam"),),
         loggers=(experiment_logger,),
         log_every_n_steps=3,
     )
@@ -1231,8 +1231,10 @@ def test_learning_rate_monitor_defaults_to_trainer_logging_cadence() -> None:
     )
 
     assert evaluated_steps == [0, 2, 3]
-    assert [metrics["train/lr"] for metrics in experiment_logger.metrics] == pytest.approx([0.1, 0.025, 0.0125])
-    assert result.metrics["train/lr"] == pytest.approx(0.0125)
+    assert [metrics["optimizer/lr-Adam"] for metrics in experiment_logger.metrics] == pytest.approx(
+        [0.1, 0.025, 0.0125]
+    )
+    assert result.metrics["optimizer/lr-Adam"] == pytest.approx(0.0125)
 
 
 def test_learning_rate_monitor_stops_fit_before_first_update_without_logger() -> None:
@@ -1253,7 +1255,7 @@ def test_learning_rate_monitor_stops_fit_before_first_update_without_logger() ->
 
     trainer = Trainer(
         max_steps=1,
-        callbacks=(LearningRateMonitor(lambda step: step),),
+        callbacks=(LearningRateMonitor(lambda step: step, optimizer_name="Adam"),),
         logger=False,
         enable_progress_bar=False,
         enable_model_summary=False,

@@ -17,7 +17,7 @@ class LearningRateMonitor(Callback):
 
     Attributes:
         schedule: Configured Optax-compatible step-indexed schedule.
-        name: Base learning-rate metric name.
+        optimizer_name: Display name used to identify the Optax optimizer in metric keys.
         log_momentum: Whether to include the optimizer momentum coefficient.
         log_weight_decay: Whether to include the optimizer weight decay.
         log_key_prefix: String prepended verbatim to every metric name.
@@ -30,10 +30,10 @@ class LearningRateMonitor(Callback):
         self,
         schedule: Callable[[int], Any] | None,
         *,
-        name: str = "lr",
+        optimizer_name: str,
         log_momentum: bool = False,
         log_weight_decay: bool = False,
-        log_key_prefix: str | None = None,
+        log_key_prefix: str | None = "optimizer/",
         logging_interval: Literal["step", "epoch"] | None = None,
         momentum: Any = 0.0,
         weight_decay: Any = 0.0,
@@ -43,11 +43,12 @@ class LearningRateMonitor(Callback):
         Args:
             schedule: Optax-compatible callable receiving a zero-based optimizer step. `None` supports bootstrap Hydra
                 composition but is rejected when the callback is used for fitting.
-            name: Non-empty base learning-rate metric name. PhiJAX exposes this because Optax transformations do not
-                retain an inspectable optimizer class name.
-            log_momentum: Whether to log `momentum` as `<name>-momentum`.
-            log_weight_decay: Whether to log `weight_decay` as `<name>-weight_decay`.
-            log_key_prefix: Optional string prepended verbatim to every generated metric name.
+            optimizer_name: Non-empty display name added to `lr-<optimizer_name>`. PhiJAX requires this because Optax
+                transformations do not retain an inspectable optimizer class name.
+            log_momentum: Whether to log `momentum` as `lr-<optimizer_name>-momentum`.
+            log_weight_decay: Whether to log `weight_decay` as `lr-<optimizer_name>-weight_decay`.
+            log_key_prefix: Optional string prepended verbatim to every metric name. The default groups metrics under
+                `optimizer/`; pass `None` to disable grouping.
             logging_interval: `"step"` evaluates every optimizer step, `"epoch"` evaluates at fit end, and `None`
                 follows `trainer.log_every_n_steps` while always evaluating the final step.
             momentum: Optimizer momentum scalar or step-indexed schedule.
@@ -55,12 +56,12 @@ class LearningRateMonitor(Callback):
 
         Raises:
             TypeError: If the schedule, logging flags, prefix, or optimizer hyperparameters have invalid types.
-            ValueError: If `name` is empty or `logging_interval` is unsupported.
+            ValueError: If `optimizer_name` is empty or `logging_interval` is unsupported.
         """
         if schedule is not None and not callable(schedule):
             raise TypeError("Learning-rate `schedule` must be callable or `None`.")
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError("Learning-rate monitor `name` must be a non-empty string.")
+        if not isinstance(optimizer_name, str) or not optimizer_name.strip():
+            raise ValueError("`optimizer_name` must be a non-empty string.")
         if not isinstance(log_momentum, bool):
             raise TypeError("`log_momentum` must be a boolean.")
         if not isinstance(log_weight_decay, bool):
@@ -72,7 +73,7 @@ class LearningRateMonitor(Callback):
         _validate_scalar_source(momentum, "momentum")
         _validate_scalar_source(weight_decay, "weight_decay")
         self.schedule = schedule
-        self.name = name
+        self.optimizer_name = optimizer_name
         self.log_momentum = log_momentum
         self.log_weight_decay = log_weight_decay
         self.log_key_prefix = log_key_prefix or ""
@@ -126,7 +127,7 @@ class LearningRateMonitor(Callback):
         if not should_evaluate or self._last_step == context.step:
             return {}
         schedule_step = max(context.step - 1, 0)
-        metric_name = f"{self.log_key_prefix}{self.name}"
+        metric_name = f"{self.log_key_prefix}lr-{self.optimizer_name}"
         metrics = {metric_name: _evaluate_scalar_source(self.schedule, schedule_step, "learning-rate schedule")}
         if self.log_momentum:
             metrics[f"{metric_name}-momentum"] = _evaluate_scalar_source(self.momentum, schedule_step, "momentum")

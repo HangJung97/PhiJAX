@@ -67,7 +67,8 @@ This lets prediction reuse the same Trainer and in-memory state after training f
 ## Learning-rate monitoring
 
 `LearningRateMonitor` evaluates the Optax schedule at the optimizer count for each completed update. It sends
-`train/lr` to the configured loggers. `logging_interval="step"` evaluates every step, while
+`optimizer/lr-Adam` to the configured loggers when `optimizer_name="Adam"`. `logging_interval="step"` evaluates every
+step, while
 `logging_interval="epoch"` evaluates once at the end of fitting. The default `None` follows
 `trainer.log_every_n_steps` and always records the final rate. Unlike a Lightning scheduler, a raw Optax schedule has
 no `interval` field. PhiJAX therefore avoids evaluating the schedule on steps that will not be logged.
@@ -76,8 +77,10 @@ Like Lightning, this callback requires an experiment logger. Fitting raises befo
 `LearningRateMonitor` is enabled with `logger=False`, `logger=None`, or an empty logger collection. The default
 `logger=True` is valid.
 
-Like Lightning, `log_momentum` and `log_weight_decay` add `-momentum` and `-weight_decay` metrics.
-`log_key_prefix` is added to every key. These optional values must be supplied because Optax transformations do not
+Like Lightning, optimizer names identify learning-rate series, while `log_momentum` and `log_weight_decay` add
+`-momentum` and `-weight_decay` suffixes. PhiJAX requires `optimizer_name` because Optax transformations do not retain
+their factory name. Metrics use the `optimizer/` group by default; set `log_key_prefix` to replace it or pass `None`
+to disable grouping. Optional momentum and weight-decay values must be supplied because Optax transformations do not
 expose inspectable parameter groups.
 
 ::: phijax.callbacks.LearningRateMonitor
