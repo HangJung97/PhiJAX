@@ -1599,10 +1599,8 @@ def test_trainer_prints_bfloat16_amp_and_selected_cuda_environment(
         device_kind="NVIDIA RTX",
     )
     strategy = cast(Strategy, SimpleNamespace(is_global_zero=True, devices=(gpu,)))
-    trainer = Trainer(max_steps=1, precision="bf16-mixed", matmul_precision="default", strategy=strategy)
     monkeypatch.setattr(jax, "devices", lambda: (gpu,))
-
-    trainer.print_environment_info()
+    Trainer(max_steps=1, precision="bf16-mixed", matmul_precision="default", strategy=strategy)
 
     assert capsys.readouterr().out.splitlines() == [
         "",
@@ -1626,10 +1624,8 @@ def test_trainer_environment_supports_devices_without_optional_backend_metadata(
     """
     gpu = SimpleNamespace(platform="gpu", process_index=0, id=0)
     strategy = cast(Strategy, SimpleNamespace(is_global_zero=True, devices=(gpu,)))
-    trainer = Trainer(max_steps=1, matmul_precision="default", strategy=strategy)
     monkeypatch.setattr(jax, "devices", lambda: (gpu,))
-
-    trainer.print_environment_info()
+    Trainer(max_steps=1, matmul_precision="default", strategy=strategy)
 
     assert capsys.readouterr().out.splitlines() == [
         "",
@@ -1639,6 +1635,19 @@ def test_trainer_environment_supports_devices_without_optional_backend_metadata(
         "TPU available: False, using: 0 TPU cores",
         "",
     ]
+
+
+def test_trainer_does_not_print_environment_on_nonzero_rank(capsys: pytest.CaptureFixture[str]) -> None:
+    """Verify automatic environment reporting is restricted to global rank zero.
+
+    Args:
+        capsys: Pytest fixture capturing runtime diagnostics.
+    """
+    strategy = cast(Strategy, SimpleNamespace(is_global_zero=False, devices=()))
+
+    Trainer(max_steps=1, strategy=strategy)
+
+    assert capsys.readouterr().out == ""
 
 
 def test_trainer_applies_and_restores_matmul_precision_for_fit_and_prediction() -> None:

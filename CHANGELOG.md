@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Made the Trainer report its precision and accelerator environment automatically when constructed on global rank
+  zero.
+
 ## [0.2.0b2] - 2026-09-01
 
 ### Added
