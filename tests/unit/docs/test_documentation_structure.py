@@ -78,6 +78,27 @@ def _docstring_section_names(docstring: str, section: str) -> set[str]:
     return names
 
 
+def _heading_positions(contents: str, headings: tuple[str, ...]) -> tuple[int, ...]:
+    """Return the position of each required Markdown heading.
+
+    Args:
+        contents: Complete Markdown source.
+        headings: Exact headings expected in the source.
+
+    Returns:
+        Character positions in requested order.
+
+    Raises:
+        AssertionError: If a heading is absent or repeated.
+    """
+    positions: list[int] = []
+    for heading in headings:
+        matches = tuple(re.finditer(rf"^{re.escape(heading)}$", contents, flags=re.MULTILINE))
+        assert len(matches) == 1, f"Expected one `{heading}` heading, found {len(matches)}."
+        positions.append(matches[0].start())
+    return tuple(positions)
+
+
 def test_every_documentation_page_is_in_navigation() -> None:
     """Verify readers can reach every Markdown page through the site navigation."""
     config = yaml.safe_load((_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
@@ -85,6 +106,58 @@ def test_every_documentation_page_is_in_navigation() -> None:
     available = {path.relative_to(_DOCS_DIRECTORY) for path in _DOCS_DIRECTORY.rglob("*.md")}
 
     assert navigated == available
+
+
+def test_generated_api_targets_have_one_reference_owner() -> None:
+    """Render each mkdocstrings target on one authoritative API page."""
+    owners: dict[str, list[Path]] = {}
+    for markdown_path in _DOCS_DIRECTORY.rglob("*.md"):
+        for line in markdown_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("::: "):
+                owners.setdefault(line.removeprefix("::: ").strip(), []).append(markdown_path.relative_to(_ROOT))
+    duplicates = {target: paths for target, paths in owners.items() if len(paths) > 1}
+
+    assert not duplicates, f"Generated API targets have multiple owners: {duplicates}"
+
+
+def test_api_navigation_separates_core_runtime_and_extensions() -> None:
+    """Keep primary contracts ahead of lower-level runtime and extension APIs."""
+    config = yaml.safe_load((_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+    api_reference = next(item["API reference"] for item in config["nav"] if "API reference" in item)
+    groups = {name: pages for item in api_reference if isinstance(item, dict) for name, pages in item.items()}
+
+    assert groups["Core"] == [
+        {"Trainer": "api/trainer.md"},
+        {"PhiModule": "api/module.md"},
+        {"Data": "api/data.md"},
+        {
+            "Models": [
+                {"Overview": "api/models/index.md"},
+                {"MLP": "api/models/mlp.md"},
+                {"Modified MLP": "api/models/modified.md"},
+                {"PirateNet": "api/models/pirate-net.md"},
+                {"Layers": "api/models/layers.md"},
+            ]
+        },
+    ]
+    assert groups["Training runtime"] == [
+        {"State and plans": "api/training.md"},
+        {"Precision": "api/precision.md"},
+        {"Device strategies": "api/strategies.md"},
+    ]
+    assert groups["Extensions"] == [
+        {"Hooks and lifecycle": "api/hooks.md"},
+        {
+            "Callbacks": [
+                {"Overview": "api/callbacks/index.md"},
+                {"Monitoring": "api/callbacks/monitoring.md"},
+                {"Display": "api/callbacks/display.md"},
+                {"Prediction": "api/callbacks/prediction.md"},
+            ]
+        },
+        {"Checkpointing": "api/checkpointing.md"},
+        {"Loggers": "api/loggers.md"},
+    ]
 
 
 @pytest.mark.parametrize("markdown_path", sorted(_DOCS_DIRECTORY.rglob("*.md")))
@@ -150,3 +223,56 @@ def test_api_reference_uses_configured_source_links() -> None:
         assert f"{object_name}.relative_filepath" in contents
         assert "config.extra.source_ref" in contents
         assert "[source]" in contents
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "headings", "generated_reference"),
+    [
+        (
+            "api/module.md",
+            (
+                "# PhiModule",
+                "## Basic use",
+                "## Responsibilities",
+                "## Module blueprints",
+                "## Logging metrics",
+                "## Custom modules",
+                "## Lifecycle and hooks",
+                "## API reference",
+            ),
+            "phijax.core.PhiModule",
+        ),
+        (
+            "api/trainer.md",
+            (
+                "# Trainer",
+                "## Basic use",
+                "## What the Trainer manages",
+                "## Configuration",
+                "## Common and advanced workflows",
+                "## Metrics and status",
+                "## Cleanup and interruption",
+                "## API reference",
+            ),
+            "phijax.training.Trainer",
+        ),
+    ],
+)
+def test_core_api_pages_are_task_first(
+    relative_path: str,
+    headings: tuple[str, ...],
+    generated_reference: str,
+) -> None:
+    """Keep common workflows before advanced details and one generated class reference.
+
+    Args:
+        relative_path: Documentation path relative to `docs`.
+        headings: Required page headings in reader order.
+        generated_reference: Fully qualified class rendered by mkdocstrings once.
+    """
+    contents = (_DOCS_DIRECTORY / relative_path).read_text(encoding="utf-8")
+
+    positions = _heading_positions(contents, headings)
+    assert positions == tuple(sorted(positions))
+    directive = re.compile(rf"^::: {re.escape(generated_reference)}$", flags=re.MULTILINE)
+    assert len(directive.findall(contents)) == 1

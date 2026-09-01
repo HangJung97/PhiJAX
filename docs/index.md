@@ -23,7 +23,7 @@ Follow these pages in order:
 - [Loss balancers](guides/balancers.md): implement static or adaptive functional loss weighting.
 - [Randomness and reproducibility](guides/reproducibility.md): understand PRNG streams, sampling, and checkpoint
   continuation.
-- [Models](api/models.md): use MLP, Modified MLP, PirateNet, or adapt a custom Flax NNX architecture.
+- [Models](api/models/index.md): use MLP, Modified MLP, PirateNet, or adapt a custom Flax NNX architecture.
 - [Hooks and lifecycle](api/hooks.md): choose module and callback extension points from the exact Trainer call order.
 - [Logging and monitoring](guides/logging.md): configure loggers, displays, metrics, and monitored checkpoints.
 - [Troubleshooting](guides/troubleshooting.md): diagnose accelerator selection, memory, compilation, and lifecycle

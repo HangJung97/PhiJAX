@@ -96,7 +96,7 @@ The Trainer exposes three read-only metric mappings:
 
 ## Monitor the learning rate
 
-[`LearningRateMonitor`](../api/callbacks.md#phijax.callbacks.LearningRateMonitor) reports the rate used by each completed Optax update. It
+[`LearningRateMonitor`](../api/callbacks/monitoring.md#phijax.callbacks.LearningRateMonitor) reports the rate used by each completed Optax update. It
 requires a configured logger.
 
 ```python
@@ -116,7 +116,7 @@ update, and `"epoch"` records only the end of the fit call.
 
 ## Retain the best checkpoints
 
-Use [`ModelCheckpoint`](../api/callbacks.md#phijax.callbacks.ModelCheckpoint) with a scalar metric produced by the module or a callback:
+Use [`ModelCheckpoint`](../api/checkpointing.md#phijax.callbacks.ModelCheckpoint) with a scalar metric produced by the module or a callback:
 
 ```python
 from phijax import Trainer
@@ -144,6 +144,6 @@ device work and can reduce throughput.
 ## Next steps
 
 - [Logger API](../api/loggers.md)
-- [Callback API](../api/callbacks.md)
+- [Callback API](../api/callbacks/index.md)
 - [Checkpointing](../api/checkpointing.md)
 - [Trainer hooks](../api/hooks.md)

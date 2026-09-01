@@ -1,41 +1,67 @@
 # PhiModule
 
-`BasePhiModule` connects application computations to the Trainer. It defines model application, unweighted losses,
-prediction behavior, metric formatting, and application hooks. It does not own an optimizer or loss balancer.
+`PhiModule` connects a model factory to an objective. It describes the computation that the
+[`Trainer`](trainer.md#phijax.training.Trainer) initializes and runs. Optimizer, loss-balancer, and PRNG state remain
+outside the module in [`TrainState`](training.md#phijax.training.TrainState).
 
-The public contracts live in `phijax.core`. Their host lifecycle defaults are separated internally from numerical
-module behavior, but applications continue to customize both by subclassing `BasePhiModule`.
+Use `PhiModule` for the standard objective-backed workflow. Subclass `BasePhiModule` only when an application needs a
+different numerical contract.
 
-## Lifecycle ordering
+## Basic use
 
-Callbacks run before the corresponding module hook:
+Create an uninitialized module blueprint, fit it, and use the bound module returned in `FitResult` for prediction:
 
-```text
-callbacks.on_fit_start           -> module.on_fit_start
-callbacks.on_train_batch_start   -> module.on_train_batch_start
-compiled train step
-callbacks.on_train_batch_end     -> module.on_train_batch_end
-callbacks.on_fit_end             -> module.on_fit_end
+```python
+module = PhiModule(model_factory, objective, name="Heat PINN")
 
-callbacks.on_predict_start       -> module.on_predict_start
-callbacks.on_predict_epoch_start -> module.on_predict_epoch_start
-callbacks.on_predict_batch_start -> module.on_predict_batch_start
-module.predict_step
-callbacks.on_predict_batch_end   -> module.on_predict_batch_end
-callbacks.on_predict_epoch_end   -> module.on_predict_epoch_end
-callbacks.on_predict_end         -> module.on_predict_end
+result = trainer.fit(
+    module,
+    datamodule=data_module,
+    optimizer=optimizer,
+    seed=0,
+)
+predictions = trainer.predict(result, datamodule=data_module)
 ```
 
-Module hooks run on the Python host. Training hooks return explicit replacement values. These values must keep the
-PyTree structure and fixed shapes expected by compiled functions. Prediction lifecycle hooks only observe state and
-return `None`. Override `predict_step` to transform each output batch before collection and artifact writing.
+`Trainer.fit()` supplies the model key, precision policy, and optional input statistics. It does not modify the
+original blueprint. See the [heat-equation quickstart](../getting-started/quickstart.md) for a complete runnable
+example.
 
-## Logging from a module
+## Responsibilities
 
-The compiled `training_step()` returns numerical losses and diagnostics. The built-in `PhiModule.on_train_batch_end()`
-uses `self.log()` to send every scalar to experiment loggers. This includes individual `train/loss/<name>` losses and
-`train/weight/<name>` balancer weights. The total loss, individual losses, and balancer weights also appear in the
-progress bar by default. Override their destinations after calling the standard hook:
+| Component     | Responsibility                                                        |
+| ------------- | --------------------------------------------------------------------- |
+| `PhiModule`   | Model application, objective losses, prediction, and metric routing   |
+| Model factory | Model initialization and explicit model state                         |
+| Objective     | Named unweighted losses and required DataModule batch keys            |
+| `Trainer`     | Runtime assembly, hooks, device placement, logging, and checkpointing |
+| `TrainState`  | Model, optimizer, balancer, step, precision, and explicit PRNG arrays |
+| Loss balancer | Combining named losses and scheduling adaptive weight updates         |
+
+This separation keeps the compiled computation functional. A module never owns mutable optimizer or balancer state.
+
+## Module blueprints
+
+The standard `PhiModule` accepts either a lazy [`ModelFactory`](models/index.md#phijax.models.ModelFactory) or an
+initialized [`InitializedModel`](models/index.md#phijax.models.InitializedModel), together with an
+[`Objective`](objectives.md#phijax.objectives.Objective).
+
+The objective supplies ordered `loss_names` and `batch_keys`. The Trainer uses them to create default static loss
+weights and request matching batches from the DataModule. During fitting, `prepare_model()` creates a shallow bound
+copy containing the pure model application and model summary function. The resulting bound module is available as
+`result.module`.
+
+## Logging metrics
+
+The compiled `training_step()` returns numerical losses and diagnostics. The standard `PhiModule.on_train_batch_end()`
+uses `self.log()` to route every scalar to configured experiment loggers. By default, these values also appear in the
+progress bar:
+
+- `train/loss`;
+- each `train/loss/<name>` objective loss;
+- each `train/weight/<name>` balancer weight.
+
+Override a destination after calling the standard hook:
 
 ```python
 def on_train_batch_end(self, model_state, context):
@@ -46,29 +72,15 @@ def on_train_batch_end(self, model_state, context):
     return model_state, metrics
 ```
 
-`self.log()` does not write immediately. It records device values for the Trainer, which converts them only at the
-configured logging or progress-refresh cadence. It is intentionally unavailable inside JAX transformations.
+`self.log()` records the device value without writing immediately. The Trainer converts it only at the configured
+logging or progress-refresh cadence. The method is available during `on_train_batch_end()` and must not be called from
+inside a JAX transformation. See [Logging and monitoring](../guides/logging.md) for logger and progress-bar behavior.
 
-## Module blueprints
+## Custom modules
 
-The standard `PhiModule` is an uninitialized blueprint containing a `ModelFactory` and objective:
-
-```python
-module = PhiModule(model_factory, objective, name="heat")
-result = trainer.fit(module, datamodule=data_module, optimizer=optimizer, seed=0)
-```
-
-`Trainer.fit()` supplies model initialization values and returns a separately bound module as `result.module`. The
-blueprint is not mutated. Its objective provides ordered `loss_names` and `batch_keys`, allowing the Trainer to build
-the balancer, training plan, and DataModule source.
-
-## Implementing a custom module
-
-Implement `loss_names`, `forward`, and `training_step`. Implement `residual_stream` when using derivative-based loss
-balancing. Fully custom bound modules use `Trainer.fit_state()` with an explicit `TrainingPlan` and `TrainState`.
-
-An application can construct any `BasePhiModule` subclass. Keep module selection separate from optimizer and
-loss-balancer selection. See [Configuration integrations](configuration.md) when assembling modules with Hydra.
+Subclass `BasePhiModule` when the standard model-factory and objective composition is not sufficient. Implement
+`loss_names`, `forward()`, and `training_step()`. Implement `residual_stream()` when an adaptive loss balancer needs
+raw residuals or output streams.
 
 ```python
 class HeatModule(BasePhiModule):
@@ -83,9 +95,43 @@ class HeatModule(BasePhiModule):
         return self.objective.losses(self.model_apply, model_state, batches)
 ```
 
-## Public API
+A fully bound custom module uses [`Trainer.fit_state()`](trainer.md#phijax.training.Trainer.fit_state) with an explicit
+`TrainingPlan` and `TrainState`. Keep optimizer and loss-balancer selection outside the module.
 
-::: phijax.core.PhiModuleContext
+## Lifecycle and hooks
+
+Callbacks run in declaration order before the matching module hook. The main fit ordering is:
+
+```text
+callbacks.setup                 -> module.setup
+callbacks.on_fit_start          -> module.on_fit_start
+callbacks.on_train_batch_start  -> module.on_train_batch_start
+compiled training step
+callbacks.on_train_batch_end    -> module.on_train_batch_end
+callbacks.on_fit_end            -> module.on_fit_end
+callbacks.teardown              -> module.teardown
+```
+
+Module hooks run on the Python host. Training hooks return explicit replacement values and must preserve the PyTree
+structure and fixed shapes expected by compiled functions. Prediction hooks observe state; override `predict_step()`
+to transform output batches before collection or artifact writing.
+
+See [Trainer and module hooks](hooks.md) for the complete fit, prediction, interruption, and exception lifecycles.
+
+## API reference
+
+### Standard module
+
+::: phijax.core.PhiModule
+    options:
+      members:
+        - loss_names
+        - batch_keys
+        - prepare_model
+        - summarize_model
+        - on_train_batch_end
+
+### Custom module contract
 
 ::: phijax.core.BasePhiModule
     options:
@@ -99,27 +145,20 @@ class HeatModule(BasePhiModule):
         - residual_stream
         - summarize_model
         - predict_step
+        - setup
+        - on_fit_start
+        - on_train_batch_start
+        - on_train_batch_end
+        - on_fit_end
         - on_predict_start
         - on_predict_epoch_start
         - on_predict_batch_start
         - on_predict_batch_end
         - on_predict_epoch_end
         - on_predict_end
-        - setup
-        - on_fit_start
-        - on_train_batch_start
-        - on_train_batch_end
-        - on_fit_end
         - on_exception
         - teardown
 
-::: phijax.core.PhiModule
-    options:
-      members:
-        - loss_names
-        - batch_keys
-        - prepare_model
-        - forward
-        - summarize_model
-        - training_step
-        - residual_stream
+### Hook context
+
+::: phijax.core.PhiModuleContext

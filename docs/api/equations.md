@@ -47,11 +47,17 @@ Both support the model-output stream used by output-based diagnostics.
 
 ## One-dimensional Burgers equation
 
-Inputs use `[t, x]`; `output_index` selects the scalar solution. The returned residual is
+Inputs use `[t, x]`; `output_index` selects the scalar solution. The equation is
 
-```text
-du/dt + u * du/dx - viscosity_coefficient * d2u/dx2.
-```
+$$
+\frac{\partial u}{\partial t}
++ u\frac{\partial u}{\partial x}
+- \nu\frac{\partial^2 u}{\partial x^2}
+= 0,
+$$
+
+where $\nu$ is `viscosity_coefficient`. The function returns the left-hand side as the residual optimized during
+training.
 
 ::: phijax.equations.burgers_1d
 

@@ -17,7 +17,7 @@ def _api_markdown() -> str:
     Returns:
         Concatenated API Markdown used for coverage assertions.
     """
-    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(_API_DIRECTORY.glob("*.md")))
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(_API_DIRECTORY.rglob("*.md")))
 
 
 def _resolve_documented_object(dotpath: str) -> Any:

@@ -96,16 +96,26 @@ nav:
   - API reference:
       - Overview: api/index.md
       - Core:
-          - PhiModule: api/module.md
-          - Hooks and lifecycle: api/hooks.md
-          - Models: api/models.md
-          - Data: api/data.md
-      - Training runtime:
           - Trainer: api/trainer.md
+          - PhiModule: api/module.md
+          - Data: api/data.md
+          - Models:
+              - Overview: api/models/index.md
+              - MLP: api/models/mlp.md
+              - Modified MLP: api/models/modified.md
+              - PirateNet: api/models/pirate-net.md
+              - Layers: api/models/layers.md
+      - Training runtime:
           - State and plans: api/training.md
           - Precision: api/precision.md
           - Device strategies: api/strategies.md
-          - Callbacks: api/callbacks.md
+      - Extensions:
+          - Hooks and lifecycle: api/hooks.md
+          - Callbacks:
+              - Overview: api/callbacks/index.md
+              - Monitoring: api/callbacks/monitoring.md
+              - Display: api/callbacks/display.md
+              - Prediction: api/callbacks/prediction.md
           - Checkpointing: api/checkpointing.md
           - Loggers: api/loggers.md
       - Physics and optimization:

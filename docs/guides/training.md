@@ -145,6 +145,6 @@ reference grids, measurements, or physical checks.
 
 - [Trainer reference](../api/trainer.md)
 - [Training state and plans](../api/training.md)
-- [Callbacks](../api/callbacks.md)
+- [Callbacks](../api/callbacks/index.md)
 - [Checkpointing](../api/checkpointing.md)
 - [Randomness and reproducibility](reproducibility.md)
