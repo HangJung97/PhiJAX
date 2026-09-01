@@ -16,6 +16,7 @@ Follow these pages in order:
 
 ## Extend an application
 
+- [Training and prediction](guides/training.md): fit, resume, predict, and choose between the common and explicit APIs.
 - [Data](guides/datasets.md): implement a `PhiDataModule`, immutable host pools, and explicit-key batch sources.
 - [Equations and objectives](guides/objectives.md): compose differentiable residuals into named scalar losses.
 - [Loss balancers](guides/balancers.md): implement static or adaptive functional loss weighting.
@@ -26,8 +27,8 @@ Follow these pages in order:
 - [Troubleshooting](guides/troubleshooting.md): diagnose accelerator selection, memory, compilation, and lifecycle
   issues.
 
-Use the [API overview](api/index.md) for supported imports and conventions, or the
-[API map](api-reference.md) to find generated signatures and source docstrings.
+Use the [API reference](api/index.md) for supported imports, generated signatures, accepted options, return values,
+and errors.
 
 The separate [PhiJAX Hydra template](https://github.com/HangJung97/phijax-hydra-template) provides runnable
 entrypoints, config groups, and a small Burgers example. Projects created from the template use PhiJAX as a dependency.

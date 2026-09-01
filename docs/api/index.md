@@ -68,4 +68,5 @@ from phijax.training import OrbaxCheckpointIO, TrainState, TrainingPlan
 from phijax.utils import RankedLogger, resolve_seed, seed_everything
 ```
 
-The previous single-page reference remains available as an [API map](../api-reference.md).
+Use the navigation to open a focused reference page. Start with the [Trainer](trainer.md),
+[PhiModule](module.md), [Data](data.md), and [Models](models.md) pages for the main runtime contracts.
