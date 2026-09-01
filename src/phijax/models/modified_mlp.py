@@ -12,7 +12,7 @@ from phijax.models.contracts import InitializedModel
 from phijax.models.initialization import InitializationName, Initializer, resolve_initializer
 from phijax.models.layers import PeriodicFeatures, RandomFourierFeatures, create_dense
 from phijax.models.nnx_adapter import initialize_nnx_model
-from phijax.training.precision import PrecisionPolicy
+from phijax.training.precision import PrecisionName, PrecisionPolicy
 
 
 class ModifiedMLP(nnx.Module):
@@ -251,7 +251,7 @@ def build_modified_mlp(
     input_mean: ArrayLike | None = None,
     input_std: ArrayLike | None = None,
     *,
-    precision: str | PrecisionPolicy | None = None,
+    precision: PrecisionName | PrecisionPolicy | None = None,
     **model_kwargs: Any,
 ) -> InitializedModel:
     """Build a normalized modified MLP through the generic initialized-model contract.

@@ -1,12 +1,12 @@
 import logging
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import jax
 import numpy as np
 
-from phijax.callbacks.base import Callback, CallbackContext, TrainerContext
+from phijax.callbacks.base import Callback, CallbackContext, MonitorMode, TrainerContext
 
 if TYPE_CHECKING:
     from phijax.training.trainer import Trainer
@@ -156,7 +156,7 @@ class ModelCheckpoint(Callback):
         save_last: bool = True,
         save_on_exception: bool = False,
         monitor: str | None = None,
-        mode: Literal["min", "max"] = "min",
+        mode: MonitorMode = "min",
         save_top_k: int | None = None,
     ) -> None:
         """Initialize checkpoint lifecycle policy.

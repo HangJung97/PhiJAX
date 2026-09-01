@@ -6,6 +6,8 @@ import jax.numpy as jnp
 
 from phijax.callbacks.base import Callback, TrainerContext
 
+type LoggingInterval = Literal["step", "epoch"]
+
 
 class LearningRateMonitor(Callback):
     """Publish optimizer hyperparameters through the standard trainer metric stream.
@@ -34,7 +36,7 @@ class LearningRateMonitor(Callback):
         log_momentum: bool = False,
         log_weight_decay: bool = False,
         log_key_prefix: str | None = "optimizer/",
-        logging_interval: Literal["step", "epoch"] | None = None,
+        logging_interval: LoggingInterval | None = None,
         momentum: Any = 0.0,
         weight_decay: Any = 0.0,
     ) -> None:
@@ -206,4 +208,4 @@ def _evaluate_scalar_source(source: Any, step: int, name: str) -> jax.Array:
     return value.reshape(())
 
 
-__all__ = ["LearningRateMonitor"]
+__all__ = ["LearningRateMonitor", "LoggingInterval"]

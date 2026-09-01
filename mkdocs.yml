@@ -1,5 +1,5 @@
 site_name: PhiJAX
-site_description: A typed JAX framework for physics-informed neural networks.
+site_description: A JAX framework for physics-informed neural networks.
 site_url: https://hangjung97.github.io/PhiJAX/
 repo_url: https://github.com/HangJung97/PhiJAX
 repo_name: HangJung97/PhiJAX
@@ -44,7 +44,7 @@ plugins:
             show_root_full_path: false
             show_root_heading: true
             show_signature_annotations: true
-            show_source: true
+            show_source: false
             show_symbol_type_heading: true
             show_symbol_type_toc: true
 

@@ -77,6 +77,14 @@ override the selected policy.
 
 ## MLP transformation order
 
+Built-in architectures use the public `ActivationName` and `InitializationName` aliases. They also accept custom
+`Activation` and `Initializer` callables.
+
+| Option           | Built-in names                                                     |
+| ---------------- | ------------------------------------------------------------------ |
+| `activation`     | `"relu"`, `"leakyrelu"`, `"gelu"`, `"tanh"`, `"sigmoid"`, `"silu"` |
+| `initialization` | `"kaiming_normal"`, `"xavier_uniform"`, `"trunc_normal"` or `None` |
+
 The built-in MLP applies optional operations in this order:
 
 ```text

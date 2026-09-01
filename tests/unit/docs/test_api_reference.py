@@ -85,6 +85,15 @@ def test_mkdocstrings_target_resolves(dotpath: str) -> None:
     assert _resolve_documented_object(dotpath) is not None
 
 
+def test_mkdocstrings_options_are_nested_under_directives() -> None:
+    """Verify per-object options use mkdocstrings directive indentation."""
+    documentation = _api_markdown()
+
+    assert "\noptions:\n" not in documentation
+    assert "\nmembers:\n" not in documentation
+    assert "\n\\- " not in documentation
+
+
 def test_every_package_export_appears_in_the_api_reference() -> None:
     """Verify public package exports remain discoverable in the split API reference."""
     documentation = _api_markdown()

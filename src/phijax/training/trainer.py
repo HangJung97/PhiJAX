@@ -27,11 +27,11 @@ from phijax.training.loggers import ExperimentLogger, LoggerCollection
 from phijax.training.loops.fit_loop import _BalancerUpdateRuntime, _FitLoop, _state_step
 from phijax.training.loops.prediction_loop import _PredictionLoop
 from phijax.training.plans import TrainingPlan
-from phijax.training.precision import PrecisionPolicy
+from phijax.training.precision import MatmulPrecision, PrecisionName, PrecisionPolicy
 from phijax.training.results import FitResult
 from phijax.training.state import TrainState, initialize_train_state
 from phijax.training.steps import TrainStep, make_train_step
-from phijax.training.strategies import Strategy, create_strategy
+from phijax.training.strategies import Accelerator, DeviceSelection, Strategy, create_strategy
 from phijax.types import JaxDevice
 
 type BatchSource = Iterable[Any] | Callable[[int], Any]
@@ -58,10 +58,10 @@ class Trainer:
         self,
         max_steps: int,
         *,
-        accelerator: str = "auto",
-        devices: int | list[int] | str = 1,
-        precision: str | PrecisionPolicy = "32-true",
-        matmul_precision: str | None = None,
+        accelerator: Accelerator = "auto",
+        devices: DeviceSelection = 1,
+        precision: PrecisionName | PrecisionPolicy = "32-true",
+        matmul_precision: MatmulPrecision | None = None,
         derivative_dtype: Any | None = None,
         initial_loss_scale: float = 32768.0,
         loss_scale_growth_interval: int = 2000,
@@ -80,9 +80,10 @@ class Trainer:
 
         Args:
             max_steps: Maximum number of batches processed by one fit call.
-            accelerator: Device backend selected when `strategy` is absent.
-            devices: Device count, explicit indices, or `auto` when `strategy` is absent.
-            precision: Lightning-compatible precision mode or resolved policy.
+            accelerator: Device backend selected when `strategy` is absent. Choose `auto`, `cpu`, `gpu`, or `tpu`.
+            devices: Positive device count, explicit device indices, or `auto` for all matching visible devices.
+            precision: Precision name or resolved policy. Supported names are `64-true`, `32-true`, `16-true`,
+                `bf16-true`, `16-mixed`, and `bf16-mixed`; common dtype aliases are also accepted.
             matmul_precision: Optional `default`, `high`, or `highest` JAX matrix-multiplication precision override.
             derivative_dtype: Optional floating batch and coordinate-derivative dtype override.
             initial_loss_scale: Initial dynamic scale for `16-mixed` training.

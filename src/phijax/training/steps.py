@@ -8,7 +8,7 @@ import optax
 
 from phijax.core import BasePhiModule
 from phijax.metrics import TrainingOutput
-from phijax.training.precision import PrecisionPolicy
+from phijax.training.precision import PrecisionName, PrecisionPolicy
 from phijax.training.state import TrainState
 from phijax.types import NamedBatches
 
@@ -19,7 +19,7 @@ def make_train_step(
     module: BasePhiModule,
     balancer: Any,
     optimizer: optax.GradientTransformation,
-    precision: str | PrecisionPolicy = "32-true",
+    precision: PrecisionName | PrecisionPolicy = "32-true",
 ) -> Callable[[TrainState, NamedBatches], tuple[TrainState, dict[str, jax.Array]]]:
     """Create one JIT-compiled loss, gradient, and Optax update.
 

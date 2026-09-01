@@ -62,9 +62,15 @@ This lets prediction reuse the same Trainer and in-memory state after training f
 
 ## Early stopping
 
+`mode` accepts `"min"` or `"max"`, represented by the public `MonitorMode` alias. Use `"min"` for losses and
+`"max"` for scores where larger values are better.
+
 ::: phijax.callbacks.EarlyStopping
 
 ## Learning-rate monitoring
+
+`LoggingInterval` represents the explicit `"step"` and `"epoch"` interval values. Passing `None` follows the Trainer
+logging cadence.
 
 `LearningRateMonitor` evaluates the Optax schedule at the optimizer count for each completed update. It sends
 `optimizer/lr-Adam` to the configured loggers when `optimizer_name="Adam"`. `logging_interval="step"` evaluates every
