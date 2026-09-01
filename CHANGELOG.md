@@ -23,7 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Added configurable source links to generated class, function, and method references without embedding full source
   listings. Documentation built from `main` links to source available on GitHub.
 - Restructured the `PhiModule` and `Trainer` references to lead with common workflows and group configuration,
-  extension, lifecycle, and runtime details before the generated API.
+  extension, lifecycle, and runtime details before the generated API. The API navigation now keeps primary contracts
+  under Core and lifecycle services under Extensions.
 
 ## [0.2.0b3] - 2026-09-01
 

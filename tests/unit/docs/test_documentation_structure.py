@@ -108,6 +108,31 @@ def test_every_documentation_page_is_in_navigation() -> None:
     assert navigated == available
 
 
+def test_api_navigation_separates_core_runtime_and_extensions() -> None:
+    """Keep primary contracts ahead of lower-level runtime and extension APIs."""
+    config = yaml.safe_load((_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+    api_reference = next(item["API reference"] for item in config["nav"] if "API reference" in item)
+    groups = {name: pages for item in api_reference if isinstance(item, dict) for name, pages in item.items()}
+
+    assert groups["Core"] == [
+        {"Trainer": "api/trainer.md"},
+        {"PhiModule": "api/module.md"},
+        {"Data": "api/data.md"},
+        {"Models": "api/models.md"},
+    ]
+    assert groups["Training runtime"] == [
+        {"State and plans": "api/training.md"},
+        {"Precision": "api/precision.md"},
+        {"Device strategies": "api/strategies.md"},
+    ]
+    assert groups["Extensions"] == [
+        {"Hooks and lifecycle": "api/hooks.md"},
+        {"Callbacks": "api/callbacks.md"},
+        {"Checkpointing": "api/checkpointing.md"},
+        {"Loggers": "api/loggers.md"},
+    ]
+
+
 @pytest.mark.parametrize("markdown_path", sorted(_DOCS_DIRECTORY.rglob("*.md")))
 def test_relative_documentation_links_resolve(markdown_path: Path) -> None:
     """Verify local Markdown links point to existing files inside the docs tree.

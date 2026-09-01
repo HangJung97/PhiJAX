@@ -96,15 +96,16 @@ nav:
   - API reference:
       - Overview: api/index.md
       - Core:
-          - PhiModule: api/module.md
-          - Hooks and lifecycle: api/hooks.md
-          - Models: api/models.md
-          - Data: api/data.md
-      - Training runtime:
           - Trainer: api/trainer.md
+          - PhiModule: api/module.md
+          - Data: api/data.md
+          - Models: api/models.md
+      - Training runtime:
           - State and plans: api/training.md
           - Precision: api/precision.md
           - Device strategies: api/strategies.md
+      - Extensions:
+          - Hooks and lifecycle: api/hooks.md
           - Callbacks: api/callbacks.md
           - Checkpointing: api/checkpointing.md
           - Loggers: api/loggers.md
