@@ -24,8 +24,8 @@ For a configuration-first project layout, start from
 configs, and application DataModules.
 
 > **Beta API:** PhiJAX is under active development. Breaking changes may occur between major versions and during the
-> beta period before `1.0`. PhiJAX `0.2.0b1` defines the current supported public API. Checkpoints can be restored by
-> compatible PhiJAX releases from the same major and minor version.
+> beta period before the stable release. The supported public API is documented in package `__all__` declarations.
+> Checkpoints can be restored by compatible PhiJAX releases from the same major and minor version.
 
 [Quickstart](https://hangjung97.github.io/PhiJAX/getting-started/quickstart/) |
 [Guides](https://hangjung97.github.io/PhiJAX/guides/datasets/) |

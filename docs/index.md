@@ -47,5 +47,5 @@ read Hydra configuration.
 
 ## Beta stability
 
-PhiJAX `0.2.0b1` supports the names documented in package `__all__` declarations. Prediction artifacts use schema
-version 2. Checkpoints include a versioned manifest and restore only within a compatible PhiJAX major/minor line.
+PhiJAX supports the names documented in package `__all__` declarations. Prediction artifacts use schema version 2.
+Checkpoints include a versioned manifest and restore only within a compatible PhiJAX major/minor line.

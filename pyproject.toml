@@ -1,6 +1,6 @@
 [project]
 name = "phijax"
-version = "0.2.0b1"
+version = "0.2.0b2"
 description = "A JAX framework for reproducible physics-informed neural network training."
 readme = "README.md"
 requires-python = ">=3.12"

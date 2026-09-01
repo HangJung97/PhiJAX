@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0b2] - 2026-09-01
+
 ### Added
 
 - Added `to_hyperparameters()` for converting composed Hydra configs before passing them to `Trainer.fit()`.
@@ -77,4 +79,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 [0.1.0b1]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.1.0b1
 [0.2.0b1]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b1
-[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b1...HEAD
+[0.2.0b2]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b2
+[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b2...HEAD
