@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phijax import __version__ as phijax_version
 from phijax.balancers import BalancerState
 from phijax.training import OrbaxCheckpointIO, TrainState
 from phijax.training import checkpointing as checkpointing_module
@@ -56,7 +57,7 @@ def test_orbax_checkpoint_supports_resume_and_weights_only_loading(tmp_path: Pat
     assert int(weights_only.step) == 0
     assert manifest["schema_version"] == 2
     assert manifest["step"] == 4
-    assert manifest["phijax_version"] == "0.2.0b1"
+    assert manifest["phijax_version"] == phijax_version
     assert manifest["callbacks"] == callback_states
     assert restored_callback_states == callback_states
 
