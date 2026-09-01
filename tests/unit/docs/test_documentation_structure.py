@@ -132,3 +132,21 @@ def test_class_attributes_do_not_repeat_constructor_parameters() -> None:
                 duplicates[f"{path}:{node.lineno}:{node.name}"] = sorted(repeated)
 
     assert not duplicates, f"Class attributes repeat constructor parameters: {duplicates}"
+
+
+def test_api_reference_uses_configured_source_links() -> None:
+    """Render stable source links without embedding complete implementation blocks."""
+    config = yaml.safe_load((_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+    mkdocstrings = next(plugin["mkdocstrings"] for plugin in config["plugins"] if "mkdocstrings" in plugin)
+    python_options = mkdocstrings["handlers"]["python"]["options"]
+
+    assert mkdocstrings["custom_templates"] == "docs_templates"
+    assert python_options["show_source"] is False
+    assert python_options["extra"]["source_repository"] == "https://github.com/HangJung97/PhiJAX"
+    assert python_options["extra"]["source_ref"] == "main"
+    for template_name, object_name in (("class", "class"), ("function", "function")):
+        template = _ROOT / "docs_templates" / "python" / "material" / f"{template_name}.html.jinja"
+        contents = template.read_text(encoding="utf-8")
+        assert f"{object_name}.relative_filepath" in contents
+        assert "config.extra.source_ref" in contents
+        assert "[source]" in contents

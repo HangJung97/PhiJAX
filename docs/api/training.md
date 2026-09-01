@@ -38,7 +38,3 @@ loss balancer, and optional adaptive-balancer update. These contracts power `Tra
 diagnostics are logged by default. Array diagnostics remain available to callbacks and are never reduced implicitly.
 
 ::: phijax.TrainingOutput
-
-Source files: [state.py](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/state.py),
-[steps.py](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/steps.py), and
-[plans.py](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/plans.py).

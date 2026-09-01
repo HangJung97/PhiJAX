@@ -24,5 +24,3 @@ parameter or activation dtypes. See JAX's
 ::: phijax.training.PrecisionPolicy
 
 ::: phijax.training.configure_precision
-
-[View the precision implementation on GitHub](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/precision.py).

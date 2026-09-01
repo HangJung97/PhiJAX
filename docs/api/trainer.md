@@ -57,5 +57,3 @@ Environment information is printed when the Trainer is created and only on globa
         - load_weights
         - latest_checkpoint
         - close
-
-[View the Trainer implementation on GitHub](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/trainer.py).

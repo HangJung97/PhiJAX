@@ -25,5 +25,3 @@ long run.
 ::: phijax.training.create_strategy
 
 ::: phijax.training.initialize_distributed
-
-[View the strategy implementation on GitHub](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/strategies.py).
