@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0b3] - 2026-09-01
+
 ### Added
 
 - Added a `target.name` OmegaConf resolver for deriving display labels from Hydra `_target_` paths.
@@ -20,6 +22,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Made the Trainer report its precision and accelerator environment automatically when constructed on global rank
   zero.
+- Expanded the balancer documentation with the exact metrics, meanings, update behavior, and default destinations for
+  static, gradient-norm, and exact-NTK balancing.
 
 ## [0.2.0b2] - 2026-09-01
 
@@ -94,4 +98,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [0.1.0b1]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.1.0b1
 [0.2.0b1]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b1
 [0.2.0b2]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b2
-[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b2...HEAD
+[0.2.0b3]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b3
+[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b3...HEAD
