@@ -7,9 +7,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Added `to_hyperparameters()` for converting composed Hydra configs before passing them to `Trainer.fit()`.
+
 ### Breaking changes
 
 - Removed callback and logger `enabled` configuration options. Omit a service entry to disable it.
+- Removed `Trainer.set_logger()`. Construct loggers first and pass them through `Trainer(logger=...)` or
+  `instantiate_trainer(..., logger=...)`; `instantiate_loggers()` no longer accepts a Trainer.
+- Renamed the experiment logger method `log_hyperparameters()` to the Lightning-style `log_hyperparams()`.
+
+### Changed
+
+- Made CSV, TensorBoard, and W&B logger resource setup lazy, idempotent, and restricted to global rank zero during
+  Trainer tasks. Direct built-in logger use still starts resources automatically on first use.
 
 ## [0.2.0b1] - 2026-08-31
 

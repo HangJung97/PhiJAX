@@ -116,7 +116,7 @@ class _FitLoop:
                 trainer.load_callback_state_dict(trainer._pending_callback_states)
                 trainer._pending_callback_states = None
             if trainer.strategy.is_global_zero:
-                metrics_connector.logger.log_hyperparameters(dict(hyperparameters or {}))
+                metrics_connector.logger.log_hyperparams(dict(hyperparameters or {}))
             for callback in trainer.callbacks:
                 callback.on_fit_start(context)
             model_state = module.on_fit_start(state.model_state, module_context)

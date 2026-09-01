@@ -246,14 +246,6 @@ class Trainer:
         """
         return self._logger_connector.callback_metrics
 
-    def set_logger(self, logger: ExperimentLogger | Iterable[ExperimentLogger] | None) -> None:
-        """Replace configured experiment loggers before running a task.
-
-        Args:
-            logger: One logger, several loggers, or `None` to disable logging.
-        """
-        self._logger_connector.set_logger(logger)
-
     def callback_state_dict(self) -> dict[str, Mapping[str, Any]]:
         """Collect JSON-compatible persistent state from every callback.
 

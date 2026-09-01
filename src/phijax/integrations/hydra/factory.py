@@ -1,9 +1,9 @@
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, cast
 
 import optax
 from hydra.utils import instantiate
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from phijax.balancers import LossBalancer
 from phijax.callbacks import Callback
@@ -70,42 +70,44 @@ def instantiate_callbacks(config: DictConfig | None) -> tuple[Callback, ...]:
     return tuple(callbacks)
 
 
-def instantiate_trainer(config: DictConfig, callbacks: Sequence[Callback] = ()) -> Trainer:
-    """Instantiate a trainer with already constructed callbacks.
+def instantiate_trainer(
+    config: DictConfig,
+    callbacks: Sequence[Callback] = (),
+    logger: bool | ExperimentLogger | Sequence[ExperimentLogger] | None = False,
+) -> Trainer:
+    """Instantiate a trainer with already constructed host services.
 
     Args:
         config: Hydra-instantiable trainer configuration.
         callbacks: Ordered callback instances owned by the trainer.
+        logger: Default logger flag, one backend, several backends, or `None` to disable logging.
 
     Returns:
-        Instantiated trainer with an empty logger collection.
+        Instantiated trainer owning the configured callbacks and loggers.
 
     Raises:
         TypeError: If `config` does not instantiate :class:`Trainer`.
     """
-    trainer = instantiate(config, callbacks=tuple(callbacks), logger=False)
+    trainer = instantiate(config, callbacks=tuple(callbacks), logger=logger)
     if not isinstance(trainer, Trainer):
         raise TypeError("The `trainer` config must instantiate `Trainer`.")
     return trainer
 
 
-def instantiate_loggers(config: DictConfig | None, trainer: Trainer) -> LoggerCollection:
-    """Instantiate external loggers for the trainer's global process.
+def instantiate_loggers(config: DictConfig | None) -> LoggerCollection:
+    """Instantiate external loggers without acquiring their runtime resources.
 
     Args:
         config: Optional logger configuration mapping.
-        trainer: Trainer supplying distributed rank ownership.
 
     Returns:
-        Validated logger collection, empty on nonzero processes.
+        Validated logger collection in configuration order.
 
     Raises:
         TypeError: If an entry is invalid or does not instantiate :class:`ExperimentLogger`.
         ValueError: If an entry is null, lacks `_target_`, or uses `enabled`.
     """
     entries = _service_entries(config, "Logger")
-    if not trainer.strategy.is_global_zero:
-        return LoggerCollection()
     loggers: list[ExperimentLogger] = []
     for name, node in entries:
         logger = instantiate(node)
@@ -113,6 +115,28 @@ def instantiate_loggers(config: DictConfig | None, trainer: Trainer) -> LoggerCo
             raise TypeError(f"Logger `{name}` must instantiate `ExperimentLogger`.")
         loggers.append(logger)
     return LoggerCollection(loggers)
+
+
+def to_hyperparameters(config: DictConfig, *, resolve: bool = False) -> dict[str, Any]:
+    """Convert a composed Hydra config into logger-ready plain containers.
+
+    The Trainer owns the actual rank-safe logger call when the returned mapping is passed to
+    :meth:`phijax.Trainer.fit` or :meth:`phijax.Trainer.fit_state`.
+
+    Args:
+        config: Composed root Hydra configuration.
+        resolve: Whether to resolve OmegaConf interpolations before conversion.
+
+    Returns:
+        Plain nested mapping accepted by the Trainer's `hyperparameters` argument.
+
+    Raises:
+        TypeError: If `config` does not contain a mapping at its root.
+    """
+    parameters = OmegaConf.to_container(config, resolve=resolve)
+    if not isinstance(parameters, dict):
+        raise TypeError("The root hyperparameter configuration must be a mapping.")
+    return cast(dict[str, Any], parameters)
 
 
 def instantiate_objective(config: DictConfig) -> Objective:
@@ -248,9 +272,8 @@ def build_trainer(config: DictConfig) -> Trainer:
         Fully configured trainer.
     """
     callbacks = instantiate_callbacks(config.get("callbacks"))
-    trainer = instantiate_trainer(config.trainer, callbacks)
-    trainer.set_logger(instantiate_loggers(config.get("logger"), trainer))
-    return trainer
+    loggers = instantiate_loggers(config.get("logger"))
+    return instantiate_trainer(config.trainer, callbacks, logger=loggers)
 
 
 __all__ = [
@@ -264,4 +287,5 @@ __all__ = [
     "instantiate_objective",
     "instantiate_optimizer",
     "instantiate_trainer",
+    "to_hyperparameters",
 ]

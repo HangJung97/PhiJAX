@@ -17,7 +17,7 @@ Trainer.fit / Trainer.fit_state
 |
 +-- Callback.setup()                         declaration order
 +-- BasePhiModule.setup()
-+-- logger.log_hyperparameters(...)
++-- logger.log_hyperparams(...)
 +-- Callback.on_fit_start(context)
 |   +-- ModelCheckpoint opens its backend
 +-- BasePhiModule.on_fit_start(state, context) -> model_state

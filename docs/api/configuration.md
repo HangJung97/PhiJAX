@@ -56,6 +56,29 @@ field or leave a named entry set to `null`.
 
 ::: phijax.integrations.hydra.build_trainer
 
+Projects that need the individual construction steps can inject the already constructed services directly:
+
+```python
+from phijax.integrations.hydra import (
+    instantiate_callbacks,
+    instantiate_loggers,
+    instantiate_trainer,
+    to_hyperparameters,
+)
+
+callbacks = instantiate_callbacks(config.get("callbacks"))
+loggers = instantiate_loggers(config.get("logger"))
+trainer = instantiate_trainer(config.trainer, callbacks, logger=loggers)
+
+hyperparameters = to_hyperparameters(config)
+result = trainer.fit(module, datamodule=data, optimizer=optimizer, seed=seed, hyperparameters=hyperparameters)
+```
+
+Logger constructors do not acquire local or remote resources. The Trainer starts and closes them only on global rank
+zero when the task runs.
+
+::: phijax.integrations.hydra.to_hyperparameters
+
 ## OmegaConf resolvers
 
 Project entrypoints should register resolvers before Hydra composition:

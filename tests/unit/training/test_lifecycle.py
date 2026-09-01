@@ -111,7 +111,12 @@ class _LifecycleLogger(ExperimentLogger):
 
     def __init__(self) -> None:
         """Initialize an empty status list."""
+        self.setup_calls = 0
         self.statuses: list[str] = []
+
+    def setup(self) -> None:
+        """Record one resource setup call."""
+        self.setup_calls += 1
 
     def finalize(self, status: str) -> None:
         """Record one terminal status.
@@ -149,3 +154,18 @@ def test_task_lifecycle_preserves_lightning_order_and_idempotent_finalization() 
         "module:teardown",
     ]
     assert logger.statuses == ["failed"]
+    assert logger.setup_calls == 1
+
+
+def test_task_lifecycle_does_not_touch_logger_resources_outside_global_rank() -> None:
+    """Verify nonzero ranks retain logger presence without owning its resources."""
+    timeline: list[str] = []
+    logger = _LifecycleLogger()
+    lifecycle = TaskLifecycle((), _LifecycleModule(timeline), logger, is_global_zero=False)
+
+    lifecycle.setup()
+    lifecycle.finalize("success")
+    lifecycle.teardown()
+
+    assert logger.setup_calls == 0
+    assert logger.statuses == []

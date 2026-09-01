@@ -18,9 +18,15 @@ under names that describe its state-level contract.
 | `from phijax.module import PhiModule`                            | `from phijax import PhiModule`                                      |
 | `from phijax.module import BasePhiModule`                        | `from phijax.core import BasePhiModule`                             |
 | `from phijax.training.trainer import FitResult`                  | `from phijax.training import FitResult`                             |
+| `trainer.set_logger(instantiate_loggers(cfg.logger, trainer))`   | `instantiate_trainer(cfg.trainer, callbacks, logger=loggers)`       |
 
 Top-level imports are the recommended application API. PhiJAX 0.2 removes the old `phijax.module` path; custom module
 implementations that need a deep import should use `phijax.core`.
+
+Configured loggers are now constructed before the Trainer and passed to its constructor. `instantiate_loggers()` no
+longer accepts a Trainer, and `Trainer.set_logger()` has been removed. Built-in logger resources start lazily when the
+Trainer begins a task. Use `to_hyperparameters(cfg)` when a Hydra project wants to pass its composed configuration to
+`Trainer.fit(..., hyperparameters=...)`.
 
 ## Lazy model initialization
 
