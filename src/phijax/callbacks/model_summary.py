@@ -6,16 +6,7 @@ log = logging.getLogger(__name__)
 
 
 class ModelSummary(Callback):
-    """Print a network summary at fit start using the module's configured summary provider.
-
-    Attributes:
-        max_depth: Maximum displayed module depth, or `-1` for every level.
-        console_width: Rich console width in characters.
-        compute_flops: Whether to estimate forward-pass floating-point operations.
-        compute_vjp_flops: Whether to estimate reverse-pass floating-point operations.
-        rank_zero_only: Whether to suppress output outside global rank zero.
-        warn_if_unavailable: Whether to warn when the module has no summary provider.
-    """
+    """Print a network summary at fit start using the module's configured summary provider."""
 
     def __init__(
         self,

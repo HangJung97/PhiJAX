@@ -31,6 +31,7 @@ theme:
 plugins:
   - search
   - mkdocstrings:
+      custom_templates: docs_templates
       handlers:
         python:
           paths: [src]
@@ -47,6 +48,9 @@ plugins:
             show_source: false
             show_symbol_type_heading: true
             show_symbol_type_toc: true
+            extra:
+              source_repository: https://github.com/HangJung97/PhiJAX
+              source_ref: main
 
 markdown_extensions:
   - admonition
@@ -68,6 +72,9 @@ extra_javascript:
   - javascripts/shortcuts.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
+extra_css:
+  - stylesheets/api-reference.css
+
 nav:
   - Home: index.md
   - Getting started:
@@ -78,10 +85,12 @@ nav:
   - Guides:
       - Build and train:
           - Training and prediction: guides/training.md
+          - Custom models: guides/models.md
           - Datasets: guides/datasets.md
           - Equations and objectives: guides/objectives.md
           - Loss balancers: guides/balancers.md
       - Run and debug:
+          - Logging and monitoring: guides/logging.md
           - Randomness and reproducibility: guides/reproducibility.md
           - Troubleshooting: guides/troubleshooting.md
   - API reference:

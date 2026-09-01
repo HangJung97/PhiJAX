@@ -10,68 +10,9 @@ PhiJAX includes Flax NNX models, but equations and objectives only need a pure, 
 
 ## Custom NNX architectures
 
-`initialize_nnx_model` adapts any initialized Flax NNX module to :class:`phijax.models.InitializedModel`. Users only
-define the architecture and an application-level factory that supplies its explicit initialization key:
-
-```python
-import jax
-import jax.numpy as jnp
-from flax import nnx
-
-from phijax.models import InitializedModel, initialize_nnx_model
-from phijax.training import PrecisionPolicy
-
-
-class CoordinateNetwork(nnx.Module):
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        *,
-        compute_dtype: object = jnp.float32,
-        parameter_dtype: object = jnp.float32,
-        output_dtype: object = jnp.float32,
-        rngs: nnx.Rngs,
-    ) -> None:
-        self.output_dtype = output_dtype
-        self.output = nnx.Linear(
-            input_dim,
-            output_dim,
-            dtype=compute_dtype,
-            param_dtype=parameter_dtype,
-            rngs=rngs,
-        )
-
-    def __call__(self, inputs: jax.Array) -> jax.Array:
-        return self.output(inputs).astype(self.output_dtype)
-
-
-def build_coordinate_network(
-    input_dim: int,
-    output_dim: int,
-    *,
-    key: jax.Array,
-    input_mean: jax.typing.ArrayLike | None,
-    input_std: jax.typing.ArrayLike | None,
-    precision: str | PrecisionPolicy,
-    **model_kwargs: object,
-) -> InitializedModel:
-    del input_mean, input_std
-    policy = PrecisionPolicy.from_name(precision)
-    resolved_kwargs = policy.apply_model_dtype_defaults(model_kwargs)
-    model = CoordinateNetwork(input_dim, output_dim, rngs=nnx.Rngs(params=key), **resolved_kwargs)
-    return initialize_nnx_model(
-        model,
-        example_inputs=jnp.zeros((1, input_dim), dtype=policy.derivative_dtype),
-    )
-```
-
-Bind application architecture values with `functools.partial`; the Trainer supplies `key`, `input_mean`, `input_std`,
-and `precision` by keyword. A factory may ignore optional statistics when its architecture does not normalize inputs.
-The returned application merges the static graph with explicit state on each call. It works with JAX transformations
-and PhiJAX equations without a base architecture or registry. `apply_model_dtype_defaults()` is optional. Use it when
-the custom constructor accepts `parameter_dtype`, `compute_dtype`, and `output_dtype`. Values in `model_kwargs`
-override the selected policy.
+`initialize_nnx_model` adapts an initialized Flax NNX module to `InitializedModel`. The application factory supplies
+the explicit key, normalization statistics, and precision policy expected by the Trainer. See
+[Build a custom model](../guides/models.md) for a complete factory example and a non-NNX checklist.
 
 ::: phijax.models.initialize_nnx_model
 

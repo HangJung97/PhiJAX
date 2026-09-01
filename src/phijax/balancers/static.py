@@ -10,7 +10,6 @@ class StaticLossBalancer:
     """Apply immutable scalar weights to a fixed sequence of loss names.
 
     Attributes:
-        loss_names: Stable names defining component and weight ordering.
         initial_weights: Configured `float32` weight vector.
     """
 

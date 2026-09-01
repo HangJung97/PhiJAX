@@ -2,14 +2,7 @@ from phijax.callbacks.base import Callback, MonitorMode, TrainerContext
 
 
 class EarlyStopping(Callback):
-    """Stop training when a monitored scalar metric ceases to improve.
-
-    Attributes:
-        monitor: Metric name inspected after each training batch.
-        patience: Number of non-improving observations tolerated.
-        mode: Whether lower (`min`) or higher (`max`) values improve the metric.
-        min_delta: Required absolute change to count as an improvement.
-    """
+    """Stop training when a monitored scalar metric ceases to improve."""
 
     def __init__(
         self,

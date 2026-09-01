@@ -22,8 +22,6 @@ class PirateBlock(nnx.Module):
     Attributes:
         layers: Three hidden-width dense layers.
         alpha: Trainable scalar controlling the block's nonlinear contribution.
-        activation: Point-wise activation applied after every dense layer.
-        compute_dtype: Data type used for block arithmetic.
     """
 
     def __init__(
@@ -107,10 +105,6 @@ class PirateNet(nnx.Module):
     every block an exact identity map at initialization before progressively learning a nonlinear contribution.
 
     Attributes:
-        input_dim: Width of the physical input coordinate vector.
-        output_dim: Width of the predicted output vector.
-        output_names: Optional unique name for each scalar output.
-        input_norm: Whether explicit input statistics are applied.
         periodic_embedding: Optional fixed periodic coordinate mapping.
         embedding: Optional random Fourier feature mapping.
         gate_u: Dense layer producing the first shallow latent gate.

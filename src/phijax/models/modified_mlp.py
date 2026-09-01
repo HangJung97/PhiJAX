@@ -22,10 +22,6 @@ class ModifiedMLP(nnx.Module):
     then interpolates between these encodings using its activated output, improving gradient flow through deep PINNs.
 
     Attributes:
-        input_dim: Width of the physical input coordinate vector.
-        output_dim: Width of the predicted output vector.
-        output_names: Optional unique name for each scalar output.
-        input_norm: Whether explicit input statistics are applied.
         periodic_embedding: Optional fixed periodic coordinate mapping.
         embedding: Optional random Fourier feature mapping.
         gate_u: Dense layer producing the first shallow latent encoding.

@@ -44,16 +44,7 @@ def _immutable_mapping(values: Mapping[str, Any] | None) -> Mapping[str, Any]:
 
 @dataclass(frozen=True, init=False)
 class HostPool:
-    """Represent one immutable host-side subset with stable row ordering.
-
-    Attributes:
-        inputs: Rank-two coordinate array with shape `[samples, input_features]`.
-        targets: Rank-two target array with shape `[samples, target_features]`; unsupervised pools may use zero width.
-        aux: Read-only mapping of sample-wise auxiliary arrays such as periods, weights, and normals.
-        metadata: Read-only mapping of structural or reconstruction metadata.
-        reference_shape: Original dense grid shape used to reconstruct flat predictions.
-        flat_index: Indices mapping pool rows back to the flattened reference grid.
-    """
+    """Represent one immutable host-side subset with stable row ordering."""
 
     inputs: NDArray[Any]
     targets: NDArray[Any]

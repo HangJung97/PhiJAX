@@ -4,8 +4,10 @@ This guide explains the normal training workflow and when to use the explicit st
 
 ## Run the common workflow
 
-Create a module blueprint, DataModule, Optax optimizer, and Trainer. The Trainer binds the model after the DataModule
-has prepared its input statistics.
+Create a [`PhiModule`](../api/module.md#phijax.core.PhiModule) blueprint,
+[`PhiDataModule`](../api/data.md#phijax.data.PhiDataModule), Optax optimizer, and
+[`Trainer`](../api/trainer.md#phijax.training.Trainer). The Trainer binds the model after the DataModule has prepared its input
+statistics.
 
 ```python
 trainer = Trainer(max_steps=10_000, accelerator="auto")
@@ -19,7 +21,7 @@ result = trainer.fit(
 predictions = trainer.predict(result, datamodule=data_module)
 ```
 
-`fit()` performs the following work:
+[`Trainer.fit()`](../api/trainer.md#phijax.training.Trainer.fit) performs the following work:
 
 1. Set up the DataModule and read its input statistics.
 2. Initialize and bind the model factory.
@@ -29,13 +31,13 @@ predictions = trainer.predict(result, datamodule=data_module)
 6. Initialize or restore `TrainState`.
 7. Run host-side sampling around one JIT-compiled update per step.
 
-The original module blueprint is unchanged. Use `result.module` for the bound module and `result.state` for the final
-functional state.
+The original module blueprint is unchanged. The returned [`FitResult`](../api/training.md#phijax.training.FitResult) provides the bound
+module through `result.module` and final functional state through `result.state`.
 
 ## Choose a loss balancer
 
-Pass a static or adaptive balancer directly to `fit()`. Adaptive balancers own their update interval and diagnostic
-sampling settings.
+Pass a static or adaptive [`LossBalancer`](../api/balancers.md#phijax.balancers.LossBalancer) directly to `fit()`. Adaptive balancers own
+their update interval and diagnostic sampling settings.
 
 ```python
 from phijax.balancers import GradNormBalancer
@@ -75,8 +77,11 @@ state. Complete restoration resumes the deterministic sampling sequence.
 
 ## Use the explicit state API
 
-Use `fit_state()` when an application supplies a bound `BasePhiModule`, explicit `TrainState`, custom `TrainingPlan`,
-or custom batch source. Use `predict_state()` when restoring into an explicit state template.
+Use [`Trainer.fit_state()`](../api/trainer.md#phijax.training.Trainer.fit_state) when an application supplies a bound
+[`BasePhiModule`](../api/module.md#phijax.core.BasePhiModule), explicit
+[`TrainState`](../api/training.md#phijax.training.TrainState), custom
+[`TrainingPlan`](../api/training.md#phijax.training.TrainingPlan), or custom batch source. Use
+[`Trainer.predict_state()`](../api/trainer.md#phijax.training.Trainer.predict_state) when restoring into an explicit state template.
 
 ```python
 result = trainer.fit_state(
@@ -110,7 +115,7 @@ an intentional synchronization at that callback's cadence.
 
 ## Report extra diagnostics
 
-Return `TrainingOutput` when the compiled objective already has useful fixed-shape diagnostics.
+Return [`TrainingOutput`](../api/training.md#phijax.TrainingOutput) when the compiled objective already has useful fixed-shape diagnostics.
 
 ```python
 return TrainingOutput(
@@ -131,8 +136,10 @@ calculations in a separate compiled evaluator at the required cadence.
 After `Ctrl+C`, `fit()` returns the last completed state with `result.interrupted=True`. The caller may then predict.
 `SIGTERM` runs exception hooks and cleanup before exiting with the standard signal status.
 
-Prediction is skipped when `predict_batch_source()` returns `None`. PhiJAX does not impose a generic validation loop;
-use prediction and the evaluation APIs for application-specific reference grids, measurements, or physical checks.
+Prediction is skipped when
+[`predict_batch_source()`](../api/data.md#phijax.data.PhiDataModule.predict_batch_source) returns `None`.
+PhiJAX does not impose a generic validation loop; use prediction and the evaluation APIs for application-specific
+reference grids, measurements, or physical checks.
 
 ## Next steps
 

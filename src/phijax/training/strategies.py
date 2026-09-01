@@ -15,7 +15,6 @@ class Strategy:
     """Define device placement operations used by the host-side trainer.
 
     Attributes:
-        devices: Ordered devices participating in training.
         process_index: Global JAX process index.
         is_global_zero: Whether this process owns rank-zero logging side effects.
     """

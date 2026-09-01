@@ -13,12 +13,7 @@ class PredictionWriter(Callback):
     configured output scales so NPZ and optional MATLAB values share physical units.
 
     Attributes:
-        output_dir: Resolved directory receiving prediction artifacts.
-        save_file_name: Suffix-free artifact filename stem within :attr:`output_dir`.
         output_path: Resolved canonical NPZ destination.
-        save_mat: Whether a MATLAB sidecar is enabled.
-        mat_field_names: Generic-to-MATLAB variable-name mapping.
-        rank_zero_only: Whether writing is restricted to global rank zero.
         artifact_path: Saved canonical path after successful prediction, otherwise `None`.
     """
 

@@ -86,11 +86,7 @@ class ExperimentLogger:
 
 
 class LoggerCollection(ExperimentLogger):
-    """Fan each logging operation out to multiple independent backends.
-
-    Attributes:
-        loggers: Ordered tuple of configured logging backends.
-    """
+    """Fan each logging operation out to multiple independent backends."""
 
     def __init__(self, loggers: Iterable[ExperimentLogger] = ()) -> None:
         """Initialize a logger fan-out collection.

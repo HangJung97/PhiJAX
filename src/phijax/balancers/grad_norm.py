@@ -58,12 +58,7 @@ class GradNormBalancer:
     networks.
 
     Attributes:
-        loss_names: Stable loss and gradient-norm ordering.
-        update_every_n_steps: Positive optimizer-step interval between weight updates.
-        update_start_step: Absolute optimizer step of the first weight update.
-        eps: Nonnegative relative denominator regularizer.
         momentum: Moving-average coefficient applied to previous weights.
-        initial_weights: Initial `float32` weight vector.
     """
 
     def __init__(

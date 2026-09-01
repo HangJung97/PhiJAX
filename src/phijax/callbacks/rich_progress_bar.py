@@ -157,16 +157,6 @@ class RichProgressBar(ProgressBar):
     The batch counter advances without transferring device metrics to the host. Selected metric values are copied only
     on the first batch, every `refresh_rate` batches, and at fit completion. This keeps the progress display useful
     without introducing a device synchronization on every accelerator update.
-
-    Attributes:
-        total: Number of batches expected in one fit call.
-        refresh_rate: Number of batches between metric-value refreshes.
-        metric_names: Optional ordered override. `None` displays metrics selected by module calls to `self.log()`.
-        description: Label displayed before the progress bar.
-        predict_description: Label displayed during prediction.
-        transient: Whether Rich removes the progress display after completion.
-        rank_zero_only: Whether only JAX process zero renders the display.
-        theme: Lightning-style colors and scalar formatting.
     """
 
     def __init__(

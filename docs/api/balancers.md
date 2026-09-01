@@ -39,6 +39,8 @@ on every optimizer step.
 
 ::: phijax.balancers.BalancerUpdatePlan
 
+::: phijax.balancers.LossBalancer
+
 ::: phijax.balancers.AdaptiveBalancer
 
 ## Static weighting

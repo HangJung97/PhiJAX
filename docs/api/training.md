@@ -1,8 +1,9 @@
 # Training state and plans
 
-This page documents the explicit state and compiled-step contracts. Most applications can use `Trainer.fit()` and do
-not need to construct these objects directly. See the [training guide](../guides/training.md) for the common workflow
-and the [Trainer reference](trainer.md) for runtime options.
+This page documents the explicit state and compiled-step contracts. Most applications can use
+[`Trainer.fit()`](trainer.md#phijax.training.Trainer.fit) and do not need to construct these objects directly. See the
+[training guide](../guides/training.md) for the common workflow and the [Trainer reference](trainer.md) for runtime
+options.
 
 ## State
 
@@ -37,7 +38,3 @@ loss balancer, and optional adaptive-balancer update. These contracts power `Tra
 diagnostics are logged by default. Array diagnostics remain available to callbacks and are never reduced implicitly.
 
 ::: phijax.TrainingOutput
-
-Source files: [state.py](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/state.py),
-[steps.py](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/steps.py), and
-[plans.py](https://github.com/HangJung97/PhiJAX/blob/main/src/phijax/training/plans.py).

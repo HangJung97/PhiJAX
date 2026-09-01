@@ -18,6 +18,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   default.
 - Reorganized the documentation into task-oriented guides and focused API pages for the Trainer, state, precision,
   and device strategies.
+- Added custom-model and logging guides, cross-referenced public APIs, and checks for navigable pages, valid local
+  links, and non-duplicated class documentation.
+- Added configurable source links to generated class, function, and method references without embedding full source
+  listings. Documentation built from `main` links to source available on GitHub.
 
 ## [0.2.0b3] - 2026-09-01
 

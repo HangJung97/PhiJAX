@@ -18,7 +18,6 @@ class CompositeObjective:
     stable Hydra override paths, while each value may produce one or more scalar losses and raw residual streams.
 
     Attributes:
-        terms: Ordered objective terms keyed by stable configuration names.
         loss_names: Flattened stable loss-name ordering across every term.
         batch_keys: Required DataModule batch names in first-declaration order.
     """

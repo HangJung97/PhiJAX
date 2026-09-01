@@ -79,11 +79,7 @@ def _checkpoint_metadata(
 
 
 class OrbaxCheckpointIO:
-    """Manage lazily opened asynchronous full-state checkpoints with Orbax.
-
-    Attributes:
-        directory: Absolute checkpoint-root directory.
-    """
+    """Manage lazily opened asynchronous full-state checkpoints with Orbax."""
 
     def __init__(
         self,
