@@ -20,7 +20,7 @@ def polar_navier_stokes(
     radius_epsilon: float = 1.0e-12,
     stream: ResidualStream = "residual",
 ) -> ResidualGroups:
-    """Evaluate grouped polar Navier--Stokes equation residuals.
+    r"""Evaluate grouped polar Navier--Stokes equation residuals.
 
     The coordinate order is `[r, th, t]`, and model outputs are `[u_r, u_th, p]`. The returned groups represent
     continuity, radial momentum, and angular momentum. All reciprocal-radius terms use `max(r, radius_epsilon)`. A zero
@@ -29,9 +29,62 @@ def polar_navier_stokes(
     computes only pure radial and angular second derivatives of velocity, excluding unused mixed and pressure Hessian
     entries.
 
-    With scalar polar Laplacian `L(f) = d2f/dr2 + (1 / r) df/dr + (1 / r**2) d2f/dth2`, the viscous velocity terms are
-    `L(u_r) - u_r / r**2 - (2 / r**2) du_th/dth` and
-    `L(u_th) - u_th / r**2 + (2 / r**2) du_r/dth`.
+    With $c_p$ equal to `pressure_coefficient`, define the continuity and nonviscous momentum terms as
+
+    $$
+    \begin{aligned}
+    C
+        &= \frac{\partial u_r}{\partial r}
+        + \frac{u_r}{r}
+        + \frac{1}{r}\frac{\partial u_\theta}{\partial \theta}, \\
+    F_r
+        &= \frac{\partial u_r}{\partial t}
+        + u_r\frac{\partial u_r}{\partial r}
+        + \frac{u_\theta}{r}\frac{\partial u_r}{\partial \theta}
+        - \frac{u_\theta^2}{r}
+        + c_p\frac{\partial p}{\partial r}, \\
+    F_\theta
+        &= \frac{\partial u_\theta}{\partial t}
+        + u_r\frac{\partial u_\theta}{\partial r}
+        + \frac{u_\theta}{r}\frac{\partial u_\theta}{\partial \theta}
+        + \frac{u_ru_\theta}{r}
+        + \frac{c_p}{r}\frac{\partial p}{\partial \theta}.
+    \end{aligned}
+    $$
+
+    Define the scalar polar Laplacian as
+
+    $$
+    \mathcal{L}(f)
+    = \frac{\partial^2 f}{\partial r^2}
+    + \frac{1}{r}\frac{\partial f}{\partial r}
+    + \frac{1}{r^2}\frac{\partial^2 f}{\partial \theta^2}.
+    $$
+
+    The viscous velocity terms are
+
+    $$
+    \begin{aligned}
+    (\nabla^2\mathbf{u})_r
+        &= \mathcal{L}(u_r)
+        - \frac{u_r}{r^2}
+        - \frac{2}{r^2}\frac{\partial u_\theta}{\partial \theta}, \\
+    (\nabla^2\mathbf{u})_\theta
+        &= \mathcal{L}(u_\theta)
+        - \frac{u_\theta}{r^2}
+        + \frac{2}{r^2}\frac{\partial u_r}{\partial \theta}.
+    \end{aligned}
+    $$
+
+    With $c_\nu$ equal to `viscosity_coefficient`, the returned residuals are
+
+    $$
+    R_c = C,
+    \qquad
+    R_r = F_r - c_\nu(\nabla^2\mathbf{u})_r,
+    \qquad
+    R_\theta = F_\theta - c_\nu(\nabla^2\mathbf{u})_\theta.
+    $$
 
     Args:
         model_apply: Pure callable mapping `(model_state, point)` to `[u_r, u_th, p]`.

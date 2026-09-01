@@ -110,17 +110,33 @@ def cartesian_2d_navier_stokes(
     viscosity_coefficient: float = 0.0,
     stream: ResidualStream = "residual",
 ) -> ResidualGroups:
-    """Evaluate grouped incompressible Navier--Stokes residuals in two Cartesian dimensions.
+    r"""Evaluate grouped incompressible Navier--Stokes residuals in two Cartesian dimensions.
 
     The coordinate order is `[x, y, t]`, model outputs are `[u_x, u_y, p]`, and the returned groups represent
     continuity, x momentum, and y momentum. With `c_p=pressure_coefficient` and `c_nu=viscosity_coefficient`, the
-    residuals are:
+    residuals are
 
-    - continuity: `du_x/dx + du_y/dy`;
-    - x momentum: `du_x/dt + u_x du_x/dx + u_y du_x/dy + c_p dp/dx
-      - c_nu (d2u_x/dx2 + d2u_x/dy2)`; and
-    - y momentum: `du_y/dt + u_x du_y/dx + u_y du_y/dy + c_p dp/dy
-      - c_nu (d2u_y/dx2 + d2u_y/dy2)`.
+    $$
+    \begin{aligned}
+    R_c &= \frac{\partial u_x}{\partial x} + \frac{\partial u_y}{\partial y}, \\
+    R_x &= \frac{\partial u_x}{\partial t}
+        + u_x\frac{\partial u_x}{\partial x}
+        + u_y\frac{\partial u_x}{\partial y}
+        + c_p\frac{\partial p}{\partial x}
+        - c_\nu\left(
+            \frac{\partial^2 u_x}{\partial x^2}
+            + \frac{\partial^2 u_x}{\partial y^2}
+        \right), \\
+    R_y &= \frac{\partial u_y}{\partial t}
+        + u_x\frac{\partial u_y}{\partial x}
+        + u_y\frac{\partial u_y}{\partial y}
+        + c_p\frac{\partial p}{\partial y}
+        - c_\nu\left(
+            \frac{\partial^2 u_y}{\partial x^2}
+            + \frac{\partial^2 u_y}{\partial y^2}
+        \right).
+    \end{aligned}
+    $$
 
     A zero `viscosity_coefficient` selects the inviscid path and avoids tracing second derivatives.
 
@@ -166,19 +182,40 @@ def cartesian_3d_navier_stokes(
     viscosity_coefficient: float = 0.0,
     stream: ResidualStream = "residual",
 ) -> ResidualGroups:
-    """Evaluate grouped incompressible Navier--Stokes residuals in three Cartesian dimensions.
+    r"""Evaluate grouped incompressible Navier--Stokes residuals in three Cartesian dimensions.
 
     The coordinate order is `[x, y, z, t]`, model outputs are `[u_x, u_y, u_z, p]`, and the returned groups represent
     continuity and the x, y, and z momentum equations. With `c_p=pressure_coefficient` and
-    `c_nu=viscosity_coefficient`, the residuals are:
+    `c_nu=viscosity_coefficient`, the residuals are
 
-    - continuity: `du_x/dx + du_y/dy + du_z/dz`;
-    - x momentum: `du_x/dt + u_x du_x/dx + u_y du_x/dy + u_z du_x/dz + c_p dp/dx
-      - c_nu (d2u_x/dx2 + d2u_x/dy2 + d2u_x/dz2)`;
-    - y momentum: `du_y/dt + u_x du_y/dx + u_y du_y/dy + u_z du_y/dz + c_p dp/dy
-      - c_nu (d2u_y/dx2 + d2u_y/dy2 + d2u_y/dz2)`; and
-    - z momentum: `du_z/dt + u_x du_z/dx + u_y du_z/dy + u_z du_z/dz + c_p dp/dz
-      - c_nu (d2u_z/dx2 + d2u_z/dy2 + d2u_z/dz2)`.
+    $$
+    \begin{aligned}
+    R_c &= \frac{\partial u_x}{\partial x}
+        + \frac{\partial u_y}{\partial y}
+        + \frac{\partial u_z}{\partial z}, \\
+    R_x &= \frac{\partial u_x}{\partial t}
+        + u_x\frac{\partial u_x}{\partial x}
+        + u_y\frac{\partial u_x}{\partial y}
+        + u_z\frac{\partial u_x}{\partial z}
+        + c_p\frac{\partial p}{\partial x}
+        - c_\nu\nabla^2u_x, \\
+    R_y &= \frac{\partial u_y}{\partial t}
+        + u_x\frac{\partial u_y}{\partial x}
+        + u_y\frac{\partial u_y}{\partial y}
+        + u_z\frac{\partial u_y}{\partial z}
+        + c_p\frac{\partial p}{\partial y}
+        - c_\nu\nabla^2u_y, \\
+    R_z &= \frac{\partial u_z}{\partial t}
+        + u_x\frac{\partial u_z}{\partial x}
+        + u_y\frac{\partial u_z}{\partial y}
+        + u_z\frac{\partial u_z}{\partial z}
+        + c_p\frac{\partial p}{\partial z}
+        - c_\nu\nabla^2u_z,
+    \end{aligned}
+    $$
+
+    where $\nabla^2u_i = \partial^2u_i/\partial x^2 + \partial^2u_i/\partial y^2
+    + \partial^2u_i/\partial z^2$.
 
     A zero `viscosity_coefficient` selects the inviscid path and avoids tracing second derivatives.
 

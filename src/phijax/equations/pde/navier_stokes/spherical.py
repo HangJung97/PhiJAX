@@ -21,23 +21,100 @@ def spherical_navier_stokes(
     sine_epsilon: float = 1.0e-12,
     stream: ResidualStream = "residual",
 ) -> ResidualGroups:
-    """Evaluate grouped weighted spherical Navier--Stokes residuals.
+    r"""Evaluate grouped weighted spherical Navier--Stokes residuals.
 
     The coordinate order is `[r, th, phi, t]`, model outputs are `[u_r, u_th, u_phi, p]`, and the returned groups
     represent continuity and radial, polar, and azimuthal momentum. Every physical residual is multiplied by
     `r sin(th)`. Away from the spherical axis this preserves its zero set, while removing reciprocal-sine factors from
     the inviscid equations and reducing their influence near the coordinate singularity.
 
-    With scalar spherical Laplacian
-    `L(f) = d2f/dr2 + (2 / r) df/dr + (1 / r**2) (d2f/dth2 + cot(th) df/dth
-    + d2f/dphi2 / sin(th)**2)`, the unweighted viscous velocity terms are:
+    With $c_p$ equal to `pressure_coefficient`, define the unweighted continuity and nonviscous momentum terms as
 
-    - radial: `L(u_r) - 2 u_r/r**2 - (2 / r**2) (du_th/dth + cot(th) u_th)
-      - 2 du_phi/dphi/(r**2 sin(th))`;
-    - polar: `L(u_th) + 2 du_r/dth/r**2 - u_th/(r**2 sin(th)**2)
-      - 2 cos(th) du_phi/dphi/(r**2 sin(th)**2)`; and
-    - azimuthal: `L(u_phi) + 2 du_r/dphi/(r**2 sin(th))
-      + 2 cos(th) du_th/dphi/(r**2 sin(th)**2) - u_phi/(r**2 sin(th)**2)`.
+    $$
+    \begin{aligned}
+    C
+        &= \frac{\partial u_r}{\partial r}
+        + \frac{2u_r}{r}
+        + \frac{1}{r}\frac{\partial u_\theta}{\partial \theta}
+        + \frac{u_\theta\cot\theta}{r}
+        + \frac{1}{r\sin\theta}\frac{\partial u_\phi}{\partial \phi}, \\
+    F_r
+        &= \frac{\partial u_r}{\partial t}
+        + u_r\frac{\partial u_r}{\partial r}
+        + \frac{u_\theta}{r}\frac{\partial u_r}{\partial \theta}
+        + \frac{u_\phi}{r\sin\theta}\frac{\partial u_r}{\partial \phi}
+        - \frac{u_\theta^2 + u_\phi^2}{r}
+        + c_p\frac{\partial p}{\partial r}, \\
+    F_\theta
+        &= \frac{\partial u_\theta}{\partial t}
+        + u_r\frac{\partial u_\theta}{\partial r}
+        + \frac{u_\theta}{r}\frac{\partial u_\theta}{\partial \theta}
+        + \frac{u_\phi}{r\sin\theta}\frac{\partial u_\theta}{\partial \phi}
+        + \frac{u_ru_\theta}{r}
+        - \frac{u_\phi^2\cot\theta}{r}
+        + \frac{c_p}{r}\frac{\partial p}{\partial \theta}, \\
+    F_\phi
+        &= \frac{\partial u_\phi}{\partial t}
+        + u_r\frac{\partial u_\phi}{\partial r}
+        + \frac{u_\theta}{r}\frac{\partial u_\phi}{\partial \theta}
+        + \frac{u_\phi}{r\sin\theta}\frac{\partial u_\phi}{\partial \phi}
+        + \frac{u_ru_\phi}{r}
+        + \frac{u_\theta u_\phi\cot\theta}{r}
+        + \frac{c_p}{r\sin\theta}\frac{\partial p}{\partial \phi}.
+    \end{aligned}
+    $$
+
+    Define the scalar spherical Laplacian as
+
+    $$
+    \mathcal{L}(f)
+    = \frac{\partial^2 f}{\partial r^2}
+    + \frac{2}{r}\frac{\partial f}{\partial r}
+    + \frac{1}{r^2}\left(
+        \frac{\partial^2 f}{\partial \theta^2}
+        + \cot\theta\frac{\partial f}{\partial \theta}
+        + \frac{1}{\sin^2\theta}\frac{\partial^2 f}{\partial \phi^2}
+    \right).
+    $$
+
+    The unweighted viscous velocity terms are
+
+    $$
+    \begin{aligned}
+    (\nabla^2\mathbf{u})_r
+        &= \mathcal{L}(u_r)
+        - \frac{2u_r}{r^2}
+        - \frac{2}{r^2}\left(
+            \frac{\partial u_\theta}{\partial \theta}
+            + u_\theta\cot\theta
+        \right)
+        - \frac{2}{r^2\sin\theta}\frac{\partial u_\phi}{\partial \phi}, \\
+    (\nabla^2\mathbf{u})_\theta
+        &= \mathcal{L}(u_\theta)
+        + \frac{2}{r^2}\frac{\partial u_r}{\partial \theta}
+        - \frac{u_\theta}{r^2\sin^2\theta}
+        - \frac{2\cos\theta}{r^2\sin^2\theta}
+            \frac{\partial u_\phi}{\partial \phi}, \\
+    (\nabla^2\mathbf{u})_\phi
+        &= \mathcal{L}(u_\phi)
+        + \frac{2}{r^2\sin\theta}\frac{\partial u_r}{\partial \phi}
+        + \frac{2\cos\theta}{r^2\sin^2\theta}
+            \frac{\partial u_\theta}{\partial \phi}
+        - \frac{u_\phi}{r^2\sin^2\theta}.
+    \end{aligned}
+    $$
+
+    With $c_\nu$ equal to `viscosity_coefficient`, the returned weighted residuals are
+
+    $$
+    R_c = r\sin\theta\,C,
+    \qquad
+    R_r = r\sin\theta\left[F_r - c_\nu(\nabla^2\mathbf{u})_r\right],
+    \qquad
+    R_\theta = r\sin\theta\left[F_\theta - c_\nu(\nabla^2\mathbf{u})_\theta\right],
+    \qquad
+    R_\phi = r\sin\theta\left[F_\phi - c_\nu(\nabla^2\mathbf{u})_\phi\right].
+    $$
 
     A zero `viscosity_coefficient` selects the inviscid path and avoids tracing all second derivatives.
 

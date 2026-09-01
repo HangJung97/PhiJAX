@@ -27,6 +27,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   under Core and lifecycle services under Extensions.
 - Split model and callback references into focused category pages, consolidated checkpoint callback documentation,
   and grouped logger backends without duplicating generated API entries.
+- Rendered the complete Burgers and Cartesian, polar, and spherical Navier--Stokes residual equations in LaTeX,
+  including pressure and viscosity coefficients and spherical residual weighting.
 
 ## [0.2.0b3] - 2026-09-01
 
