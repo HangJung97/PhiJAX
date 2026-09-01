@@ -76,26 +76,35 @@ nav:
       - Core concepts: getting-started/concepts.md
       - Migrating from 0.1: getting-started/migration-0.2.md
   - Guides:
-      - Datasets: guides/datasets.md
-      - Equations and objectives: guides/objectives.md
-      - Loss balancers: guides/balancers.md
-      - Randomness and reproducibility: guides/reproducibility.md
-      - Troubleshooting: guides/troubleshooting.md
+      - Build and train:
+          - Training and prediction: guides/training.md
+          - Datasets: guides/datasets.md
+          - Equations and objectives: guides/objectives.md
+          - Loss balancers: guides/balancers.md
+      - Run and debug:
+          - Randomness and reproducibility: guides/reproducibility.md
+          - Troubleshooting: guides/troubleshooting.md
   - API reference:
       - Overview: api/index.md
-      - API map: api-reference.md
-      - PhiModule: api/module.md
-      - Hooks and lifecycle: api/hooks.md
-      - Data: api/data.md
-      - Models: api/models.md
-      - Derivatives: api/derivatives.md
-      - Equations: api/equations.md
-      - Objectives: api/objectives.md
-      - Loss balancers: api/balancers.md
-      - Trainer and state: api/training.md
-      - Callbacks: api/callbacks.md
-      - Checkpointing: api/checkpointing.md
-      - Loggers: api/loggers.md
-      - Evaluation: api/evaluation.md
-      - Configuration: api/configuration.md
-      - Utilities: api/utilities.md
+      - Core:
+          - PhiModule: api/module.md
+          - Hooks and lifecycle: api/hooks.md
+          - Models: api/models.md
+          - Data: api/data.md
+      - Training runtime:
+          - Trainer: api/trainer.md
+          - State and plans: api/training.md
+          - Precision: api/precision.md
+          - Device strategies: api/strategies.md
+          - Callbacks: api/callbacks.md
+          - Checkpointing: api/checkpointing.md
+          - Loggers: api/loggers.md
+      - Physics and optimization:
+          - Derivatives: api/derivatives.md
+          - Equations: api/equations.md
+          - Objectives: api/objectives.md
+          - Loss balancers: api/balancers.md
+      - Supporting APIs:
+          - Evaluation: api/evaluation.md
+          - Configuration: api/configuration.md
+          - Utilities: api/utilities.md

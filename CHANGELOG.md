@@ -16,6 +16,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Clarified generated API signatures and option tables, and hid full implementation source from reference pages by
   default.
+- Reorganized the documentation into task-oriented guides and focused API pages for the Trainer, state, precision,
+  and device strategies.
 
 ## [0.2.0b3] - 2026-09-01
 

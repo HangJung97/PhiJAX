@@ -135,5 +135,5 @@ returning. A repeated signal exits immediately.
 `on_postprocessing_start()` and `on_postprocessing_end()` remain callback contracts for project-owned orchestration;
 the core `Trainer.fit()` and `Trainer.predict()` methods do not dispatch them.
 
-See the [PhiModule API](module.md), [callbacks API](callbacks.md), and [Trainer API](training.md) for signatures and
+See the [PhiModule API](module.md), [callbacks API](callbacks.md), and [Trainer API](trainer.md) for signatures and
 context fields.
