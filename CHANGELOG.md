@@ -25,6 +25,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Restructured the `PhiModule` and `Trainer` references to lead with common workflows and group configuration,
   extension, lifecycle, and runtime details before the generated API. The API navigation now keeps primary contracts
   under Core and lifecycle services under Extensions.
+- Split model and callback references into focused category pages, consolidated checkpoint callback documentation,
+  and grouped logger backends without duplicating generated API entries.
 
 ## [0.2.0b3] - 2026-09-01
 

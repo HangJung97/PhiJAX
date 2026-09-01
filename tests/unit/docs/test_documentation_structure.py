@@ -108,6 +108,18 @@ def test_every_documentation_page_is_in_navigation() -> None:
     assert navigated == available
 
 
+def test_generated_api_targets_have_one_reference_owner() -> None:
+    """Render each mkdocstrings target on one authoritative API page."""
+    owners: dict[str, list[Path]] = {}
+    for markdown_path in _DOCS_DIRECTORY.rglob("*.md"):
+        for line in markdown_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("::: "):
+                owners.setdefault(line.removeprefix("::: ").strip(), []).append(markdown_path.relative_to(_ROOT))
+    duplicates = {target: paths for target, paths in owners.items() if len(paths) > 1}
+
+    assert not duplicates, f"Generated API targets have multiple owners: {duplicates}"
+
+
 def test_api_navigation_separates_core_runtime_and_extensions() -> None:
     """Keep primary contracts ahead of lower-level runtime and extension APIs."""
     config = yaml.safe_load((_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
@@ -118,7 +130,15 @@ def test_api_navigation_separates_core_runtime_and_extensions() -> None:
         {"Trainer": "api/trainer.md"},
         {"PhiModule": "api/module.md"},
         {"Data": "api/data.md"},
-        {"Models": "api/models.md"},
+        {
+            "Models": [
+                {"Overview": "api/models/index.md"},
+                {"MLP": "api/models/mlp.md"},
+                {"Modified MLP": "api/models/modified.md"},
+                {"PirateNet": "api/models/pirate-net.md"},
+                {"Layers": "api/models/layers.md"},
+            ]
+        },
     ]
     assert groups["Training runtime"] == [
         {"State and plans": "api/training.md"},
@@ -127,7 +147,14 @@ def test_api_navigation_separates_core_runtime_and_extensions() -> None:
     ]
     assert groups["Extensions"] == [
         {"Hooks and lifecycle": "api/hooks.md"},
-        {"Callbacks": "api/callbacks.md"},
+        {
+            "Callbacks": [
+                {"Overview": "api/callbacks/index.md"},
+                {"Monitoring": "api/callbacks/monitoring.md"},
+                {"Display": "api/callbacks/display.md"},
+                {"Prediction": "api/callbacks/prediction.md"},
+            ]
+        },
         {"Checkpointing": "api/checkpointing.md"},
         {"Loggers": "api/loggers.md"},
     ]

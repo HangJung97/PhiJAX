@@ -42,8 +42,8 @@ This separation keeps the compiled computation functional. A module never owns m
 
 ## Module blueprints
 
-The standard `PhiModule` accepts either a lazy [`ModelFactory`](models.md#phijax.models.ModelFactory) or an initialized
-[`InitializedModel`](models.md#phijax.models.InitializedModel), together with an
+The standard `PhiModule` accepts either a lazy [`ModelFactory`](models/index.md#phijax.models.ModelFactory) or an
+initialized [`InitializedModel`](models/index.md#phijax.models.InitializedModel), together with an
 [`Objective`](objectives.md#phijax.objectives.Objective).
 
 The objective supplies ordered `loss_names` and `batch_keys`. The Trainer uses them to create default static loss

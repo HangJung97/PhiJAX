@@ -69,4 +69,4 @@ from phijax.utils import RankedLogger, resolve_seed, seed_everything
 ```
 
 Use the navigation to open a focused reference page. Start with the [Trainer](trainer.md),
-[PhiModule](module.md), [Data](data.md), and [Models](models.md) pages for the main runtime contracts.
+[PhiModule](module.md), [Data](data.md), and [Models](models/index.md) pages for the main runtime contracts.

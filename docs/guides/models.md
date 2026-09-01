@@ -1,6 +1,6 @@
 # Build a custom model
 
-PhiJAX needs a [`ModelFactory`](../api/models.md#phijax.models.ModelFactory) that returns a pure model application, explicit array state,
+PhiJAX needs a [`ModelFactory`](../api/models/index.md#phijax.models.ModelFactory) that returns a pure model application, explicit array state,
 and an optional summary function. The factory runs after the Trainer has selected precision and prepared input
 statistics.
 
@@ -32,12 +32,12 @@ Choose a built-in architecture by its behavior:
 | `build_modified_mlp` | Gated coordinate encodings help a deeper PINN optimize                 |
 | `build_pirate_net`   | Residual adaptive depth and Fourier features suit a harder PDE problem |
 
-See the [model reference](../api/models.md) for every constructor option.
+See the [model reference](../api/models/index.md) for every constructor option.
 
 ## Adapt a Flax NNX module
 
 Define the NNX architecture normally, then adapt one initialized instance with
-[`initialize_nnx_model()`](../api/models.md#phijax.models.initialize_nnx_model).
+[`initialize_nnx_model()`](../api/models/index.md#phijax.models.initialize_nnx_model).
 
 ```python
 import jax
@@ -98,7 +98,7 @@ arguments. Explicit values in `model_kwargs` take precedence over the selected p
 
 ## Return a non-NNX model
 
-A custom factory does not need Flax. Return [`InitializedModel`](../api/models.md#phijax.models.InitializedModel) with:
+A custom factory does not need Flax. Return [`InitializedModel`](../api/models/index.md#phijax.models.InitializedModel) with:
 
 - `apply(model_state, inputs, ...)`, a pure callable accepted by JAX transformations;
 - `state`, a JAX-compatible parameter PyTree; and
@@ -122,7 +122,7 @@ valid numerical parity test.
 
 ## Next steps
 
-- [Models API](../api/models.md)
+- [Models API](../api/models/index.md)
 - [Precision](../api/precision.md)
 - [Equations and objectives](objectives.md)
 - [Train and predict](training.md)

@@ -89,7 +89,8 @@ dtype behavior and supported device combinations.
 | `enable_model_summary` | Boolean                                                        | `True`  |
 
 `logger=True` selects TensorBoard when it is installed and CSV otherwise. The Trainer adds a TQDM progress bar and a
-plain model summary unless callbacks provide replacements. See [Loggers](loggers.md) and [Callbacks](callbacks.md) for
+plain model summary unless callbacks provide replacements. See [Loggers](loggers.md) and
+[Callbacks](callbacks/index.md) for
 backend and display options.
 
 ## Common and advanced workflows

@@ -98,7 +98,7 @@ optimizer = optax.adam(learning_rate)
 
 `RichModelSummary` prints the initialized architecture, `LearningRateMonitor` contributes metrics, `EarlyStopping` may
 request a clean stop, and `RichProgressBar` replaces the default progress display. See
-[Callbacks](../api/callbacks.md) for lifecycle hooks, checkpointing, model summaries, and prediction writing.
+[Callbacks](../api/callbacks/index.md) for lifecycle hooks, checkpointing, model summaries, and prediction writing.
 
 `LearningRateMonitor` requires a configured logger. The default `logger=True` writes to
 `phijax_logs/version_N`; use `tensorboard --logdir phijax_logs` when the TensorBoard extra is installed.
@@ -117,4 +117,4 @@ The source below is executed by the documentation smoke test, so it stays aligne
 - [Building a DataModule](../guides/datasets.md) develops the data layer in detail.
 - [Building equations and objectives](../guides/objectives.md) explains residual groups and equation composition.
 - [Creating a loss balancer](../guides/balancers.md) covers fixed and adaptive weighting policies.
-- [Models](../api/models.md) shows how to select or implement a network architecture.
+- [Models](../api/models/index.md) shows how to select or implement a network architecture.

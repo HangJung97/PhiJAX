@@ -7,6 +7,8 @@ Logger construction does not open files, import optional SDKs, or start remote r
 resources when a task starts and releases them when it ends. Calling a built-in logger directly remains convenient:
 its first logging operation calls `setup()` automatically.
 
+## Configure logging
+
 `Trainer(logger=True)` enables local logging by default. It uses `TensorBoardLogger` when TensorBoard is installed and
 falls back to `CSVLogger` otherwise. Runs are stored below
 `<default_root_dir>/phijax_logs/version_N/`, including `hparams.yaml` and scalar metrics. Set `logger=False` or
@@ -51,15 +53,37 @@ writing them immediately. The Trainer exposes three read-only views of the same 
 Logger conversion still follows `log_every_n_steps`. Progress callbacks transfer their selected values only at their
 own refresh interval.
 
+## Logger contracts
+
 ::: phijax.training.ExperimentLogger
 
 ::: phijax.training.LoggerCollection
 
+## Local loggers
+
+### Console
+
+`ConsoleLogger` writes scalar updates to the terminal without creating a run directory.
+
 ::: phijax.training.ConsoleLogger
+
+### CSV
+
+`CSVLogger` writes hyperparameters and scalar history into a local versioned run directory.
 
 ::: phijax.training.CSVLogger
 
+### TensorBoard
+
+`TensorBoardLogger` writes event files that can be inspected with TensorBoard.
+
 ::: phijax.training.TensorBoardLogger
+
+## Remote loggers
+
+### Weights & Biases
+
+`WandbLogger` starts its run lazily and uploads metrics, hyperparameters, and configured artifacts.
 
 ::: phijax.training.WandbLogger
 
