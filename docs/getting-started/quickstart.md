@@ -88,7 +88,7 @@ from phijax.callbacks import EarlyStopping, LearningRateMonitor, RichModelSummar
 learning_rate = optax.exponential_decay(1.0e-3, transition_steps=1_000, decay_rate=0.9)
 callbacks = (
     RichModelSummary(),
-    LearningRateMonitor(learning_rate, log_key_prefix="train/"),
+    LearningRateMonitor(learning_rate, optimizer_name="Adam"),
     EarlyStopping(monitor="train/loss", patience=2_000),
     RichProgressBar(total=max_steps, refresh_rate=10),
 )

@@ -6,7 +6,7 @@ from phijax.callbacks import LearningRateMonitor, TrainerContext
 
 def test_learning_rate_monitor_requires_configured_logger() -> None:
     """Verify fitting fails before metrics are evaluated when logging is disabled."""
-    monitor = LearningRateMonitor(lambda step: step)
+    monitor = LearningRateMonitor(lambda step: step, optimizer_name="Adam")
     with pytest.raises(RuntimeError, match="Cannot use `LearningRateMonitor` with a Trainer that has no logger"):
         monitor.on_fit_start(TrainerContext(state=None, step=0, metrics={}, has_logger=False))
 
@@ -15,30 +15,44 @@ def test_learning_rate_monitor_requires_configured_logger() -> None:
 
 def test_learning_rate_monitor_reports_the_rate_used_by_each_completed_step() -> None:
     """Verify completed trainer steps map back to the optimizer's zero-based schedule count."""
-    monitor = LearningRateMonitor(lambda step: 0.1 * 0.5**step, log_key_prefix="train/")
+    monitor = LearningRateMonitor(lambda step: 0.1 * 0.5**step, optimizer_name="Adam")
 
     monitor.setup()
     first = monitor.training_metrics(TrainerContext(state=None, step=1, metrics={}, should_log=True))
     third = monitor.training_metrics(TrainerContext(state=None, step=3, metrics={}, should_log=True))
 
-    assert float(first["train/lr"]) == pytest.approx(0.1)
-    assert float(third["train/lr"]) == pytest.approx(0.025)
+    assert float(first["optimizer/lr-Adam"]) == pytest.approx(0.1)
+    assert float(third["optimizer/lr-Adam"]) == pytest.approx(0.025)
 
 
 def test_learning_rate_monitor_supports_custom_names() -> None:
     """Verify callers may choose a stable application-specific learning-rate metric name."""
-    monitor = LearningRateMonitor(lambda step: jnp.asarray(step + 1.0), name="optimizer/lr")
+    monitor = LearningRateMonitor(
+        lambda step: jnp.asarray(step + 1.0),
+        optimizer_name="Lion",
+        log_key_prefix="custom/",
+    )
 
     metrics = monitor.training_metrics(TrainerContext(state=None, step=2, metrics={}, should_log=True))
 
-    assert tuple(metrics) == ("optimizer/lr",)
-    assert float(metrics["optimizer/lr"]) == pytest.approx(2.0)
+    assert tuple(metrics) == ("custom/lr-Lion",)
+    assert float(metrics["custom/lr-Lion"]) == pytest.approx(2.0)
+
+
+def test_learning_rate_monitor_can_disable_default_group() -> None:
+    """Verify callers may remove the default optimizer metric group."""
+    monitor = LearningRateMonitor(lambda step: step + 1.0, optimizer_name="SGD", log_key_prefix=None)
+
+    metrics = monitor.training_metrics(TrainerContext(state=None, step=1, metrics={}, should_log=True))
+
+    assert tuple(metrics) == ("lr-SGD",)
 
 
 def test_learning_rate_monitor_logs_prefixed_momentum_and_weight_decay() -> None:
     """Verify Lightning-compatible flags, prefixes, and suffixes include configured Optax hyperparameters."""
     monitor = LearningRateMonitor(
         lambda step: 0.1 * 0.5**step,
+        optimizer_name="AdamW",
         log_momentum=True,
         log_weight_decay=True,
         log_key_prefix="optim/",
@@ -48,22 +62,22 @@ def test_learning_rate_monitor_logs_prefixed_momentum_and_weight_decay() -> None
 
     metrics = monitor.training_metrics(TrainerContext(state=None, step=2, metrics={}, should_log=True))
 
-    assert set(metrics) == {"optim/lr", "optim/lr-momentum", "optim/lr-weight_decay"}
-    assert float(metrics["optim/lr"]) == pytest.approx(0.05)
-    assert float(metrics["optim/lr-momentum"]) == pytest.approx(0.9)
-    assert float(metrics["optim/lr-weight_decay"]) == pytest.approx(0.001)
+    assert set(metrics) == {"optim/lr-AdamW", "optim/lr-AdamW-momentum", "optim/lr-AdamW-weight_decay"}
+    assert float(metrics["optim/lr-AdamW"]) == pytest.approx(0.05)
+    assert float(metrics["optim/lr-AdamW-momentum"]) == pytest.approx(0.9)
+    assert float(metrics["optim/lr-AdamW-weight_decay"]) == pytest.approx(0.001)
 
 
 @pytest.mark.parametrize(
-    ("schedule", "name", "exception", "match"),
+    ("schedule", "optimizer_name", "exception", "match"),
     [
-        (1.0, "train/lr", TypeError, "must be callable"),
+        (1.0, "Adam", TypeError, "must be callable"),
         (lambda step: step, "", ValueError, "non-empty"),
     ],
 )
 def test_learning_rate_monitor_rejects_invalid_configuration(
     schedule: object,
-    name: str,
+    optimizer_name: str,
     exception: type[Exception],
     match: str,
 ) -> None:
@@ -71,12 +85,12 @@ def test_learning_rate_monitor_rejects_invalid_configuration(
 
     Args:
         schedule: Invalid schedule value.
-        name: Candidate metric name.
+        optimizer_name: Candidate optimizer display name.
         exception: Expected exception type.
         match: Expected message fragment.
     """
     with pytest.raises(exception, match=match):
-        LearningRateMonitor(schedule, name=name)  # type: ignore[arg-type]
+        LearningRateMonitor(schedule, optimizer_name=optimizer_name)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -103,15 +117,16 @@ def test_learning_rate_monitor_rejects_invalid_optional_arguments(
         match: Expected message fragment.
     """
     with pytest.raises(exception, match=match):
-        LearningRateMonitor(lambda step: step, **kwargs)  # type: ignore[arg-type]
+        LearningRateMonitor(lambda step: step, optimizer_name="Adam", **kwargs)  # type: ignore[arg-type]
 
 
 def test_learning_rate_monitor_rejects_missing_or_vector_schedules() -> None:
     """Verify executable callbacks require a scalar-producing schedule."""
-    missing = LearningRateMonitor(None)
-    vector = LearningRateMonitor(lambda step: jnp.asarray([step, step + 1]))
+    missing = LearningRateMonitor(None, optimizer_name="Adam")
+    vector = LearningRateMonitor(lambda step: jnp.asarray([step, step + 1]), optimizer_name="Adam")
     vector_momentum = LearningRateMonitor(
         lambda step: step,
+        optimizer_name="Adam",
         log_momentum=True,
         momentum=lambda step: jnp.asarray([step, step + 1]),
     )
@@ -126,16 +141,16 @@ def test_learning_rate_monitor_rejects_missing_or_vector_schedules() -> None:
 
 def test_learning_rate_monitor_respects_logging_interval() -> None:
     """Verify logger, step, and fit-end cadence choices avoid unnecessary schedule evaluation."""
-    trainer_cadence = LearningRateMonitor(lambda step: step)
-    step_cadence = LearningRateMonitor(lambda step: step, logging_interval="step")
-    epoch_cadence = LearningRateMonitor(lambda step: step, logging_interval="epoch")
+    trainer_cadence = LearningRateMonitor(lambda step: step, optimizer_name="Adam")
+    step_cadence = LearningRateMonitor(lambda step: step, optimizer_name="Adam", logging_interval="step")
+    epoch_cadence = LearningRateMonitor(lambda step: step, optimizer_name="Adam", logging_interval="epoch")
     ordinary = TrainerContext(state=None, step=2, metrics={})
     logging = TrainerContext(state=None, step=3, metrics={}, should_log=True)
     terminal = TrainerContext(state=None, step=4, metrics={}, is_fit_end=True)
 
     assert trainer_cadence.training_metrics(ordinary) == {}
-    assert float(trainer_cadence.training_metrics(logging)["lr"]) == pytest.approx(2.0)
-    assert float(trainer_cadence.training_metrics(terminal)["lr"]) == pytest.approx(3.0)
-    assert float(step_cadence.training_metrics(ordinary)["lr"]) == pytest.approx(1.0)
+    assert float(trainer_cadence.training_metrics(logging)["optimizer/lr-Adam"]) == pytest.approx(2.0)
+    assert float(trainer_cadence.training_metrics(terminal)["optimizer/lr-Adam"]) == pytest.approx(3.0)
+    assert float(step_cadence.training_metrics(ordinary)["optimizer/lr-Adam"]) == pytest.approx(1.0)
     assert epoch_cadence.training_metrics(logging) == {}
-    assert float(epoch_cadence.training_metrics(terminal)["lr"]) == pytest.approx(3.0)
+    assert float(epoch_cadence.training_metrics(terminal)["optimizer/lr-Adam"]) == pytest.approx(3.0)

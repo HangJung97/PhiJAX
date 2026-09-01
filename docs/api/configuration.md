@@ -89,14 +89,33 @@ from phijax.integrations.omegaconf import register_omegaconf_resolvers
 register_omegaconf_resolvers()
 ```
 
-| Resolver     | Example                         | Purpose                     |
-| ------------ | ------------------------------- | --------------------------- |
-| `math`       | `${math:pi}`                    | Public Python `math` member |
-| `op`         | `${op:truediv,0.01,${math:pi}}` | Public `operator` function  |
-| `op.ternary` | `${op.ternary,true,a,b}`        | Conditional value           |
-| `tuple`      | `${tuple:1,2,3}`                | Tuple rather than list      |
-| `call`       | `${call:module.function,arg}`   | Trusted imported callable   |
-| `assert`     | `${assert:true}`                | Strict or warning assertion |
+| Resolver      | Example                                      | Purpose                     |
+| ------------- | -------------------------------------------- | --------------------------- |
+| `math`        | `${math:pi}`                                 | Public Python `math` member |
+| `op`          | `${op:truediv,0.01,${math:pi}}`              | Public `operator` function  |
+| `op.ternary`  | `${op.ternary,true,a,b}`                     | Conditional value           |
+| `tuple`       | `${tuple:1,2,3}`                             | Tuple rather than list      |
+| `call`        | `${call:module.function,arg}`                | Trusted imported callable   |
+| `target.name` | `${target.name:${model.optimizer._target_}}` | Final Hydra target name     |
+| `assert`      | `${assert:true}`                             | Strict or warning assertion |
+
+Use `target.name` when a callback needs a stable label for a configured service without duplicating configuration.
+For example, an optimizer target can name its learning-rate metric automatically:
+
+```yaml
+model:
+  optimizer:
+    _target_: optax.adamw
+
+callbacks:
+  lr_monitor:
+    _target_: phijax.callbacks.LearningRateMonitor
+    schedule: ${model.scheduler}
+    optimizer_name: ${target.name:${model.optimizer._target_}}
+```
+
+This configuration logs `optimizer/lr-adamw`. The resolver preserves the target's spelling rather than guessing how
+custom names or acronyms should be capitalized.
 
 Configuration can execute imported callables through Hydra targets and the `call` resolver. Compose only trusted
 configuration files.

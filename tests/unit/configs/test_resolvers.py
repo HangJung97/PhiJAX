@@ -19,6 +19,8 @@ def test_register_omegaconf_resolvers_is_idempotent_and_resolves_general_express
             "choice": "${op.ternary:${op:eq,2,2},selected,rejected}",
             "filename": "${call:os.path.basename,/tmp/sample.mat}",
             "items": "${tuple:a,b,3}",
+            "optimizer": {"_target_": "optax.adamw"},
+            "optimizer_name": "${target.name:${optimizer._target_}}",
             "valid": "${assert:${op:gt,3,2}}",
         }
     )
@@ -29,6 +31,7 @@ def test_register_omegaconf_resolvers_is_idempotent_and_resolves_general_express
     assert config.choice == "selected"
     assert config.filename == "sample.mat"
     assert config["items"] == ("a", "b", 3)
+    assert config.optimizer_name == "adamw"
     assert config.valid is True
 
 
@@ -54,6 +57,7 @@ def test_assert_resolver_can_raise_or_warn(caplog: pytest.LogCaptureFixture) -> 
         ("${math:pi,2}", "does not accept arguments"),
         ("${op:unknown,1}", "Unknown public operator"),
         ("${call:math.pi}", "is not callable"),
+        ("${target.name:adamw}", "module and target name"),
     ],
 )
 def test_resolvers_reject_unknown_or_incompatible_targets(expression: str, message: str) -> None:

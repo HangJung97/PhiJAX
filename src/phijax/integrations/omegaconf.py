@@ -14,8 +14,9 @@ def register_omegaconf_resolvers() -> None:
     """Register PhiJAX's general-purpose OmegaConf resolvers idempotently.
 
     The registry exposes configuration assertions, standard-library operators, ternary selection, importable callable
-    invocation, tuple construction, and public constants or callables from :mod:`math`. Resolver registration modifies
-    OmegaConf process-global state, so this function is safe to call repeatedly before Hydra composition.
+    invocation, tuple construction, Hydra target names, and public constants or callables from :mod:`math`. Resolver
+    registration modifies OmegaConf process-global state, so this function is safe to call repeatedly before Hydra
+    composition.
 
     Examples:
         `${math:pi}` resolves to :data:`math.pi`, while `${op:truediv,0.01,${math:pi}}` resolves to `0.01 / math.pi`.
@@ -25,6 +26,7 @@ def register_omegaconf_resolvers() -> None:
     _register_new_resolver_once("op.ternary", _resolve_ternary)
     _register_new_resolver_once("call", _resolve_callable)
     _register_new_resolver_once("tuple", _resolve_tuple)
+    _register_new_resolver_once("target.name", _resolve_target_name)
     _register_new_resolver_once("math", _resolve_math)
 
 
@@ -123,6 +125,26 @@ def _resolve_tuple(*args: Any) -> tuple[Any, ...]:
         Tuple containing `args`.
     """
     return tuple(args)
+
+
+def _resolve_target_name(dotpath: str) -> str:
+    """Extract the callable name from a dotted Hydra target.
+
+    Args:
+        dotpath: Fully qualified Hydra `_target_` value.
+
+    Returns:
+        Final target component with its original spelling.
+
+    Raises:
+        TypeError: If `dotpath` is not a string.
+        ValueError: If `dotpath` does not contain a module and target name.
+    """
+    if not isinstance(dotpath, str):
+        raise TypeError("A Hydra target path must be a string.")
+    if "." not in dotpath or not dotpath.rsplit(".", 1)[1]:
+        raise ValueError("A Hydra target path must contain a module and target name.")
+    return dotpath.rsplit(".", 1)[1]
 
 
 def _resolve_math(name: str, *args: Any) -> Any:
