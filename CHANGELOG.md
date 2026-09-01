@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Added a `target.name` OmegaConf resolver for deriving display labels from Hydra `_target_` paths.
+
+### Breaking changes
+
+- Made `LearningRateMonitor` require an explicit optimizer name and changed its default metric group from `train/` to
+  `optimizer/`, using Lightning-style keys such as `optimizer/lr-Adam`.
+
 ### Changed
 
 - Made the Trainer report its precision and accelerator environment automatically when constructed on global rank
