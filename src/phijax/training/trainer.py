@@ -173,6 +173,7 @@ class Trainer:
         self._pending_callback_states: Mapping[str, Mapping[str, Any]] | None = None
         for callback in self.callbacks:
             callback.connect(self)
+        self.print_environment_info()
 
     @property
     def logger(self) -> LoggerCollection:

@@ -252,7 +252,6 @@ def run_quickstart(
         enable_progress_bar=enable_progress_bar,
         callbacks=callbacks,
     )
-    trainer.print_environment_info()
     data_module = HeatDataModule()
     model = partial(
         build_mlp,

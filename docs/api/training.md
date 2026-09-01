@@ -132,6 +132,9 @@ Each task closes its callback and checkpoint resources, even after an error. You
 and `predict()` calls without calling `close()`. The idempotent `close()` method and context manager remain available
 for integrations that open resources outside these tasks.
 
+The Trainer reports its precision, matrix-multiplication precision, and selected accelerators when it is constructed.
+Environment information is printed only on global rank zero.
+
 After `Ctrl+C`, fitting returns the last completed state with `FitResult.interrupted=True`. The caller can then run
 prediction. `SIGTERM` runs exception hooks and teardown, waits for checkpoint cleanup, and exits with the standard
 signal status.
