@@ -13,9 +13,6 @@ class PeriodicFeatures(nnx.Module):
     """Replace selected coordinate axes with fixed cosine and sine features.
 
     Attributes:
-        input_dim: Width of the physical input coordinate vector.
-        axes: Unique coordinate axes replaced by periodic features.
-        frequencies: Angular frequencies paired with :attr:`axes`.
         output_dim: Embedded width, equal to `input_dim + len(axes)`.
     """
 
@@ -91,7 +88,6 @@ class RandomFourierFeatures(nnx.Module):
     instead keep the sampled projection fixed.
 
     Attributes:
-        compute_dtype: Data type used for projection and trigonometric operations.
         kernel: Trainable Gaussian frequency matrix with shape `[input_dim, embed_dim]`.
 
     References:
@@ -150,7 +146,6 @@ class FactorizedDense(nnx.Module):
     equivalent of the commonly written `W = diag(g) V` for `[output_dim, input_dim]` weights.
 
     Attributes:
-        compute_dtype: Data type used for affine computation.
         g: Trainable positive scale vector with shape `[output_dim]`.
         v: Trainable direction matrix with shape `[input_dim, output_dim]`.
         bias: Optional trainable additive bias with shape `[output_dim]`.

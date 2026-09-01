@@ -46,11 +46,6 @@ class Trainer:
     behavior remains in the configured training plan or supplied compiled step; this class orchestrates its lifecycle.
 
     Attributes:
-        max_steps: Maximum number of batches processed by one fit call.
-        precision: Resolved training precision policy.
-        matmul_precision: Optional JAX dot and convolution precision override.
-        strategy: Explicit device-placement strategy.
-        enable_progress_bar: Whether fit and prediction tasks display progress.
         prediction_writer: Configured prediction artifact callback, or `None`.
     """
 

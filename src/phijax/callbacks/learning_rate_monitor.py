@@ -16,16 +16,6 @@ class LearningRateMonitor(Callback):
     evaluated at `n - 1`, matching the hyperparameters used for that update. Unlike stateful PyTorch optimizers, an
     Optax transformation does not expose mutable parameter groups, so optional momentum and weight decay values are
     supplied explicitly by configuration.
-
-    Attributes:
-        schedule: Configured Optax-compatible step-indexed schedule.
-        optimizer_name: Display name used to identify the Optax optimizer in metric keys.
-        log_momentum: Whether to include the optimizer momentum coefficient.
-        log_weight_decay: Whether to include the optimizer weight decay.
-        log_key_prefix: String prepended verbatim to every metric name.
-        logging_interval: Metric evaluation cadence, or `None` to follow the trainer logger cadence.
-        momentum: Configured momentum scalar or schedule.
-        weight_decay: Configured weight-decay scalar or schedule.
     """
 
     def __init__(

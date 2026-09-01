@@ -2,9 +2,9 @@
 
 `Accelerator` and `DeviceSelection` describe the values accepted by `Trainer` and `create_strategy()`.
 
-`SingleDeviceStrategy` places complete state and batches on one selected CPU, GPU, or TPU device.
-`DataParallelStrategy` replicates state and shards non-scalar batch leaves along their leading dimension. Batch sizes
-must be divisible by the number of local shards.
+[`SingleDeviceStrategy`](#phijax.training.SingleDeviceStrategy) places complete state and batches on one selected CPU,
+GPU, or TPU device. [`DataParallelStrategy`](#phijax.training.DataParallelStrategy) replicates state and shards
+non-scalar batch leaves along their leading dimension. Batch sizes must be divisible by the number of local shards.
 
 ## Experimental distributed execution
 

@@ -18,9 +18,6 @@ class ResidualTerm:
 
     Attributes:
         loss_names: Stable names aligned with the residual groups returned by `residual_fn`.
-        residual_fn: Configured equation callable evaluated against one named batch.
-        batch_key: Named batch routed to `residual_fn`.
-        ntk_stream: Equation representation requested for derivative-based balancing.
     """
 
     def __init__(

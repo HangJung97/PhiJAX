@@ -111,14 +111,7 @@ class ExactNTKBalancer:
     control peak memory.
 
     Attributes:
-        loss_names: Stable loss and mean-diagonal ordering.
-        update_every_n_steps: Positive optimizer-step interval between NTK updates.
-        update_start_step: Absolute optimizer step of the first NTK update.
-        kernel_size: Positive diagnostic sample count for every objective batch.
-        kernel_chunk_size: Number of diagnostic samples differentiated in parallel, or `None` for a full vectorization.
-        eps: Positive mean-diagonal floor used for safe division.
         momentum: Moving-average coefficient applied to previous weights.
-        initial_weights: Initial `float32` weight vector.
 
     References:
         Wang, S., Yu, X., and Perdikaris, P. (2022). When and Why PINNs Fail to Train: A Neural Tangent Kernel

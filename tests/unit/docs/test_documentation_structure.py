@@ -1,0 +1,134 @@
+import ast
+import re
+from collections.abc import Iterable
+from pathlib import Path
+from urllib.parse import unquote
+
+import pytest
+import yaml
+
+_ROOT = Path(__file__).parents[3]
+_DOCS_DIRECTORY = _ROOT / "docs"
+_MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\((?P<target>[^)]+)\)")
+_GOOGLE_DOCSTRING_ENTRY = re.compile(r"^    (?P<name>[A-Za-z_]\w*):")
+
+
+def _navigation_pages(value: object) -> Iterable[Path]:
+    """Yield Markdown paths from a nested MkDocs navigation value.
+
+    Args:
+        value: String, list, or mapping read from `mkdocs.yml`.
+
+    Yields:
+        Documentation-relative Markdown paths in navigation order.
+    """
+    if isinstance(value, str):
+        if value.endswith(".md"):
+            yield Path(value)
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from _navigation_pages(item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _navigation_pages(item)
+
+
+def _local_link_targets(markdown_path: Path) -> Iterable[Path]:
+    """Yield filesystem targets for relative Markdown links in one page.
+
+    Args:
+        markdown_path: Source Markdown page.
+
+    Yields:
+        Resolved local paths after removing URL fragments.
+    """
+    contents = markdown_path.read_text(encoding="utf-8")
+    for match in _MARKDOWN_LINK.finditer(contents):
+        target = match.group("target").strip().strip("<>")
+        if target.startswith(("#", "http://", "https://", "mailto:")):
+            continue
+        relative_target = unquote(target.split("#", maxsplit=1)[0])
+        if relative_target:
+            yield (markdown_path.parent / relative_target).resolve()
+
+
+def _docstring_section_names(docstring: str, section: str) -> set[str]:
+    """Collect field names from one Google-style docstring section.
+
+    Args:
+        docstring: Cleaned docstring text.
+        section: Section heading without the trailing colon.
+
+    Returns:
+        Names declared directly inside the requested section.
+    """
+    lines = docstring.splitlines()
+    try:
+        start = lines.index(f"{section}:") + 1
+    except ValueError:
+        return set()
+    names: set[str] = set()
+    for line in lines[start:]:
+        if line and not line.startswith(" "):
+            break
+        if match := _GOOGLE_DOCSTRING_ENTRY.match(line):
+            names.add(match.group("name"))
+    return names
+
+
+def test_every_documentation_page_is_in_navigation() -> None:
+    """Verify readers can reach every Markdown page through the site navigation."""
+    config = yaml.safe_load((_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+    navigated = set(_navigation_pages(config["nav"]))
+    available = {path.relative_to(_DOCS_DIRECTORY) for path in _DOCS_DIRECTORY.rglob("*.md")}
+
+    assert navigated == available
+
+
+@pytest.mark.parametrize("markdown_path", sorted(_DOCS_DIRECTORY.rglob("*.md")))
+def test_relative_documentation_links_resolve(markdown_path: Path) -> None:
+    """Verify local Markdown links point to existing files inside the docs tree.
+
+    Args:
+        markdown_path: Documentation page checked for local links.
+    """
+    docs_root = _DOCS_DIRECTORY.resolve()
+    broken = [
+        target
+        for target in _local_link_targets(markdown_path)
+        if not target.is_relative_to(docs_root) or not target.exists()
+    ]
+
+    assert not broken, f"Broken local links in {markdown_path.relative_to(_ROOT)}: {broken}"
+
+
+def test_class_attributes_do_not_repeat_constructor_parameters() -> None:
+    """Keep constructor inputs out of class-level runtime attribute tables."""
+    duplicates: dict[str, list[str]] = {}
+    for source_path in (_ROOT / "src" / "phijax").rglob("*.py"):
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            initializer = next(
+                (
+                    member
+                    for member in node.body
+                    if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and member.name == "__init__"
+                ),
+                None,
+            )
+            if initializer is None:
+                continue
+            class_docstring = ast.get_docstring(node) or ""
+            initializer_docstring = ast.get_docstring(initializer) or ""
+            repeated = _docstring_section_names(class_docstring, "Attributes") & _docstring_section_names(
+                initializer_docstring, "Args"
+            )
+            if repeated:
+                path = source_path.relative_to(_ROOT)
+                duplicates[f"{path}:{node.lineno}:{node.name}"] = sorted(repeated)
+
+    assert not duplicates, f"Class attributes repeat constructor parameters: {duplicates}"

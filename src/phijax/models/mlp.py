@@ -20,11 +20,6 @@ class MLP(nnx.Module):
     """Implement a dynamic multilayer perceptron with functional JAX state.
 
     Attributes:
-        input_dim: Width of the input vector.
-        output_dim: Width of the predicted output vector.
-        output_names: Optional unique name for each scalar output.
-        input_norm: Whether explicit input statistics are applied.
-        input_norm_eps: Minimum standard deviation used for safe input normalization.
         periodic_embedding: Optional fixed periodic coordinate mapping.
         embedding: Optional random Fourier feature mapping.
         networks: One shared network or one scalar-output network per output.

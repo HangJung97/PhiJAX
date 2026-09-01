@@ -1,8 +1,8 @@
 # Precision
 
-`PrecisionPolicy` separates parameter, compute, output, and derivative dtypes. `PrecisionMode`, `PrecisionAlias`, and
-`PrecisionName` describe accepted precision strings. `MatmulPrecision` describes the independent JAX dot and
-convolution precision setting.
+[`PrecisionPolicy`](#phijax.training.PrecisionPolicy) separates parameter, compute, output, and derivative dtypes.
+`PrecisionMode`, `PrecisionAlias`, and `PrecisionName` describe accepted precision strings. `MatmulPrecision` describes
+the independent JAX dot and convolution precision setting.
 
 | Mode         | Parameter dtype | Compute dtype | Output dtype | Dynamic loss scaling |
 | ------------ | --------------- | ------------- | ------------ | -------------------- |

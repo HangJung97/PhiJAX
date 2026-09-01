@@ -17,6 +17,7 @@ Follow these pages in order:
 ## Extend an application
 
 - [Training and prediction](guides/training.md): fit, resume, predict, and choose between the common and explicit APIs.
+- [Custom models](guides/models.md): select a built-in architecture or adapt an explicit-state model factory.
 - [Data](guides/datasets.md): implement a `PhiDataModule`, immutable host pools, and explicit-key batch sources.
 - [Equations and objectives](guides/objectives.md): compose differentiable residuals into named scalar losses.
 - [Loss balancers](guides/balancers.md): implement static or adaptive functional loss weighting.
@@ -24,6 +25,7 @@ Follow these pages in order:
   continuation.
 - [Models](api/models.md): use MLP, Modified MLP, PirateNet, or adapt a custom Flax NNX architecture.
 - [Hooks and lifecycle](api/hooks.md): choose module and callback extension points from the exact Trainer call order.
+- [Logging and monitoring](guides/logging.md): configure loggers, displays, metrics, and monitored checkpoints.
 - [Troubleshooting](guides/troubleshooting.md): diagnose accelerator selection, memory, compilation, and lifecycle
   issues.
 

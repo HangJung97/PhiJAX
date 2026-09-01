@@ -78,6 +78,11 @@ framework package. Hydra and OmegaConf are supported integrations, not assumptio
   when readers need to compare three or more items.
 - Keep code examples executable and aligned with the supported public API. Explain non-obvious state ownership, array
   shapes, coordinate order, PRNG behavior, and device placement close to the example that uses them.
+- In Markdown, link the first meaningful mention of a public class, function, or method to its generated API anchor.
+  Do not link every repeated mention. Keep plain backticks for parameters, attributes, config keys, array shapes, and
+  literals.
+- Document constructor inputs once under the initializer's `Args` section. Reserve a class-level `Attributes` section
+  for public runtime values that are not constructor inputs, following the separation used in Lightning's API pages.
 - Before adopting a framework convention, compare its primary documentation or source with mature projects such as
   JAX, Lightning, PyTorch, or MONAI. Adapt the useful parts to PhiJAX without claiming unsupported API parity.
 - Do not add module-level docstrings at the top of Python files.

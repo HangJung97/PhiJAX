@@ -78,10 +78,12 @@ nav:
   - Guides:
       - Build and train:
           - Training and prediction: guides/training.md
+          - Custom models: guides/models.md
           - Datasets: guides/datasets.md
           - Equations and objectives: guides/objectives.md
           - Loss balancers: guides/balancers.md
       - Run and debug:
+          - Logging and monitoring: guides/logging.md
           - Randomness and reproducibility: guides/reproducibility.md
           - Troubleshooting: guides/troubleshooting.md
   - API reference:

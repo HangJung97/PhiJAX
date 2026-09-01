@@ -1,8 +1,9 @@
 # Training state and plans
 
-This page documents the explicit state and compiled-step contracts. Most applications can use `Trainer.fit()` and do
-not need to construct these objects directly. See the [training guide](../guides/training.md) for the common workflow
-and the [Trainer reference](trainer.md) for runtime options.
+This page documents the explicit state and compiled-step contracts. Most applications can use
+[`Trainer.fit()`](trainer.md#phijax.training.Trainer.fit) and do not need to construct these objects directly. See the
+[training guide](../guides/training.md) for the common workflow and the [Trainer reference](trainer.md) for runtime
+options.
 
 ## State
 

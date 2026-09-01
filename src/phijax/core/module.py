@@ -25,9 +25,6 @@ class BasePhiModule(_ModuleHooks, ABC):
     replacements to the trainer. Prediction lifecycle hooks are observational; override :meth:`predict_step` to change
     outputs. Hooks execute on the Python host and must preserve JAX PyTree structures expected by compiled steps. The
     trainer invokes each callback hook before the matching module hook to follow Lightning's lifecycle convention.
-
-    Attributes:
-        name: Human-readable module name used by logging and configuration layers.
     """
 
     def __init__(self, *, name: str = "PINN") -> None:
@@ -223,14 +220,9 @@ class BasePhiModule(_ModuleHooks, ABC):
 class PhiModule(BasePhiModule):
     """Describe a model factory and objective before Trainer-owned initialization.
 
-    The user-facing instance is an immutable-in-practice blueprint. :class:`phijax.Trainer` calls
-    :meth:`prepare_model` after the DataModule has exposed normalization statistics, producing a shallow bound copy
-    with a pure model application and explicit model state. The original blueprint is never mutated.
-
-    Attributes:
-        model: Factory or already initialized explicit-state model.
-        objective: Objective producing unweighted scalar losses and optional residual streams.
-        name: Human-readable module name.
+    The user-facing instance is an immutable-in-practice blueprint. :class:`phijax.Trainer` calls :meth:`prepare_model`
+    after the DataModule has exposed normalization statistics, producing a shallow bound copy with a pure model
+    application and explicit model state. The original blueprint is never mutated.
     """
 
     def __init__(

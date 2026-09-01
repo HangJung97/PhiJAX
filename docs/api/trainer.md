@@ -1,7 +1,8 @@
 # Trainer
 
-`Trainer` owns host-side orchestration. It prepares DataModule sources, places data, calls one compiled update per
-step, dispatches hooks, logs metrics, saves checkpoints, handles signals, and releases task resources.
+[`Trainer`](#phijax.training.Trainer) owns host-side orchestration. It prepares DataModule sources, places data, calls
+one compiled update per step, dispatches hooks, logs metrics, saves checkpoints, handles signals, and releases task
+resources.
 
 ```python
 from phijax import Trainer

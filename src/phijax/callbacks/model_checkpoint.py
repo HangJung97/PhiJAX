@@ -136,13 +136,6 @@ class ModelCheckpoint(Callback):
     alternative storage implementations can be supplied without changing trainer orchestration.
 
     Attributes:
-        checkpoint_io: Storage backend used for save and restore operations.
-        every_n_steps: Periodic save interval, or `None` to disable periodic saves.
-        save_last: Whether to save the terminal fit state.
-        save_on_exception: Whether to save the last valid state when training is interrupted or fails.
-        monitor: Optional scalar metric used for top-k retention.
-        mode: Whether smaller or larger monitored values are better.
-        save_top_k: Number of best monitored checkpoints retained, `-1` for all, or `0` for none.
         best_model_path: Path of the best retained checkpoint, when available.
         best_model_score: Best retained monitored value, when available.
         last_model_path: Path of the terminal checkpoint, when available.

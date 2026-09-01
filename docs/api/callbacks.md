@@ -138,25 +138,13 @@ host.
 
 ## Module logging and diagnostics
 
-Every scalar produced by the compiled step is sent to configured loggers by default. Total loss, individual losses,
-and balancer weights are also shown in the progress bar. A `PhiModule` subclass can override either destination after
-calling the standard host-side hook:
-
-```python
-def on_train_batch_end(self, model_state, context):
-    model_state, metrics = super().on_train_batch_end(model_state, context)
-    self.log("train/loss/pde/heat", metrics["train/loss/pde/heat"], prog_bar=False)
-    self.log("train/residual/mean_abs", metrics["train/residual/mean_abs"], prog_bar=True)
-    return model_state, metrics
-```
-
-`self.log()` queues the device value without transferring it. It is available only during the module batch-end hook;
-calling it from the compiled `training_step()` raises an error. Set `logger=False` to suppress persistence or
-`prog_bar=True` to display a scalar. Array diagnostics remain in `callback_metrics` and cannot be routed to scalar
-loggers or progress displays without an explicit reduction.
+Every scalar from the compiled step is logged by default. Total loss, individual losses, and balancer weights also
+appear in the progress bar. `self.log()` can change these destinations from the module batch-end hook without moving
+logging into JIT-compiled code.
 
 The Trainer exposes the latest complete, persisted, and displayed mappings as `callback_metrics`, `logged_metrics`,
-and `progress_bar_metrics`. Callback `training_metrics()` values are logger-only by default.
+and `progress_bar_metrics`. Callback `training_metrics()` values are logger-only by default. See
+[Log and monitor training](../guides/logging.md) for examples.
 
 ::: phijax.callbacks.RichProgressBarTheme
 
@@ -164,27 +152,6 @@ and `progress_bar_metrics`. Callback `training_metrics()` values are logger-only
 
 ## Compose callbacks
 
-Pass callbacks to the Trainer in dispatch order:
-
-```python
-from phijax.callbacks import EarlyStopping, RichProgressBar
-from phijax.training import Trainer
-
-callbacks = (
-    EarlyStopping(monitor="train/loss", patience=1_000),
-    RichProgressBar(total=10_000),
-)
-trainer = Trainer(max_steps=10_000, callbacks=callbacks)
-```
-
-Disable progress without changing the remaining callback list:
-
-```python
-trainer = Trainer(
-    max_steps=10_000,
-    callbacks=(EarlyStopping(monitor="train/loss", patience=1_000),),
-    enable_progress_bar=False,
-)
-```
-
-See [Configuration integrations](configuration.md) for optional Hydra-based callback construction.
+Pass callbacks to the Trainer in dispatch order. A Trainer accepts at most one progress callback, one model-summary
+callback, one checkpoint callback, and one prediction writer. See [Log and monitor training](../guides/logging.md) for
+composition examples and [Configuration integrations](configuration.md) for optional Hydra construction.
