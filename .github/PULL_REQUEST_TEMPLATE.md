@@ -10,17 +10,13 @@
 
 <!-- Describe required migration, or write "None". -->
 
-## Testing
-
-<!-- Summarize relevant local checks and anything left to CI. -->
-
 ## Before submitting
 
-- [ ] The title is self-explanatory and the description is concise.
-- [ ] The PR contains one coherent change.
-- [ ] Breaking changes are documented, or the section states `None`.
-- [ ] The relevant tests pass locally with `pytest`.
-- [ ] Pre-commit passes with `pre-commit run -a`.
+- [ ] Did you make sure **title is self-explanatory** and **the description concisely explains the PR**?
+- [ ] Did you make sure your **PR does only one thing**, instead of bundling different changes together?
+- [ ] Did you list all the **breaking changes** introduced by this pull request, or state `None` is not applicable?
+- [ ] Did you **test your PR locally** with `pytest` command?
+- [ ] Did you **run pre-commit hooks** with `pre-commit run -a` command?
 
 <!-- Optional: Closes #123 -->
 
