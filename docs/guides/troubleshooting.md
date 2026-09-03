@@ -54,8 +54,8 @@ python -c "import jax; print(jax.default_backend()); print(jax.devices())"
 
 ## CUDA runs out of memory during startup
 
-JAX normally preallocates most GPU memory to reduce fragmentation. On a shared or memory-constrained GPU, disable
-preallocation before starting Python:
+JAX normally preallocates most GPU memory to reduce fragmentation. Keep this default for ordinary runs. If JAX reports
+a GPU allocation error on a shared or memory-constrained GPU, disable preallocation before starting Python:
 
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false python your_experiment.py
@@ -67,9 +67,12 @@ Alternatively, reserve a smaller fraction:
 XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 python your_experiment.py
 ```
 
-These settings trade predictable allocation for lower initial memory use. They must be set before JAX initializes its
-backend. See the official [JAX GPU memory allocation guide](https://docs.jax.dev/en/latest/gpu_memory_allocation.html)
-for allocator behavior and additional options.
+These settings trade predictable allocation for lower initial memory use. Changing allocation behavior can affect
+live GPU autotuning conditions, so keep the allocator setting fixed when comparing repeated runs. A deterministic GPU
+experiment must also configure the [deterministic XLA options](reproducibility.md#deterministic-gpu-execution). All
+process-wide options must be set before JAX initializes its backend. See the official
+[JAX GPU memory allocation guide](https://docs.jax.dev/en/latest/gpu_memory_allocation.html) for allocator behavior
+and additional options.
 
 ## The first training step is much slower
 

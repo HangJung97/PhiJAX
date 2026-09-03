@@ -32,7 +32,8 @@ state and batches, but does not change the default backend used by arrays create
 
 The final line reports the completed optimizer steps, fitting time, relative L2 error, and maximum absolute error on
 an ordered grid. The demo computes both errors with PhiJAX's `regression_metrics()` function. Values may vary across
-JAX platforms. The default seed makes repeated runs on the same platform deterministic.
+JAX platforms. The default seed makes model initialization and batch sampling repeatable. Deterministic GPU execution
+also requires process-level XLA options; see [Randomness and reproducibility](../guides/reproducibility.md).
 
 Use fewer steps while checking an installation:
 
@@ -49,14 +50,24 @@ JAX_PLATFORMS=cpu uv run --no-sync python examples/quickstart.py --no-progress-b
 The script defaults to CPU and `32-true` precision. Select another available accelerator or precision mode explicitly:
 
 ```bash
-XLA_PYTHON_CLIENT_PREALLOCATE=false \
+uv run --no-sync python examples/quickstart.py --accelerator gpu --precision bf16-mixed
+```
+
+For deterministic GPU execution under the same hardware and software environment, set both XLA options before Python
+imports JAX:
+
+```bash
+XLA_FLAGS="--xla_gpu_exclude_nondeterministic_ops --xla_gpu_autotune_level=0" \
   uv run --no-sync python examples/quickstart.py --accelerator gpu --precision bf16-mixed
 ```
 
+Deterministic GPU implementations can be slower or fail to compile when an operation has no deterministic lowering.
+See [Randomness and reproducibility](../guides/reproducibility.md#deterministic-gpu-execution) for details.
+
 Available accelerators are `auto`, `cpu`, `gpu`, and `tpu`. Available precision modes are `64-true`, `32-true`,
 `16-true`, `bf16-true`, `16-mixed`, and `bf16-mixed`. Use `64-true` only when the selected JAX build supports x64.
-Disabling preallocation prevents JAX from reserving most GPU memory at startup. This is useful on shared or
-memory-constrained GPUs; see [Troubleshooting](../guides/troubleshooting.md#cuda-runs-out-of-memory-during-startup).
+If JAX reports a GPU allocation error, see
+[Troubleshooting](../guides/troubleshooting.md#cuda-runs-out-of-memory-during-startup).
 
 ## What the example demonstrates
 

@@ -55,12 +55,23 @@ filesystem operations remain outside it.
 | Argument            | Supported values                                      | Default  |
 | ------------------- | ----------------------------------------------------- | -------- |
 | `max_steps`         | Positive integer                                      | Required |
-| `deterministic`     | Boolean reproducibility declaration                   | `True`   |
 | `callbacks`         | Ordered iterable of callback instances                | `()`     |
 | `compilation_cache` | Mapping with `enabled` and, when enabled, `directory` | `None`   |
 
 `max_steps` counts optimizer updates within one fit call. A custom step passed through `fit_state()` must increment
 `TrainState.step` exactly once per completed update.
+
+### Deterministic GPU execution
+
+The Trainer does not configure process-wide GPU determinism. Launch Python with the deterministic XLA options set
+before importing JAX:
+
+```bash
+XLA_FLAGS="--xla_gpu_exclude_nondeterministic_ops --xla_gpu_autotune_level=0" python train.py
+```
+
+See [Randomness and reproducibility](../guides/reproducibility.md#deterministic-gpu-execution) for seed requirements,
+performance and compilation trade-offs, and the official OpenXLA and JAX references.
 
 ### Devices and precision
 

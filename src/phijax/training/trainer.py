@@ -60,7 +60,6 @@ class Trainer:
         derivative_dtype: Any | None = None,
         initial_loss_scale: float = 32768.0,
         loss_scale_growth_interval: int = 2000,
-        deterministic: bool = True,
         log_every_n_steps: int = 10,
         enable_progress_bar: bool = True,
         enable_model_summary: bool = True,
@@ -83,7 +82,6 @@ class Trainer:
             derivative_dtype: Optional floating batch and coordinate-derivative dtype override.
             initial_loss_scale: Initial dynamic scale for `16-mixed` training.
             loss_scale_growth_interval: Finite optimizer updates between FP16 scale increases.
-            deterministic: Whether the caller promises deterministic data and step behavior.
             log_every_n_steps: Positive interval between scalar logger updates.
             enable_progress_bar: Whether to enable a TQDM or explicitly configured progress callback.
             enable_model_summary: Whether to add a plain model summary when none is supplied explicitly.
@@ -124,7 +122,6 @@ class Trainer:
                 raise ValueError("Enabled `compilation_cache` requires a non-empty `directory`.")
             jax.config.update("jax_compilation_cache_dir", str(directory))
         self.strategy = strategy or create_strategy(accelerator, devices)
-        self.deterministic = deterministic
         self.log_every_n_steps = log_every_n_steps
         resolved_callbacks = tuple(callbacks)
         progress_callbacks = tuple(callback for callback in resolved_callbacks if isinstance(callback, ProgressBar))
