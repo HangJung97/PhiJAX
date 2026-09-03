@@ -106,12 +106,11 @@ To run the same example on an available NVIDIA GPU:
 
 ```bash
 uv sync --extra cuda13
-XLA_PYTHON_CLIENT_PREALLOCATE=false \
-  uv run --no-sync python examples/quickstart.py --accelerator gpu
+uv run --no-sync python examples/quickstart.py --accelerator gpu
 ```
 
-Replace `cuda13` with `cuda12` when using the CUDA 12 extra. Disabling preallocation prevents JAX from reserving most
-GPU memory at startup, which is helpful on shared or memory-constrained systems.
+Replace `cuda13` with `cuda12` when using the CUDA 12 extra. If JAX reports a GPU allocation error, see the
+[troubleshooting guide](https://hangjung97.github.io/PhiJAX/guides/troubleshooting/#cuda-runs-out-of-memory-during-startup).
 
 Read the [annotated quickstart](https://hangjung97.github.io/PhiJAX/getting-started/quickstart/) for the equation,
 complete source, and an explanation of each runtime object.

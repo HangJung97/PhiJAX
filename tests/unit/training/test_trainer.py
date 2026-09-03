@@ -1732,6 +1732,12 @@ def test_trainer_rejects_unknown_matmul_precision() -> None:
         Trainer(max_steps=1, matmul_precision="float32")
 
 
+def test_trainer_rejects_removed_deterministic_argument() -> None:
+    """Verify deterministic execution is not represented by an inert Trainer argument."""
+    with pytest.raises(TypeError, match="unexpected keyword argument 'deterministic'"):
+        cast(Any, Trainer)(max_steps=1, deterministic=True)
+
+
 class _PreparableSource:
     """Record the device selected by Trainer-owned source preparation."""
 

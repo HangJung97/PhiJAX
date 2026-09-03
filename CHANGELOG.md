@@ -14,6 +14,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Added public type aliases for supported accelerator, device, precision, monitoring, activation, and initialization
   options. ([#25](https://github.com/HangJung97/PhiJAX/pull/25))
 
+### Breaking changes
+
+- Removed the inert `Trainer.deterministic` option. Deterministic GPU experiments must configure XLA before JAX
+  initializes; seeded model initialization and sampling remain controlled by `Trainer.fit(seed=...)`.
+
 ### Changed
 
 - Clarified generated API signatures and option tables, and hid full implementation source from reference pages by

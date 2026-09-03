@@ -96,6 +96,26 @@ Under the same code, data, source ordering, and numerical configuration, resumin
 step-`N` training batch as an uninterrupted run. Using `weights_only=True` is different: it restores model weights but
 keeps the fresh run's optimizer, balancer, PRNG, and step state.
 
+## Deterministic GPU execution
+
+Explicit keys make random choices repeatable, but GPU execution and compile-time autotuning can still select
+non-deterministic operations or kernels. Launch a deterministic GPU experiment with both XLA options set before
+Python imports JAX:
+
+```bash
+XLA_FLAGS="--xla_gpu_exclude_nondeterministic_ops --xla_gpu_autotune_level=0" \
+  uv run --no-sync python train.py
+```
+
+`--xla_gpu_exclude_nondeterministic_ops` restricts execution to deterministic GPU implementations.
+`--xla_gpu_autotune_level=0` disables timing-based kernel autotuning between compilations. These process-wide options
+must be set before JAX initializes its backend, so the Trainer does not attempt to set them during construction. See
+the [OpenXLA determinism guide](https://openxla.org/xla/determinism) and
+[JAX compiler flag documentation](https://docs.jax.dev/en/latest/201/controlling-xla.html) for details.
+
+Deterministic implementations can be slower. Compilation can also fail when XLA cannot lower an operation
+deterministically.
+
 ## What a seed does not guarantee
 
 An equal seed makes PhiJAX's key derivation and sampling repeatable. It does not promise bitwise-identical trained
