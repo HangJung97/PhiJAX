@@ -17,7 +17,7 @@ from phijax.equations import base_data_fidelity, residual_equation
 from phijax.evaluation import regression_metrics
 from phijax.models import build_mlp
 from phijax.objectives import CompositeObjective
-from phijax.training import configure_precision
+from phijax.training import Accelerator, PrecisionName, configure_precision
 from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
 
 
@@ -223,8 +223,8 @@ def _pool(
 def run_quickstart(
     max_steps: int = 500,
     *,
-    accelerator: str = "cpu",
-    precision: str = "32-true",
+    accelerator: Accelerator = "cpu",
+    precision: PrecisionName = "32-true",
     enable_progress_bar: bool = True,
 ) -> float:
     """Train the heat PINN and return its maximum prediction error.
