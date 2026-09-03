@@ -17,25 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Breaking changes
 
 - Removed the inert `Trainer.deterministic` option. Deterministic GPU experiments must configure XLA before JAX
-  initializes; seeded model initialization and sampling remain controlled by `Trainer.fit(seed=...)`.
+  initializes. ([#30](https://github.com/HangJung97/PhiJAX/pull/30))
 
 ### Changed
 
-- Clarified generated API signatures and option tables, and hid full implementation source from reference pages by
-  default. ([#25](https://github.com/HangJung97/PhiJAX/pull/25))
-- Reorganized the documentation into task-oriented guides and focused API pages for the Trainer, state, precision,
-  and device strategies. ([#26](https://github.com/HangJung97/PhiJAX/pull/26))
-- Added custom-model and logging guides, cross-referenced public APIs, and checks for navigable pages, valid local
-  links, and non-duplicated class documentation. ([#27](https://github.com/HangJung97/PhiJAX/pull/27))
-- Added configurable source links to generated class, function, and method references without embedding full source
-  listings. Documentation built from `main` links to source available on GitHub. ([#27](https://github.com/HangJung97/PhiJAX/pull/27))
-- Restructured the `PhiModule` and `Trainer` references to lead with common workflows and group configuration,
-  extension, lifecycle, and runtime details before the generated API. The API navigation now keeps primary contracts
-  under Core and lifecycle services under Extensions. ([#28](https://github.com/HangJung97/PhiJAX/pull/28))
-- Split model and callback references into focused category pages, consolidated checkpoint callback documentation,
-  and grouped logger backends without duplicating generated API entries. ([#28](https://github.com/HangJung97/PhiJAX/pull/28))
-- Rendered the complete Burgers and Cartesian, polar, and spherical Navier--Stokes residual equations in LaTeX,
-  including pressure and viscosity coefficients and spherical residual weighting. ([#28](https://github.com/HangJung97/PhiJAX/pull/28))
+- Reorganized the documentation into task-oriented guides and focused API reference pages.
+  ([#26](https://github.com/HangJung97/PhiJAX/pull/26), [#27](https://github.com/HangJung97/PhiJAX/pull/27),
+  [#28](https://github.com/HangJung97/PhiJAX/pull/28))
 
 ## [0.2.0b3] - 2026-09-01
 
