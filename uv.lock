@@ -1615,7 +1615,7 @@ wheels = [
 
 [[package]]
 name = "phijax"
-version = "0.2.0b3"
+version = "0.2.0b4"
 source = { editable = "." }
 dependencies = [
     { name = "colorlog" },

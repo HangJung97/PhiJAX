@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0b4] - 2026-09-03
+
 ### Added
 
 - Added public type aliases for supported accelerator, device, precision, monitoring, activation, and initialization
@@ -123,4 +125,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [0.2.0b1]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b1
 [0.2.0b2]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b2
 [0.2.0b3]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b3
-[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b3...HEAD
+[0.2.0b4]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b4
+[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b4...HEAD
