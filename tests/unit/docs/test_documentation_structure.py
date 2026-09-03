@@ -108,6 +108,22 @@ def test_every_documentation_page_is_in_navigation() -> None:
     assert navigated == available
 
 
+def test_changelog_page_includes_repository_changelog() -> None:
+    """Keep the documented changelog synchronized with the repository source."""
+    config = yaml.safe_load((_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+    snippets = next(
+        extension["pymdownx.snippets"]
+        for extension in config["markdown_extensions"]
+        if isinstance(extension, dict) and "pymdownx.snippets" in extension
+    )
+
+    assert config["nav"][-1] == {"Changelog": "changelog.md"}
+    changelog_page = (_DOCS_DIRECTORY / "changelog.md").read_text(encoding="utf-8")
+    assert changelog_page.endswith('--8<-- "CHANGELOG.md"\n')
+    assert ".md-nav--secondary .md-nav" in changelog_page
+    assert snippets == {"base_path": ["."], "check_paths": True}
+
+
 def test_generated_api_targets_have_one_reference_owner() -> None:
     """Render each mkdocstrings target on one authoritative API page."""
     owners: dict[str, list[Path]] = {}

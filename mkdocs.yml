@@ -127,3 +127,4 @@ nav:
           - Evaluation: api/evaluation.md
           - Configuration: api/configuration.md
           - Utilities: api/utilities.md
+  - Changelog: changelog.md
