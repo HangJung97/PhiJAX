@@ -387,8 +387,8 @@ class PhiModule(BasePhiModule):
         """Declare the default logger and progress destinations for completed metrics.
 
         Every scalar is sent to experiment loggers. The total `train/loss`, individual `train/loss/<name>` losses,
-        and `train/weight/<name>` balancer weights are also displayed by default. Array diagnostics remain available
-        to callbacks without an implicit reduction or host transfer.
+        and `train/weight/<name>` balancer weights are displayed in that order by default. Array diagnostics remain
+        available to callbacks without an implicit reduction or host transfer.
 
         Args:
             model_state: Updated explicit model state.
@@ -401,10 +401,11 @@ class PhiModule(BasePhiModule):
         self.log("train/loss", context.metrics["train/loss"], prog_bar=True)
         for loss_name in self.loss_names:
             loss_metric = f"train/loss/{loss_name}"
-            weight_metric = f"train/weight/{loss_name}"
             if loss_metric in context.metrics:
                 self.log(loss_metric, context.metrics[loss_metric], prog_bar=True)
                 declared_names.add(loss_metric)
+        for loss_name in self.loss_names:
+            weight_metric = f"train/weight/{loss_name}"
             if weight_metric in context.metrics:
                 self.log(weight_metric, context.metrics[weight_metric], prog_bar=True)
                 declared_names.add(weight_metric)
