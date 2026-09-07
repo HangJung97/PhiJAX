@@ -170,7 +170,7 @@ def test_phi_module_delegates_forward_losses_prediction_and_residuals() -> None:
 
 def test_phi_module_default_lifecycle_hooks_preserve_values_and_declare_metrics() -> None:
     """Verify default host hooks preserve values and explicitly declare scalar metric destinations."""
-    module = _bind(PhiModule(InitializedModel(_model_apply, {}), _ConfiguredObjective()))
+    module = _bind(PhiModule(InitializedModel(_model_apply, {}), _ConfiguredObjective(("data", "physics"))))
     model_state = {"weight": jnp.asarray(2.0)}
     batch = {"data": {"inputs": jnp.ones((1, 1))}}
     context = PhiModuleContext(
@@ -179,6 +179,8 @@ def test_phi_module_default_lifecycle_hooks_preserve_values_and_declare_metrics(
             "train/loss": jnp.asarray(1.0),
             "train/loss/data": jnp.asarray(0.5),
             "train/weight/data": jnp.asarray(1.0),
+            "train/loss/physics": jnp.asarray(0.25),
+            "train/weight/physics": jnp.asarray(2.0),
             "train/residual/by_region": jnp.ones(2),
         },
     )
@@ -193,7 +195,13 @@ def test_phi_module_default_lifecycle_hooks_preserve_values_and_declare_metrics(
         returned_state, returned_metrics = module.on_train_batch_end(model_state, context)
     assert returned_state is model_state
     assert returned_metrics is context.metrics
-    assert set(collector.records) == {"train/loss", "train/loss/data", "train/weight/data"}
+    assert tuple(collector.records) == (
+        "train/loss",
+        "train/loss/data",
+        "train/loss/physics",
+        "train/weight/data",
+        "train/weight/physics",
+    )
     assert collector.records["train/loss"].logger is True
     assert collector.records["train/loss"].prog_bar is True
     assert collector.records["train/loss/data"].logger is True
