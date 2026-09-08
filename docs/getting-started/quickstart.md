@@ -20,12 +20,25 @@ The example needs no downloaded data and runs on CPU in a few seconds after JAX 
 
 ## Run it
 
-From a source checkout:
+We recommend [uv](https://docs.astral.sh/uv/); install it by following the
+[official installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+The example also works with pip alone in a standard Python virtual environment.
+
+From a source checkout, use either option below (the venv activation command is for macOS and Linux):
 
 ```bash
+# With uv (recommended)
 uv sync
 JAX_PLATFORMS=cpu uv run --no-sync python examples/quickstart.py
+
+# Or with pip in a standard venv (Python 3.12 or newer)
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+JAX_PLATFORMS=cpu python examples/quickstart.py
 ```
+
+For the remaining commands, pip users can replace `uv run --no-sync python` with `python` in the activated venv.
 
 The environment variable makes the entire process strictly CPU-only. `--accelerator cpu` selects CPU for Trainer-owned
 state and batches, but does not change the default backend used by arrays created before `Trainer.fit()`.
@@ -50,8 +63,15 @@ JAX_PLATFORMS=cpu uv run --no-sync python examples/quickstart.py --no-progress-b
 The script defaults to CPU and `32-true` precision. Select another available accelerator or precision mode explicitly:
 
 ```bash
+uv sync --extra cuda13
 uv run --no-sync python examples/quickstart.py --accelerator gpu --precision bf16-mixed
+
+# Or with pip in the activated venv
+python -m pip install ".[cuda13]"
+python examples/quickstart.py --accelerator gpu --precision bf16-mixed
 ```
+
+Replace `cuda13` with `cuda12` for a CUDA 12 environment; do not install both extras together.
 
 For deterministic GPU execution under the same hardware and software environment, set both XLA options before Python
 imports JAX:
