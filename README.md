@@ -90,13 +90,27 @@ verification and development setup.
 ## Quickstart
 
 The first runnable example solves a one-dimensional heat equation with initial, boundary, and PDE losses. It uses no
-external data and runs on CPU after JAX completes its initial compilation:
+external data and runs on CPU after JAX completes its initial compilation.
+
+We recommend [uv](https://docs.astral.sh/uv/); install it by following the
+[official installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+The example also works with pip alone in a standard Python virtual environment.
+
+Clone the repository and run the example:
 
 ```bash
 git clone https://github.com/HangJung97/PhiJAX.git
 cd PhiJAX
+
+# With uv (recommended)
 uv sync
 JAX_PLATFORMS=cpu uv run --no-sync python examples/quickstart.py
+
+# Or with pip in a standard venv
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+JAX_PLATFORMS=cpu python examples/quickstart.py
 ```
 
 `JAX_PLATFORMS=cpu` keeps the whole process strictly CPU-only. This is stronger than selecting
@@ -107,6 +121,10 @@ To run the same example on an available NVIDIA GPU:
 ```bash
 uv sync --extra cuda13
 uv run --no-sync python examples/quickstart.py --accelerator gpu
+
+# Or with pip in the activated venv
+python -m pip install ".[cuda13]"
+python examples/quickstart.py --accelerator gpu
 ```
 
 Replace `cuda13` with `cuda12` when using the CUDA 12 extra. If JAX reports a GPU allocation error, see the
