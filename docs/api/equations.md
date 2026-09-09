@@ -23,9 +23,50 @@ def heat_equation(model_apply, model_state, batch, *, stream="residual"):
 
 ## Data fidelity
 
-`base_data_fidelity` supports direct component supervision, optional sample weights, vector projection, and target
-negation. `phase_wrapped_fidelity` represents periodic observations with cosine and sine residuals in one loss group.
-Both support the model-output stream used by output-based diagnostics.
+[`base_data_fidelity`](#phijax.equations.base_data_fidelity) supports direct component supervision, optional sample
+weights, vector projection, and target negation.
+[`phase_wrapped_fidelity`](#phijax.equations.phase_wrapped_fidelity) supports the same options and represents periodic
+observations with cosine and sine residuals in one loss group.
+
+Set `weight_key="confidence"` on either equation to read residual weights from `batch["confidence"]`. The default
+is `"weight"`; a missing field or `weight_key=None` disables weighting. Weights multiply residuals before loss
+reduction, including both cosine and sine residuals for phase-wrapped fidelity. Use shape `(N, 1)` for sample-wise
+weights that broadcast across residual components. The output stream remains unweighted.
+
+Set `projection_key="direction"` on either equation to read projection directions from `batch["direction"]`. The
+default is `"projection"`; a missing field or `projection_key=None` disables projection. Directions must match the
+shape and component order selected by `output_indices`. Projection takes the dot product along the last axis and
+keeps a trailing singleton dimension, so `target_indices` must select one component. Phase-wrapped fidelity projects
+predictions before converting them to phases.
+
+Phase-wrapped fidelity also accepts `period_key="wrapping_period"` to read sample-wise periods from
+`batch["wrapping_period"]`. It defaults to `"period"`. The configured field is required for residuals; the output
+stream does not read it.
+
+For example, configure phase-wrapped fidelity with custom weight, projection, and period fields:
+
+```python
+from functools import partial
+
+from phijax.equations import phase_wrapped_fidelity
+
+fidelity = partial(
+    phase_wrapped_fidelity,
+    output_indices=(0, 1),
+    target_indices=(0,),
+    weight_key="confidence",
+    projection_key="direction",
+    period_key="wrapping_period",
+)
+```
+
+Here, `batch["direction"]` has shape `(N, 2)`, and both the selected targets and `batch["wrapping_period"]` have shape
+`(N, 1)`. Both equations support
+`stream="output"` for output-based diagnostics; this stream returns selected model outputs before projection.
+The array-level residual functions accept the direction array directly through `projection`.
+
+Phase-wrapped fidelity now uses a `projection` field when present. Set `projection_key=None` to retain direct
+supervision for batches that contain an unrelated field with that name.
 
 ::: phijax.equations.base_data_fidelity_residual
 
@@ -36,6 +77,11 @@ Both support the model-output stream used by output-based diagnostics.
 ::: phijax.equations.phase_wrapped_fidelity
 
 ## Boundary conditions
+
+[`free_slip_boundary`](#phijax.equations.free_slip_boundary) accepts `normals_key="wall_normals"` to read wall-normal
+directions from `batch["wall_normals"]`. The default remains `"normals"`. Normal components must follow the order
+selected by `output_indices` and have the same final width. The configured field is required for residuals;
+`stream="output"` returns the selected model outputs without reading normals.
 
 ::: phijax.equations.base_boundary_residual
 
