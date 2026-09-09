@@ -1,3 +1,5 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -79,3 +81,46 @@ def test_free_slip_boundary_rejects_invalid_component_selection() -> None:
     }
     with pytest.raises(ValueError, match="unique nonnegative"):
         free_slip_boundary(lambda state, point: point, None, batch, output_indices=(0, 0))
+
+
+@pytest.mark.parametrize("include_default_normals", [False, True])
+def test_free_slip_boundary_custom_normals_key(include_default_normals: bool) -> None:
+    """Verify custom normals project selected components under JIT.
+
+    Args:
+        include_default_normals: Whether an unused default normals field is present.
+    """
+    batch = {
+        "inputs": jnp.asarray([[2.0, 9.0, 3.0], [4.0, 8.0, 5.0]], dtype=jnp.float32),
+        "targets": jnp.asarray([[1.0, 1.0], [1.0, 2.0]], dtype=jnp.float32),
+        "wall_normals": jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.float32),
+    }
+    if include_default_normals:
+        batch["normals"] = jnp.zeros((2, 2), dtype=jnp.float32)
+    evaluate = partial(
+        free_slip_boundary,
+        lambda state, point: point,
+        None,
+        output_indices=(2, 0),
+        target_indices=(1, 0),
+        normals_key="wall_normals",
+    )
+    ((residual,),) = jax.jit(evaluate)(batch)
+    np.testing.assert_allclose(residual, [[2.0], [-3.0]])
+    assert residual.shape == (2, 1)
+    assert residual.dtype == jnp.float32
+    output = jax.jit(partial(evaluate, stream="output"))(batch)
+    np.testing.assert_array_equal(output[0][0], batch["inputs"][:, (2, 0)])
+
+
+def test_free_slip_boundary_missing_custom_normals_key() -> None:
+    """Require configured normals for residuals while allowing the output stream."""
+    batch = {
+        "inputs": jnp.asarray([[2.0, 3.0]], dtype=jnp.float32),
+        "targets": jnp.zeros((1, 2), dtype=jnp.float32),
+        "normals": jnp.ones((1, 2), dtype=jnp.float32),
+    }
+    evaluate = partial(free_slip_boundary, lambda state, point: point, None, normals_key="wall_normals")
+    with pytest.raises(KeyError, match="wall_normals"):
+        evaluate(batch)
+    np.testing.assert_array_equal(evaluate(batch, stream="output")[0][0], batch["inputs"])

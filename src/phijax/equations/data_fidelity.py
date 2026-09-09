@@ -14,6 +14,30 @@ from phijax.equations.metadata import residual_equation
 from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
 
 
+def _project_output(output: jax.Array, projection: jax.Array | None) -> jax.Array:
+    """Project predictions along sample-wise directions when supplied.
+
+    Args:
+        output: Selected scalar or vector predictions.
+        projection: Optional directions matching the prediction shape and component order.
+
+    Returns:
+        Predictions unchanged, or their dot products with a trailing singleton dimension.
+
+    Raises:
+        ValueError: If prediction and projection shapes differ.
+    """
+    resolved_output = output
+    if projection is not None:
+        if output.shape != projection.shape:
+            raise ValueError(
+                "Projected data fidelity requires output and projection arrays to have matching shapes: "
+                f"got output={output.shape} and projection={projection.shape}."
+            )
+        resolved_output = jnp.sum(output * projection, axis=-1, keepdims=True)
+    return resolved_output
+
+
 def base_data_fidelity_residual(
     output: jax.Array,
     target: jax.Array,
@@ -38,14 +62,7 @@ def base_data_fidelity_residual(
     Raises:
         ValueError: If `output` and `projection` shapes do not match.
     """
-    resolved_output = output
-    if projection is not None:
-        if output.shape != projection.shape:
-            raise ValueError(
-                "Projected data fidelity requires output and projection arrays to have matching shapes: "
-                f"got output={output.shape} and projection={projection.shape}."
-            )
-        resolved_output = jnp.sum(output * projection, axis=-1, keepdims=True)
+    resolved_output = _project_output(output, projection)
     signed_target = -target if target_negation else target
     residual = resolved_output - signed_target
     return residual if weight is None else weight * residual
@@ -59,6 +76,8 @@ def base_data_fidelity(
     *,
     output_indices: Sequence[int] = (0,),
     target_indices: Sequence[int] = (0,),
+    weight_key: str | None = "weight",
+    projection_key: str | None = "projection",
     target_negation: bool = False,
     stream: ResidualStream = "residual",
 ) -> ResidualGroups:
@@ -67,9 +86,13 @@ def base_data_fidelity(
     Args:
         model_apply: Pure explicit-state model application callable.
         model_state: Differentiable model parameter PyTree.
-        batch: Arrays containing `inputs`, `targets`, and optional `weight` and `projection` fields.
+        batch: Arrays containing `inputs`, `targets`, and optional weight and projection fields.
         output_indices: Model-output components compared with observations.
-        target_indices: Target components aligned with `output_indices`.
+        target_indices: Target components aligned with `output_indices`, or one component for projected output.
+        weight_key: Optional batch field containing multiplicative residual weights. Defaults to `"weight"`.
+            A missing field or `None` disables weighting. The output stream is unweighted.
+        projection_key: Optional batch field containing directions matching the selected output shape and order.
+            Defaults to `"projection"`. A missing field or `None` disables projection.
         target_negation: Whether to negate targets before subtraction.
         stream: `"residual"` for direct supervised errors or `"output"` for selected model outputs.
 
@@ -82,7 +105,7 @@ def base_data_fidelity(
     validate_stream(stream, supports_output=True)
     resolved_outputs = validate_component_indices(output_indices, option="output_indices")
     resolved_targets = validate_component_indices(target_indices, option="target_indices")
-    projection = batch.get("projection")
+    projection = None if projection_key is None else batch.get(projection_key)
     expected_target_count = 1 if projection is not None else len(resolved_outputs)
     if len(resolved_targets) != expected_target_count:
         raise ValueError("`target_indices` must select one projected target or one target per selected model output.")
@@ -93,7 +116,7 @@ def base_data_fidelity(
     residual = base_data_fidelity_residual(
         output,
         target,
-        weight=batch.get("weight"),
+        weight=None if weight_key is None else batch.get(weight_key),
         projection=projection,
         target_negation=target_negation,
     )
@@ -106,20 +129,27 @@ def phase_wrapped_residuals(
     period: jax.Array,
     *,
     weight: jax.Array | None = None,
+    projection: jax.Array | None = None,
     target_negation: bool = False,
 ) -> tuple[jax.Array, jax.Array]:
     """Return cosine and sine residuals for periodic scalar observations.
 
     Args:
-        output: Predicted scalar values.
+        output: Predicted scalar or vector values.
         target: Observed scalar values.
         period: Sample-wise wrapping periods.
-        weight: Optional multiplicative residual weights.
+        weight: Optional multiplicative residual weights applied after phase conversion.
+        projection: Optional direction with the same shape as `output`. Projects vector predictions to a trailing
+            singleton dimension before phase conversion.
         target_negation: Whether to negate targets before phase conversion.
 
     Returns:
-        Cosine and sine residual arrays with the broadcast input shape.
+        Cosine and sine residual arrays with the broadcast input shape after projection.
+
+    Raises:
+        ValueError: If `output` and `projection` shapes do not match.
     """
+    output = _project_output(output, projection)
     signed_target = -target if target_negation else target
     output_phase = jnp.pi * output / period
     target_phase = jnp.pi * signed_target / period
@@ -137,6 +167,9 @@ def phase_wrapped_fidelity(
     *,
     output_indices: Sequence[int] = (0,),
     target_indices: Sequence[int] = (0,),
+    weight_key: str | None = "weight",
+    projection_key: str | None = "projection",
+    period_key: str = "period",
     target_negation: bool = False,
     stream: ResidualStream = "residual",
 ) -> ResidualGroups:
@@ -145,9 +178,15 @@ def phase_wrapped_fidelity(
     Args:
         model_apply: Pure explicit-state model application callable.
         model_state: Differentiable model parameter PyTree.
-        batch: Arrays containing `inputs`, `targets`, `period`, and optional `weight`.
+        batch: Arrays containing `inputs`, `targets`, the configured period field, and optional weight and
+            projection fields.
         output_indices: Model-output components compared with observations.
-        target_indices: Target components aligned with `output_indices`.
+        target_indices: Target components aligned with `output_indices`, or one component for projected output.
+        weight_key: Optional batch field containing multiplicative residual weights. Defaults to `"weight"`.
+            A missing field or `None` disables weighting. The output stream is unweighted.
+        projection_key: Optional batch field containing directions matching the selected output shape and order.
+            Defaults to `"projection"`. A missing field or `None` disables projection.
+        period_key: Batch field containing sample-wise wrapping periods. Required for the residual stream only.
         target_negation: Whether to negate targets before phase conversion.
         stream: `"residual"` for cosine and sine errors or `"output"` for selected model outputs.
 
@@ -156,13 +195,16 @@ def phase_wrapped_fidelity(
         diagnostics.
 
     Raises:
-        ValueError: If the stream or component selection is invalid.
+        ValueError: If the stream, component selection, or optional projection is invalid.
+        KeyError: If the configured period field is missing when evaluating residuals.
     """
     validate_stream(stream, supports_output=True)
     resolved_outputs = validate_component_indices(output_indices, option="output_indices")
     resolved_targets = validate_component_indices(target_indices, option="target_indices")
-    if len(resolved_outputs) != len(resolved_targets):
-        raise ValueError("`output_indices` and `target_indices` must have equal lengths.")
+    projection = None if projection_key is None else batch.get(projection_key)
+    expected_target_count = 1 if projection is not None else len(resolved_outputs)
+    if len(resolved_targets) != expected_target_count:
+        raise ValueError("`target_indices` must select one projected target or one target per selected model output.")
     output = evaluate_selected_outputs(model_apply, model_state, batch["inputs"], resolved_outputs)
     if stream == "output":
         return ((output,),)
@@ -170,8 +212,9 @@ def phase_wrapped_fidelity(
     cosine, sine = phase_wrapped_residuals(
         output,
         target,
-        batch["period"],
-        weight=batch.get("weight"),
+        batch[period_key],
+        weight=None if weight_key is None else batch.get(weight_key),
+        projection=projection,
         target_negation=target_negation,
     )
     return ((cosine, sine),)

@@ -76,6 +76,7 @@ def free_slip_boundary(
     *,
     output_indices: Sequence[int] = (0, 1),
     target_indices: Sequence[int] = (0, 1),
+    normals_key: str = "normals",
     stream: ResidualStream = "residual",
 ) -> ResidualGroups:
     """Evaluate grouped free-slip boundary residuals or constrained outputs.
@@ -83,9 +84,11 @@ def free_slip_boundary(
     Args:
         model_apply: Pure explicit-state model application callable.
         model_state: Differentiable model parameter PyTree.
-        batch: Arrays containing `inputs`, `targets`, and `normals`.
+        batch: Arrays containing `inputs`, `targets`, and the configured normals field.
         output_indices: Model-output velocity components constrained at the boundary.
         target_indices: Target velocity components aligned with `output_indices`.
+        normals_key: Batch field containing wall-normal components aligned with `output_indices`.
+            Defaults to `"normals"`. Required for the residual stream only.
         stream: `"residual"` for the normal-velocity error or `"output"` for selected model outputs.
 
     Returns:
@@ -93,6 +96,7 @@ def free_slip_boundary(
 
     Raises:
         ValueError: If the stream or component selection is invalid.
+        KeyError: If the configured normals field is missing when evaluating residuals.
     """
     validate_stream(stream, supports_output=True)
     resolved_outputs = validate_component_indices(output_indices, option="output_indices")
@@ -103,7 +107,7 @@ def free_slip_boundary(
     if stream == "output":
         return ((output,),)
     target = select_components(batch["targets"], resolved_targets, option="target_indices")
-    return ((free_slip_residual(output, target, batch["normals"]),),)
+    return ((free_slip_residual(output, target, batch[normals_key]),),)
 
 
 __all__ = ["base_boundary_residual", "free_slip_boundary", "free_slip_residual", "no_slip_residual"]
