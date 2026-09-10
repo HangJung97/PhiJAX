@@ -68,6 +68,47 @@ def free_slip_residual(velocity: jax.Array, target: jax.Array, normals: jax.Arra
     return jnp.sum(velocity_residual * normals, axis=-1, keepdims=True)
 
 
+@residual_equation(names=("no_slip",), default_ntk_stream="output")
+def no_slip_boundary(
+    model_apply: ModelApply,
+    model_state: Any,
+    batch: ArrayMapping,
+    *,
+    output_indices: Sequence[int] = (0, 1),
+    target_indices: Sequence[int] = (0, 1),
+    stream: ResidualStream = "residual",
+) -> ResidualGroups:
+    """Constrain selected velocity components to a reference wall velocity.
+
+    Args:
+        model_apply: Pure explicit-state model application callable.
+        model_state: Differentiable model parameter PyTree.
+        batch: Arrays containing `inputs` and wall-velocity `targets`. Use zero targets for a stationary wall.
+            Targets are required for the residual stream only.
+        output_indices: Model-output velocity components constrained at the boundary.
+        target_indices: Target velocity components aligned with `output_indices`.
+        stream: `"residual"` for component-wise velocity errors or `"output"` for selected model outputs.
+
+    Returns:
+        One group containing a vector residual with shape `(N, len(output_indices))`, or one selected-output
+        group for output-based NTK diagnostics. Target batch dimensions may broadcast against the outputs.
+
+    Raises:
+        ValueError: If the stream or component selection is invalid.
+        KeyError: If `inputs` is missing, or `targets` is missing when evaluating residuals.
+    """
+    validate_stream(stream, supports_output=True)
+    resolved_outputs = validate_component_indices(output_indices, option="output_indices")
+    resolved_targets = validate_component_indices(target_indices, option="target_indices")
+    if len(resolved_outputs) != len(resolved_targets):
+        raise ValueError("`output_indices` and `target_indices` must have equal lengths.")
+    output = evaluate_selected_outputs(model_apply, model_state, batch["inputs"], resolved_outputs)
+    if stream == "output":
+        return ((output,),)
+    target = select_components(batch["targets"], resolved_targets, option="target_indices")
+    return ((no_slip_residual(output, target),),)
+
+
 @residual_equation(names=("free_slip",), default_ntk_stream="output")
 def free_slip_boundary(
     model_apply: ModelApply,
@@ -110,4 +151,4 @@ def free_slip_boundary(
     return ((free_slip_residual(output, target, batch[normals_key]),),)
 
 
-__all__ = ["base_boundary_residual", "free_slip_boundary", "free_slip_residual", "no_slip_residual"]
+__all__ = ["base_boundary_residual", "free_slip_boundary", "free_slip_residual", "no_slip_boundary", "no_slip_residual"]

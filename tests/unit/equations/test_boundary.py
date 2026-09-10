@@ -5,7 +5,89 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phijax.equations import base_boundary_residual, free_slip_boundary, free_slip_residual, no_slip_residual
+from phijax.equations import (
+    base_boundary_residual,
+    free_slip_boundary,
+    free_slip_residual,
+    get_default_ntk_stream,
+    get_residual_names,
+    no_slip_boundary,
+    no_slip_residual,
+)
+
+
+@pytest.mark.parametrize("dimensions", [1, 2, 3])
+@pytest.mark.parametrize("samples", [1, 2])
+def test_no_slip_boundary_selected_components_and_gradients(dimensions: int, samples: int) -> None:
+    """Verify reordered velocity errors and parameter/input gradients under JIT.
+
+    Args:
+        dimensions: Number of constrained velocity components.
+        samples: Number of boundary points, including a singleton batch.
+    """
+    inputs = jnp.arange(samples * 4, dtype=jnp.float32).reshape(samples, 4) + 1.0
+    targets = jnp.asarray([[0.5, 1.0, 1.5]], dtype=jnp.float32)
+    outputs = tuple(reversed(range(dimensions)))
+    target_indices = tuple(range(dimensions))
+    evaluate = partial(
+        no_slip_boundary,
+        lambda state, point: state * point,
+        output_indices=outputs,
+        target_indices=target_indices,
+    )
+    state = jnp.asarray(2.0, dtype=jnp.float32)
+    batch = {"inputs": inputs, "targets": targets}
+    ((residual,),) = jax.jit(evaluate)(state, batch)
+    expected = 2.0 * inputs[:, outputs] - targets[:, target_indices]
+    np.testing.assert_allclose(residual, expected)
+    assert residual.shape == (samples, dimensions)
+    assert residual.dtype == jnp.float32
+    ((output,),) = jax.jit(partial(evaluate, stream="output"))(state, {"inputs": inputs})
+    np.testing.assert_array_equal(output, 2.0 * inputs[:, outputs])
+    gradient = jax.jit(
+        jax.grad(
+            lambda params, points: jnp.sum(evaluate(params, {"inputs": points, "targets": targets})[0][0] ** 2),
+            argnums=(0, 1),
+        )
+    )(state, inputs)
+    np.testing.assert_allclose(gradient[0], jnp.sum(2.0 * expected * inputs[:, outputs]))
+    expected_input_gradient = jnp.zeros_like(inputs).at[:, jnp.asarray(outputs)].set(4.0 * expected)
+    np.testing.assert_allclose(gradient[1], expected_input_gradient)
+    for value in gradient:
+        assert value.dtype == jnp.float32
+        assert np.isfinite(value).all()
+
+
+def test_no_slip_boundary_defaults_and_metadata() -> None:
+    """Verify stationary-wall defaults and automatic residual metadata."""
+    batch = {"inputs": jnp.asarray([[2.0, -3.0, 9.0]]), "targets": jnp.zeros((1, 2))}
+    ((residual,),) = no_slip_boundary(lambda state, point: point, None, batch)
+    np.testing.assert_array_equal(residual, [[2.0, -3.0]])
+    assert get_residual_names(no_slip_boundary) == ("no_slip",)
+    assert get_default_ntk_stream(no_slip_boundary) == "output"
+    with pytest.raises(KeyError, match="targets"):
+        no_slip_boundary(lambda state, point: point, None, {"inputs": batch["inputs"]})
+
+
+@pytest.mark.parametrize("option", ["output_indices", "target_indices"])
+@pytest.mark.parametrize("indices", [(), (-1, 0), (0, 0)])
+def test_no_slip_boundary_rejects_invalid_indices(option: str, indices: tuple[int, ...]) -> None:
+    """Reject empty, negative, or repeated component selections.
+
+    Args:
+        option: Component selection option to validate.
+        indices: Invalid component selection.
+    """
+    with pytest.raises(ValueError, match="unique nonnegative"):
+        no_slip_boundary(lambda state, point: point, None, {}, **{option: indices})
+
+
+def test_no_slip_boundary_rejects_mismatched_selections_and_unknown_stream() -> None:
+    """Reject invalid static configuration before evaluating the model."""
+    with pytest.raises(ValueError, match="equal lengths"):
+        no_slip_boundary(lambda state, point: point, None, {}, target_indices=(0,))
+    with pytest.raises(ValueError, match="stream"):
+        no_slip_boundary(lambda state, point: point, None, {}, stream="unknown")
 
 
 def test_base_boundary_returns_direct_component_residuals() -> None:

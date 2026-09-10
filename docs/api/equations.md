@@ -78,6 +78,13 @@ supervision for batches that contain an unrelated field with that name.
 
 ## Boundary conditions
 
+[`no_slip_boundary`](#phijax.equations.no_slip_boundary) constrains every selected velocity component to the wall
+velocity in `batch["targets"]`. Use zero targets for a stationary wall or prescribed velocities for a moving wall.
+`output_indices` and `target_indices` default to `(0, 1)` and must select the same number of components in matching
+order. For three velocity components, set both to `(0, 1, 2)`. The equation returns one `no_slip` group containing
+the component-wise residual array. Its default NTK stream is `"output"`, which returns selected predictions without
+reading targets. No wall normals are required.
+
 [`free_slip_boundary`](#phijax.equations.free_slip_boundary) accepts `normals_key="wall_normals"` to read wall-normal
 directions from `batch["wall_normals"]`. The default remains `"normals"`. Normal components must follow the order
 selected by `output_indices` and have the same final width. The configured field is required for residuals;
@@ -86,6 +93,8 @@ selected by `output_indices` and have the same final width. The configured field
 ::: phijax.equations.base_boundary_residual
 
 ::: phijax.equations.no_slip_residual
+
+::: phijax.equations.no_slip_boundary
 
 ::: phijax.equations.free_slip_residual
 
