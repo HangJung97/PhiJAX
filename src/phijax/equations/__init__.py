@@ -1,4 +1,10 @@
-from phijax.equations.boundary import base_boundary_residual, free_slip_boundary, free_slip_residual, no_slip_residual
+from phijax.equations.boundary import (
+    base_boundary_residual,
+    free_slip_boundary,
+    free_slip_residual,
+    no_slip_boundary,
+    no_slip_residual,
+)
 from phijax.equations.data_fidelity import (
     base_data_fidelity,
     base_data_fidelity_residual,
@@ -25,6 +31,7 @@ __all__ = [
     "free_slip_residual",
     "get_default_ntk_stream",
     "get_residual_names",
+    "no_slip_boundary",
     "no_slip_residual",
     "phase_wrapped_fidelity",
     "phase_wrapped_residuals",
