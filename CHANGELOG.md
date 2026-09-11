@@ -9,6 +9,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0b5] - 2026-09-11
+
+### Added
+
+- Added `no_slip_boundary` with configurable velocity components and residual/output streams for stationary and moving
+  walls. ([#39](https://github.com/HangJung97/PhiJAX/pull/39))
+- Added configurable weight, projection, and period batch keys to fidelity equations, and a configurable normals key to
+  `free_slip_boundary`. ([#38](https://github.com/HangJung97/PhiJAX/pull/38))
+
+### Breaking changes
+
+- `phase_wrapped_fidelity` now uses `batch["projection"]` when present. Set `projection_key=None` to preserve direct
+  supervision when that field contains unrelated data. ([#38](https://github.com/HangJung97/PhiJAX/pull/38))
+
+### Changed
+
+- Updated the optional W&B dependency to `>=0.30,<0.31`. ([#37](https://github.com/HangJung97/PhiJAX/pull/37))
+- Added an optimizer guide covering Optax, the optional SOAP_JAX compatibility fork, and checkpoint restoration.
+  ([#40](https://github.com/HangJung97/PhiJAX/pull/40))
+- Clarified installation workflows with uv and pip. ([#36](https://github.com/HangJung97/PhiJAX/pull/36))
+
+### Fixed
+
+- Log all term losses before loss-balancer weights for consistent metric ordering.
+  ([#35](https://github.com/HangJung97/PhiJAX/pull/35))
+
 ## [0.2.0b4] - 2026-09-03
 
 ### Added
@@ -126,4 +152,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [0.2.0b2]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b2
 [0.2.0b3]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b3
 [0.2.0b4]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b4
-[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b4...HEAD
+[0.2.0b5]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b5
+[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b5...HEAD
