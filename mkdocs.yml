@@ -88,6 +88,7 @@ nav:
           - Custom models: guides/models.md
           - Datasets: guides/datasets.md
           - Equations and objectives: guides/objectives.md
+          - Choose an optimizer: guides/optimizers.md
           - Loss balancers: guides/balancers.md
       - Run and debug:
           - Logging and monitoring: guides/logging.md

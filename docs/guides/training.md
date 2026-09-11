@@ -34,6 +34,11 @@ predictions = trainer.predict(result, datamodule=data_module)
 The original module blueprint is unchanged. The returned [`FitResult`](../api/training.md#phijax.training.FitResult) provides the bound
 module through `result.module` and final functional state through `result.state`.
 
+## Choose an optimizer
+
+Pass an Optax optimizer directly to `fit()`. See [Choose an optimizer](optimizers.md) for an Adam example and optional
+SOAP installation, Python/Hydra configuration, and checkpoint requirements.
+
 ## Choose a loss balancer
 
 Pass a static or adaptive [`LossBalancer`](../api/balancers.md#phijax.balancers.LossBalancer) directly to `fit()`. Adaptive balancers own
