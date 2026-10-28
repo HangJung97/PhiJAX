@@ -52,6 +52,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A full resume and prediction from a checkpoint now use the input statistics the model was trained with. Previously
   they were recomputed from the current DataModule, which silently changed the model if the data had changed.
   Transfer learning with `weights_only=True` still uses the current DataModule's statistics.
+- Resuming with a different set of callbacks no longer raises. Following Lightning, added callbacks start fresh, and
+  stored state for a removed stateful callback is skipped with a warning. Toggling stateless callbacks, such as the
+  progress bar or model summary, neither fails nor warns.
 
 ## [0.2.0b5] - 2026-09-11
 
