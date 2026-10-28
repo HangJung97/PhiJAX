@@ -140,7 +140,13 @@ class OrbaxCheckpointIO:
     def open(self) -> None:
         """Open the Orbax manager when it is not already active."""
         if self._manager is None:
-            self._manager = ocp.CheckpointManager(self.directory, options=self._options)
+            # Registering the handler of the single saved item lets metadata reads describe it. Without it, Orbax logs
+            # that item "default" could not be restored on every `metadata()` call.
+            self._manager = ocp.CheckpointManager(
+                self.directory,
+                options=self._options,
+                item_handlers=ocp.StandardCheckpointHandler(),
+            )
 
     def _active_manager(self) -> ocp.CheckpointManager:
         """Return an active manager, opening it lazily when required.

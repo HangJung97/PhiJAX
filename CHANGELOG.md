@@ -55,6 +55,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Resuming with a different set of callbacks no longer raises. Following Lightning, added callbacks start fresh, and
   stored state for a removed stateful callback is skipped with a warning. Toggling stateless callbacks, such as the
   progress bar or model summary, neither fails nor warns.
+- `OrbaxCheckpointIO` no longer makes Orbax log `Item "default" ... could not be restored` on every checkpoint
+  metadata read, such as each restore.
 
 ## [0.2.0b5] - 2026-09-11
 
