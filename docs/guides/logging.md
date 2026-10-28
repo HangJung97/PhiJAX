@@ -121,7 +121,9 @@ Use [`ModelCheckpoint`](../api/checkpointing.md#phijax.callbacks.ModelCheckpoint
 ```python
 from phijax import Trainer
 from phijax.callbacks import ModelCheckpoint
+from phijax.training import OrbaxCheckpointIO
 
+checkpoint_io = OrbaxCheckpointIO("checkpoints")
 checkpoint = ModelCheckpoint(
     checkpoint_io,
     monitor="train/loss",

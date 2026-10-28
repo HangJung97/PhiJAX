@@ -725,7 +725,7 @@ class Trainer:
         if ckpt_path != "last":
             if not restore_callbacks or ckpt_path is None:
                 return restore_checkpoint(state, ckpt_path, weights_only=weights_only, step=ckpt_step)
-            with OrbaxCheckpointIO(ckpt_path, max_to_keep=None, enable_async_checkpointing=False) as checkpoint_io:
+            with OrbaxCheckpointIO(ckpt_path, enable_async_checkpointing=False) as checkpoint_io:
                 restored = checkpoint_io.restore(state, ckpt_step)
                 self._pending_callback_states = checkpoint_io.restore_callback_states(ckpt_step)
                 return restored

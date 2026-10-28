@@ -86,6 +86,31 @@ before constructing DataModule sources and folds sampling with the restored glob
 This layout change raises the checkpoint schema to version 2. PhiJAX 0.1 checkpoints remain usable with PhiJAX 0.1;
 PhiJAX 0.2 reports them as incompatible instead of attempting a partial restore.
 
+### Checkpoint retention
+
+From PhiJAX 0.2.0b6, `ModelCheckpoint` owns checkpoint retention, as in Lightning. `OrbaxCheckpointIO` no longer
+accepts `max_to_keep`, and `save_top_k` defaults to `1`.
+
+| PhiJAX 0.2.0b5 and earlier                             | PhiJAX 0.2.0b6 and later                                         |
+| ------------------------------------------------------ | ---------------------------------------------------------------- |
+| `OrbaxCheckpointIO(..., max_to_keep=3)`                | `ModelCheckpoint(..., monitor="step", mode="max", save_top_k=3)` |
+| `OrbaxCheckpointIO(..., max_to_keep=None)`             | `ModelCheckpoint(..., save_top_k=-1)`                            |
+| `ModelCheckpoint(checkpoint_io)` kept every checkpoint | `ModelCheckpoint(checkpoint_io)` keeps the latest checkpoint     |
+
+In a Hydra config, move the retention count from `checkpoint_io` to the callback:
+
+```yaml
+model_checkpoint:
+  _target_: phijax.callbacks.ModelCheckpoint
+  every_n_steps: 5000
+  monitor: step
+  mode: max
+  save_top_k: 3
+  checkpoint_io:
+    _target_: phijax.training.OrbaxCheckpointIO
+    directory: ${paths.output_dir}/checkpoints
+```
+
 ## Adaptive balancing
 
 Adaptive balancers now own their update cadence and diagnostic settings:
