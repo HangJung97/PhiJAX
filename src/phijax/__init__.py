@@ -10,6 +10,7 @@ from phijax.training import FitResult, Trainer
 from phijax.training.assembly import build_training_plan
 from phijax.training.plans import TrainingPlan
 from phijax.training.state import TrainState
+from phijax.types import InputStatistics
 
 __version__ = version("phijax")
 DataModule = PhiDataModule
@@ -19,6 +20,7 @@ __all__ = [
     "DataModule",
     "FitResult",
     "InitializedModel",
+    "InputStatistics",
     "LossBalancer",
     "ModelFactory",
     "PhiDataModule",

@@ -1,10 +1,13 @@
+from collections.abc import Sequence
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import optax
 from flax import struct
 
 from phijax.training.precision import PrecisionName, PrecisionPolicy
+from phijax.types import InputStatistics
 
 
 @struct.dataclass
@@ -21,6 +24,8 @@ class TrainState:
         step: Scalar integer training iteration stored on device.
         loss_scale: Current loss scale used by FP16 mixed precision.
         finite_steps: Consecutive finite-gradient update count used to grow `loss_scale`.
+        input_statistics: Model-input normalization statistics the model was built with, or `None`. Checkpoints store
+            them with the weights. They are never differentiated or updated by the optimizer.
     """
 
     model_state: Any
@@ -32,6 +37,29 @@ class TrainState:
     step: jax.Array
     loss_scale: jax.Array
     finite_steps: jax.Array
+    input_statistics: InputStatistics | None = None
+
+
+def as_input_statistics(statistics: Sequence[Any] | None) -> InputStatistics | None:
+    """Convert a `(mean, std)` pair to `float32` :class:`~phijax.types.InputStatistics` arrays.
+
+    Args:
+        statistics: Mean and standard deviation arrays, an :class:`~phijax.types.InputStatistics`, or `None`.
+
+    Returns:
+        Statistics stored as `float32` JAX arrays, or `None` when no statistics are supplied.
+
+    Raises:
+        ValueError: If `statistics` is not a pair of matching one-dimensional arrays.
+    """
+    if statistics is None:
+        return None
+    if len(statistics) != 2:
+        raise ValueError("Input statistics must be a `(mean, std)` pair.")
+    mean, std = (jnp.asarray(value, dtype=jnp.float32) for value in statistics)
+    if mean.ndim != 1 or mean.shape != std.shape:
+        raise ValueError("Input statistics must be one-dimensional `mean` and `std` arrays with matching shapes.")
+    return InputStatistics(mean=mean, std=std)
 
 
 def initialize_train_state(
@@ -43,6 +71,7 @@ def initialize_train_state(
     *,
     sampling_key: jax.Array | None = None,
     balancer_key: jax.Array | None = None,
+    input_statistics: Sequence[Any] | None = None,
 ) -> TrainState:
     """Initialize the complete functional training state.
 
@@ -54,12 +83,13 @@ def initialize_train_state(
         precision: Precision policy controlling parameter dtype and initial loss scaling.
         sampling_key: Optional explicit DataModule sampling key.
         balancer_key: Optional explicit adaptive-balancer diagnostic key.
+        input_statistics: Optional `(mean, std)` normalization statistics the model was built with.
 
     Returns:
         Training state with initialized optimizer slots and device step `0`.
 
     Raises:
-        ValueError: If only one explicit persistent key is supplied.
+        ValueError: If only one explicit persistent key is supplied, or the statistics are malformed.
     """
     policy = PrecisionPolicy.from_name(precision)
     model_state = policy.cast_model_state(model_state)
@@ -83,4 +113,5 @@ def initialize_train_state(
         step=jax.numpy.asarray(0, dtype=jax.numpy.int32),
         loss_scale=jax.numpy.asarray(policy.initial_loss_scale, dtype=jax.numpy.float32),
         finite_steps=jax.numpy.asarray(0, dtype=jax.numpy.int32),
+        input_statistics=as_input_statistics(input_statistics),
     )

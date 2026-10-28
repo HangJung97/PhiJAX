@@ -86,6 +86,16 @@ before constructing DataModule sources and folds sampling with the restored glob
 This layout change raises the checkpoint schema to version 2. PhiJAX 0.1 checkpoints remain usable with PhiJAX 0.1;
 PhiJAX 0.2 reports them as incompatible instead of attempting a partial restore.
 
+### Stored input statistics
+
+From PhiJAX 0.2.0b6, `TrainState.input_statistics` stores the model's input normalization statistics, and checkpoints
+use schema version 3. A full resume and prediction from a checkpoint use the stored statistics; transfer learning with
+`weights_only=True` uses the current DataModule's statistics. Schema-2 checkpoints from 0.2.0b5 still restore with the
+current DataModule's statistics and a warning. PhiJAX 0.2.0b5 cannot read schema-3 checkpoints.
+
+Existing prediction scripts need no change. A restore template built without statistics takes them from the module,
+and the Trainer rebinds the module to the checkpoint statistics when they differ.
+
 ### Checkpoint retention
 
 From PhiJAX 0.2.0b6, `ModelCheckpoint` owns checkpoint retention, as in Lightning. `OrbaxCheckpointIO` no longer

@@ -7,8 +7,10 @@ options.
 
 ## State
 
-`TrainState` contains model parameters, Optax state, balancer state, independent PRNG streams, the optimizer step, and
-mixed-precision loss-scaling state. A complete checkpoint restores every field.
+`TrainState` contains model parameters, Optax state, balancer state, independent PRNG streams, the optimizer step,
+mixed-precision loss-scaling state, and the model's input normalization statistics. A complete checkpoint restores every
+field. The statistics are never differentiated; see
+[input normalization statistics](checkpointing.md#input-normalization-statistics).
 
 ::: phijax.training.TrainState
 

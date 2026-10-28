@@ -16,7 +16,9 @@ teardown("fit" | "predict")
 `prepare_data` may generate or obtain shared artifacts. Build process-local NumPy pools in `setup`.
 `prepare_stage(stage)` runs these methods at most once until `teardown_stage(stage)` releases the stage. The Trainer
 prepares fitting before requesting optional model normalization statistics, then retrieves sources and handles
-teardown. The base `input_statistics()` returns `None`; override it to opt into input normalization. Return `None` from
+teardown. The base `input_statistics()` returns `None`; override it to opt into input normalization. The Trainer stores
+the returned statistics in `TrainState`, so a full resume and prediction from a checkpoint use the statistics the model
+was trained with. See [input normalization statistics](checkpointing.md#input-normalization-statistics). Return `None` from
 `predict_batch_source()` to skip prediction. Prediction sources must be finite and repeatable; training sources may
 sample indefinitely from the global optimizer step.
 

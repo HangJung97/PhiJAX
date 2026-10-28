@@ -3,14 +3,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import jax
+import numpy as np
 
 from phijax.core.hooks import PhiModuleContext, _ModuleHooks
 from phijax.metrics import _ACTIVE_MODULE_METRICS, TrainingOutput, _metric_is_scalar
 from phijax.objectives import Objective, ResidualObjective
-from phijax.types import ArrayMapping, ModelApply, ModelSummaryFunction, NamedBatches
+from phijax.types import ArrayMapping, InputStatistics, ModelApply, ModelSummaryFunction, NamedBatches
 
 if TYPE_CHECKING:
     from phijax.models.contracts import InitializedModel, ModelFactory
@@ -60,6 +61,33 @@ class BasePhiModule(_ModuleHooks, ABC):
             Ordered unique DataModule batch names, or an empty sequence when they cannot be inferred.
         """
         return ()
+
+    @property
+    def input_statistics(self) -> InputStatistics | None:
+        """Return the input normalization statistics applied by the bound model.
+
+        Custom modules own their normalization, so the default reports none. The Trainer stores the reported
+        statistics in :class:`phijax.training.TrainState`.
+
+        Returns:
+            Bound statistics as host arrays, or `None`.
+        """
+        return None
+
+    def bind_input_statistics(self, statistics: InputStatistics | None) -> Self:
+        """Return a module whose model applies `statistics`.
+
+        The Trainer calls this after restoring a checkpoint so the module uses the restored statistics. Custom modules
+        own their normalization, so the default returns this module unchanged.
+
+        Args:
+            statistics: Statistics to apply, or `None` for no normalization statistics.
+
+        Returns:
+            This module, or a rebound copy when the statistics differ.
+        """
+        del statistics
+        return self
 
     def __call__(self, model_state: Any, inputs: jax.Array) -> jax.Array:
         """Evaluate one model input.
@@ -266,6 +294,10 @@ class PhiModule(BasePhiModule):
         self._batch_keys = resolved_batch_keys
         self._model_apply: ModelApply | None = None
         self._model_summary: ModelSummaryFunction | None = None
+        # Build inputs recorded by `prepare_model` so `bind_input_statistics` can rebuild the apply closure.
+        self._model_key: jax.Array | None = None
+        self._precision: PrecisionPolicy | None = None
+        self._input_statistics: InputStatistics | None = None
 
     @property
     def loss_names(self) -> tuple[str, ...]:
@@ -292,7 +324,7 @@ class PhiModule(BasePhiModule):
         input_mean: jax.typing.ArrayLike | None,
         input_std: jax.typing.ArrayLike | None,
         precision: PrecisionPolicy,
-    ) -> tuple[PhiModule, Any]:
+    ) -> tuple[Self, Any]:
         """Initialize and bind the model without mutating this blueprint.
 
         Args:
@@ -322,7 +354,62 @@ class PhiModule(BasePhiModule):
         bound = copy(self)
         bound._model_apply = initialized.apply
         bound._model_summary = initialized.summary
+        bound._model_key = key
+        bound._precision = precision
+        # A prebuilt `InitializedModel` ignores the statistics, so none are recorded.
+        if isinstance(self.model, InitializedModel) or input_mean is None or input_std is None:
+            bound._input_statistics = None
+        else:
+            bound._input_statistics = _host_statistics(input_mean, input_std)
         return bound, initialized.state
+
+    @property
+    def input_statistics(self) -> InputStatistics | None:
+        """Return the input normalization statistics passed to the model factory.
+
+        Returns:
+            Host `float32` statistics, or `None` when the model was built without statistics or is a prebuilt
+            :class:`phijax.InitializedModel`.
+        """
+        return self._input_statistics
+
+    def bind_input_statistics(self, statistics: InputStatistics | None) -> Self:
+        """Return a module whose model applies `statistics`.
+
+        The model factory runs again with the original key and precision; its new parameter state is discarded.
+
+        Args:
+            statistics: Statistics to apply, or `None` for no normalization statistics.
+
+        Returns:
+            This module when the statistics already match or the model is a prebuilt
+            :class:`phijax.InitializedModel`, otherwise a rebound copy. This module is never mutated.
+
+        Raises:
+            RuntimeError: If this blueprint has not been bound by :meth:`prepare_model`.
+        """
+        from phijax.models.contracts import InitializedModel
+
+        if isinstance(self.model, InitializedModel):
+            return self
+        if self._model_apply is None or self._model_key is None or self._precision is None:
+            raise RuntimeError("`bind_input_statistics()` requires a module bound by `prepare_model()`.")
+        requested = None if statistics is None else _host_statistics(*statistics)
+        current = self._input_statistics
+        if current is None or requested is None:
+            unchanged = current is requested
+        else:
+            unchanged = all(np.array_equal(a, b) for a, b in zip(current, requested, strict=True))
+        if unchanged:
+            return self
+        input_mean, input_std = (None, None) if requested is None else requested
+        bound, _ = self.prepare_model(
+            key=self._model_key,
+            input_mean=input_mean,
+            input_std=input_std,
+            precision=self._precision,
+        )
+        return bound
 
     def forward(self, model_state: Any, inputs: jax.Array) -> jax.Array:
         """Evaluate one model input with the configured application callable.
@@ -444,6 +531,22 @@ class PhiModule(BasePhiModule):
         if self._model_apply is None:
             raise RuntimeError("This `PhiModule` is uninitialized. Pass it to `Trainer.fit()` before evaluation.")
         return self._model_apply
+
+
+def _host_statistics(mean: jax.typing.ArrayLike, std: jax.typing.ArrayLike) -> InputStatistics:
+    """Copy input statistics to host `float32` NumPy arrays.
+
+    Args:
+        mean: Per-coordinate mean.
+        std: Per-coordinate standard deviation.
+
+    Returns:
+        Host statistics that do not keep device buffers alive.
+    """
+    return InputStatistics(
+        mean=np.asarray(jax.device_get(mean), dtype=np.float32),
+        std=np.asarray(jax.device_get(std), dtype=np.float32),
+    )
 
 
 __all__ = ["BasePhiModule", "PhiModule", "PhiModuleContext"]

@@ -80,6 +80,12 @@ result = trainer.fit(
 Use `weights_only=True` when the model parameters should be restored into fresh optimizer, balancer, PRNG, and step
 state. Complete restoration resumes the deterministic sampling sequence.
 
+Checkpoints also store the model's input normalization statistics. A complete restoration and prediction from a
+checkpoint use the stored statistics, even if the DataModule's data changed. Transfer learning with
+`weights_only=True` uses the current DataModule's statistics. To keep the source statistics instead, return
+[`load_input_statistics()`](../api/checkpointing.md#phijax.training.load_input_statistics) from the DataModule's
+`input_statistics()`.
+
 ## Use the explicit state API
 
 Use [`Trainer.fit_state()`](../api/trainer.md#phijax.training.Trainer.fit_state) when an application supplies a bound

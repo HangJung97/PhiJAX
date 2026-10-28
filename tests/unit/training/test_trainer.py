@@ -2355,9 +2355,8 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         """
         assert ckpt_path is not None
         calls.append((Path(ckpt_path), weights_only, step))
-        if weights_only:
-            return target.replace(model_state={"weight": jnp.asarray(3.0)})
-        return target.replace(step=jnp.asarray(4, jnp.int32))
+        restored = target.replace(model_state={"weight": jnp.asarray(3.0)})
+        return restored if weights_only else restored.replace(step=jnp.asarray(4, jnp.int32))
 
     monkeypatch.setattr(trainer_module, "restore_checkpoint", restore)
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
@@ -2420,7 +2419,8 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         datamodule=prediction_data_module,
     )
 
-    assert calls == [(tmp_path, False, 4), (tmp_path, True, 5)]
+    # Prediction restores the full state so it uses the checkpoint's model state and input statistics.
+    assert calls == [(tmp_path, False, 4), (tmp_path, False, 5)]
     assert requested_steps == [4]
     assert int(fit_result.state.step) == 5
     np.testing.assert_array_equal(predictions, [[6.0]])

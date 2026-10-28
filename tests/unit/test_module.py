@@ -1,15 +1,17 @@
 from collections.abc import Sequence
+from functools import partial
 from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from phijax import PhiModule, PhiModuleContext
+from phijax import BasePhiModule, InputStatistics, PhiModule, PhiModuleContext
 from phijax.balancers import ExactNTKBalancer
 from phijax.callbacks import PredictionContext
 from phijax.metrics import _collect_module_metrics
-from phijax.models import InitializedModel
+from phijax.models import InitializedModel, build_mlp
 from phijax.training import PrecisionPolicy
 from phijax.types import ModelApply, NamedBatches
 
@@ -309,3 +311,106 @@ def test_phi_module_rejects_unsupported_residuals_and_invalid_configuration() ->
     invalid_module = PhiModule(invalid_factory, _ConfiguredObjective())
     with pytest.raises(TypeError, match="InitializedModel"):
         _bind(invalid_module)
+
+
+def _normalized_mlp_module() -> PhiModule:
+    """Create an unbound module whose MLP applies input normalization.
+
+    Returns:
+        Module blueprint with a lazy normalized MLP factory.
+    """
+    model = partial(build_mlp, input_dim=2, output_dim=1, hidden=(8,), input_norm=True)
+    return PhiModule(model, _ConfiguredObjective())
+
+
+def test_phi_module_records_and_rebinds_input_statistics() -> None:
+    """Verify bound statistics are recorded on the host and rebinding rebuilds only the model application."""
+    precision = PrecisionPolicy.from_name("32-true")
+    blueprint = _normalized_mlp_module()
+    module, model_state = blueprint.prepare_model(
+        key=jax.random.key(0),
+        input_mean=jnp.asarray([0.5, 1.0]),
+        input_std=jnp.asarray([2.0, 4.0]),
+        precision=precision,
+    )
+    statistics = module.input_statistics
+    inputs = jnp.asarray([0.3, -0.7])
+
+    assert isinstance(statistics, InputStatistics)
+    assert isinstance(statistics.mean, np.ndarray)
+    assert statistics.mean.dtype == np.float32
+    assert module.bind_input_statistics(InputStatistics(np.asarray([0.5, 1.0]), np.asarray([2.0, 4.0]))) is module
+
+    rebound = module.bind_input_statistics(InputStatistics(jnp.asarray([3.0, -1.0]), jnp.asarray([0.5, 0.25])))
+    reference = build_mlp(
+        jax.random.key(0),
+        2,
+        1,
+        input_mean=[3.0, -1.0],
+        input_std=[0.5, 0.25],
+        hidden=(8,),
+        input_norm=True,
+    )
+
+    assert rebound is not module
+    np.testing.assert_array_equal(rebound.input_statistics.mean, [3.0, -1.0])
+    np.testing.assert_allclose(rebound(model_state, inputs), reference.apply(model_state, inputs), rtol=1e-6)
+    np.testing.assert_array_equal(module.input_statistics.mean, [0.5, 1.0])
+    assert not np.allclose(module(model_state, inputs), rebound(model_state, inputs))
+
+    unnormalized = module.bind_input_statistics(None)
+    assert unnormalized.input_statistics is None
+    assert unnormalized.bind_input_statistics(None) is unnormalized
+
+
+def test_input_statistics_rebinding_edge_cases() -> None:
+    """Verify prebuilt models, unbound blueprints, and custom modules keep their own normalization."""
+    prebuilt = _bind(PhiModule(InitializedModel(_model_apply, {}), _ConfiguredObjective()))
+    statistics = InputStatistics(np.ones(1), np.ones(1))
+
+    assert prebuilt.input_statistics is None
+    assert prebuilt.bind_input_statistics(statistics) is prebuilt
+    with pytest.raises(RuntimeError, match="prepare_model"):
+        _normalized_mlp_module().bind_input_statistics(statistics)
+
+    class _CustomModule(BasePhiModule):
+        """Expose the base-class statistics defaults."""
+
+        @property
+        def loss_names(self) -> tuple[str, ...]:
+            """Return one loss name.
+
+            Returns:
+                Single stable loss name.
+            """
+            return ("data",)
+
+        def forward(self, model_state: Any, inputs: jax.Array) -> jax.Array:
+            """Return the inputs unchanged.
+
+            Args:
+                model_state: Unused explicit model state.
+                inputs: One input point.
+
+            Returns:
+                `inputs`.
+            """
+            del model_state
+            return inputs
+
+        def training_step(self, model_state: Any, batches: NamedBatches) -> dict[str, jax.Array]:
+            """Return one constant loss.
+
+            Args:
+                model_state: Unused explicit model state.
+                batches: Unused named batches.
+
+            Returns:
+                One scalar loss.
+            """
+            del model_state, batches
+            return {"data": jnp.asarray(0.0)}
+
+    custom = _CustomModule()
+    assert custom.input_statistics is None
+    assert custom.bind_input_statistics(statistics) is custom
