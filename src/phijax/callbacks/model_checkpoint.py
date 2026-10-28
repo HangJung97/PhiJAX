@@ -80,6 +80,8 @@ class CheckpointIO(Protocol):
     def delete(self, step: int) -> None:
         """Delete one committed checkpoint.
 
+        Deleting a step that is not stored must be a no-op.
+
         Args:
             step: Checkpoint step to remove.
         """
@@ -132,12 +134,25 @@ class CheckpointIO(Protocol):
 class ModelCheckpoint(Callback):
     """Save functional training states at a configured interval and at fit completion.
 
-    The callback owns checkpoint scheduling policy. Its `checkpoint_io` backend owns serialization and retention, so
-    alternative storage implementations can be supplied without changing trainer orchestration.
+    The callback owns checkpoint scheduling and retention, following Lightning's `ModelCheckpoint`. Its
+    `checkpoint_io` backend only stores, restores, and deletes checkpoints, so alternative storage implementations can
+    be supplied without changing trainer orchestration.
+
+    Retention:
+
+    - With `monitor`, the callback keeps the best `save_top_k` checkpoints ranked by that metric. `step` is always
+      available as a monitor, so `monitor="step", mode="max"` keeps the latest `save_top_k` checkpoints.
+    - Without `monitor`, `save_top_k=1` keeps only the latest checkpoint, `-1` keeps every checkpoint, and `0` skips
+      periodic saves.
+    - The terminal checkpoint written by `save_last` or `save_on_exception` is never removed by ranking. The next
+      terminal checkpoint replaces it.
+
+    A checkpoint leaves storage only after the next checkpoint write has committed, so an interrupted asynchronous
+    write never removes the only valid checkpoint.
 
     Attributes:
-        best_model_path: Path of the best retained checkpoint, when available.
-        best_model_score: Best retained monitored value, when available.
+        best_model_path: Path of the best retained checkpoint, or of the latest one without `monitor`.
+        best_model_score: Best retained monitored value, or `None` without `monitor`.
         last_model_path: Path of the terminal checkpoint, when available.
     """
 
@@ -150,7 +165,7 @@ class ModelCheckpoint(Callback):
         save_on_exception: bool = False,
         monitor: str | None = None,
         mode: MonitorMode = "min",
-        save_top_k: int | None = None,
+        save_top_k: int = 1,
     ) -> None:
         """Initialize checkpoint lifecycle policy.
 
@@ -159,9 +174,10 @@ class ModelCheckpoint(Callback):
             every_n_steps: Positive periodic save interval, or `None` to disable periodic saves.
             save_last: Whether to save the final state passed to :meth:`on_fit_end`.
             save_on_exception: Whether to save the last valid state from :meth:`on_exception`.
-            monitor: Optional scalar metric used to rank checkpoints.
+            monitor: Optional scalar metric used to rank checkpoints. `step` ranks checkpoints by training step.
             mode: `"min"` or `"max"` monitored-metric optimization direction.
-            save_top_k: Retained best checkpoint count. `None` selects one with monitoring and all without it.
+            save_top_k: Number of ranked checkpoints to keep. `-1` keeps all and `0` disables ranked saves. Without
+                `monitor`, only `-1`, `0`, and `1` are valid, and `1` keeps the latest checkpoint.
 
         Raises:
             ValueError: If checkpoint scheduling or monitoring options are invalid.
@@ -172,24 +188,37 @@ class ModelCheckpoint(Callback):
             raise ValueError("`monitor` must be a non-empty metric name or `None`.")
         if mode not in {"min", "max"}:
             raise ValueError("`mode` must be `min` or `max`.")
-        resolved_top_k = (1 if monitor is not None else -1) if save_top_k is None else save_top_k
-        if isinstance(resolved_top_k, bool) or not isinstance(resolved_top_k, int) or resolved_top_k < -1:
+        if isinstance(save_top_k, bool) or not isinstance(save_top_k, int) or save_top_k < -1:
             raise ValueError("`save_top_k` must be `-1` or a nonnegative integer.")
-        if monitor is None and resolved_top_k not in {-1, 0}:
-            raise ValueError("Finite `save_top_k` requires a monitored metric.")
+        if monitor is None and save_top_k not in {-1, 0, 1}:
+            raise ValueError(
+                "`save_top_k` must be `-1`, `0`, or `1` without `monitor`. "
+                'Use `monitor="step", mode="max"` to keep the latest checkpoints.'
+            )
         self.checkpoint_io = checkpoint_io
         self.every_n_steps = every_n_steps
         self.save_last = save_last
         self.save_on_exception = save_on_exception
         self.monitor = monitor
-        self.mode = mode
-        self.save_top_k = resolved_top_k
+        self.mode: MonitorMode = mode
+        self.save_top_k = save_top_k
         self.best_model_path: Path | None = None
         self.best_model_score: float | None = None
         self.last_model_path: Path | None = None
         self._scores: dict[int, float] = {}
         self._last_saved_step: int | None = None
+        self._last_step: int | None = None
+        self._pending_deletions: list[int] = []
         self._trainer: Trainer | None = None
+
+    @property
+    def _rank_mode(self) -> MonitorMode:
+        """Return the ranking direction used for retention.
+
+        Returns:
+            `mode` with a monitor, otherwise `"max"` so the latest step ranks best.
+        """
+        return self.mode if self.monitor is not None else "max"
 
     def connect(self, trainer: Any) -> None:
         """Connect checkpoint persistence to Trainer callback state.
@@ -206,15 +235,26 @@ class ModelCheckpoint(Callback):
         self.last_model_path = None
         self._scores = {}
         self._last_saved_step = None
+        self._last_step = None
+        self._pending_deletions = []
 
     def on_fit_start(self, context: TrainerContext) -> None:
-        """Open checkpoint resources for the fit stage.
+        """Open checkpoint resources and drop tracked steps that are no longer stored.
 
         Args:
             context: Initial trainer context.
         """
         del context
         self.checkpoint_io.open()
+        if not self._scores and self._last_step is None:
+            return
+        # Restored callback state can reference steps that were deleted outside this callback.
+        stored = set(self.checkpoint_io.steps)
+        self._scores = {step: score for step, score in self._scores.items() if step in stored}
+        self._update_best()
+        if self._last_step is not None and self._last_step not in stored:
+            self._last_step = None
+            self.last_model_path = None
 
     def on_train_batch_end(self, context: TrainerContext) -> bool:
         """Save the state when the completed optimizer step matches the configured interval.
@@ -250,7 +290,11 @@ class ModelCheckpoint(Callback):
         if self.save_last and context.step != self._last_saved_step:
             self._save(context, save_as_last=True)
         elif self.save_last:
+            # The final step was already saved periodically; it becomes the terminal checkpoint.
+            previous_last_step = self._last_step
+            self._last_step = context.step
             self.last_model_path = self.checkpoint_io.checkpoint_path(context.step)
+            self._schedule_deletions(previous_last_step)
 
     def on_exception(self, exception: BaseException, context: CallbackContext) -> None:
         """Optionally save the most recent valid state during exceptional shutdown.
@@ -266,11 +310,13 @@ class ModelCheckpoint(Callback):
             self._save(context, save_as_last=True)
 
     def teardown(self) -> None:
-        """Wait for asynchronous writes and release stage resources."""
+        """Wait for asynchronous writes, remove displaced checkpoints, and release stage resources."""
+        self._flush_deletions()
         self.checkpoint_io.close()
 
     def close(self) -> None:
         """Wait for pending writes and release checkpoint backend resources idempotently."""
+        self._flush_deletions()
         self.checkpoint_io.close()
 
     def _save(self, context: TrainerContext, *, save_as_last: bool) -> None:
@@ -278,7 +324,7 @@ class ModelCheckpoint(Callback):
 
         Args:
             context: State, step, and metrics associated with the checkpoint.
-            save_as_last: Whether the checkpoint is retained as the terminal state independently of top-k ranking.
+            save_as_last: Whether the checkpoint becomes the terminal checkpoint, independently of ranking.
         """
         if self.checkpoint_io.latest_step == context.step:
             self._last_saved_step = context.step
@@ -292,20 +338,23 @@ class ModelCheckpoint(Callback):
                     f"Monitored checkpoint metric `{self.monitor}` must be scalar, received shape {monitored.shape}."
                 )
         metrics = _scalar_metrics(context.metrics)
-        score = self._monitor_score(metrics)
+        score = self._monitor_score(metrics, context.step)
         qualifies = self._qualifies(score)
         if not qualifies and not save_as_last:
             return
-        displaced_step = self._displaced_step(score) if qualifies else None
-        path = self.checkpoint_io.checkpoint_path(context.step)
-        if qualifies and score is not None:
+        displaced_step = self._displaced_step() if qualifies else None
+        if qualifies:
             self._scores[context.step] = score
             if displaced_step is not None:
                 del self._scores[displaced_step]
             self._update_best()
+        previous_last_step = self._last_step
         if save_as_last:
-            self.last_model_path = path
+            self._last_step = context.step
+            self.last_model_path = self.checkpoint_io.checkpoint_path(context.step)
         self._last_saved_step = context.step
+        # Deletions queued by the previous save run only after that write has committed.
+        self._flush_deletions()
         callback_states = self._trainer.callback_state_dict() if self._trainer is not None else context.callback_states
         saved = self.checkpoint_io.save(
             context.state,
@@ -314,82 +363,94 @@ class ModelCheckpoint(Callback):
             force=True,
             callback_states=callback_states,
         )
-        if saved:
-            if displaced_step is not None and displaced_step != context.step:
-                self.checkpoint_io.delete(displaced_step)
-            log.info(f"Checkpoint submitted at step {context.step}.")
-        else:
+        if not saved:
             self.load_state_dict(previous_state)
+            return
+        self._schedule_deletions(displaced_step, previous_last_step if save_as_last else None)
+        log.info(f"Checkpoint submitted at step {context.step}.")
 
-    def _monitor_score(self, metrics: Mapping[str, float]) -> float | None:
-        """Read and validate the configured monitored value.
+    def _schedule_deletions(self, *steps: int | None) -> None:
+        """Queue checkpoints that are neither ranked nor terminal for deletion after the next commit.
+
+        Args:
+            *steps: Candidate checkpoint steps, where `None` entries are ignored.
+        """
+        retained = {self._last_step, self._last_saved_step, *self._scores}
+        for step in steps:
+            if step is not None and step not in retained and step not in self._pending_deletions:
+                self._pending_deletions.append(step)
+
+    def _flush_deletions(self) -> None:
+        """Delete queued checkpoints once every pending checkpoint write has committed."""
+        if not self._pending_deletions:
+            return
+        self.checkpoint_io.wait_until_finished()
+        for step in self._pending_deletions:
+            self.checkpoint_io.delete(step)
+        self._pending_deletions = []
+
+    def _monitor_score(self, metrics: Mapping[str, float], step: int) -> float:
+        """Read the value that ranks a checkpoint.
 
         Args:
             metrics: Complete host scalar metric mapping.
+            step: Training step of the candidate checkpoint.
 
         Returns:
-            Monitored score, or `None` when monitoring is disabled.
+            Monitored value, or `step` when monitoring is disabled.
 
         Raises:
             ValueError: If the configured monitored metric is unavailable.
         """
         if self.monitor is None:
-            return None
-        if self.monitor not in metrics:
+            return float(step)
+        # As in Lightning, `step` is always a monitor candidate; a logged metric with the same name takes precedence.
+        candidates = {"step": float(step), **metrics}
+        if self.monitor not in candidates:
             raise ValueError(f"Monitored checkpoint metric `{self.monitor}` is unavailable.")
-        return metrics[self.monitor]
+        return candidates[self.monitor]
 
-    def _qualifies(self, score: float | None) -> bool:
-        """Return whether a candidate belongs in monitored retention.
+    def _qualifies(self, score: float) -> bool:
+        """Return whether a candidate belongs in the ranked checkpoints.
 
         Args:
-            score: Candidate monitored score, or `None` without monitoring.
+            score: Candidate ranking value.
 
         Returns:
-            Whether the candidate should be saved by top-k policy.
-
-        Raises:
-            RuntimeError: If monitored retention is evaluated without a score.
+            Whether the candidate should be saved by the top-k policy.
         """
-        if self.monitor is None:
-            return self.save_top_k != 0
         if self.save_top_k == 0:
             return False
         if self.save_top_k == -1 or len(self._scores) < self.save_top_k:
             return True
-        if score is None:
-            raise RuntimeError("Monitored checkpoint retention requires a scalar score.")
-        worst_score = max(self._scores.values()) if self.mode == "min" else min(self._scores.values())
-        return score < worst_score if self.mode == "min" else score > worst_score
+        worst_score = max(self._scores.values()) if self._rank_mode == "min" else min(self._scores.values())
+        return score < worst_score if self._rank_mode == "min" else score > worst_score
 
-    def _displaced_step(self, score: float | None) -> int | None:
-        """Select the deterministic worst checkpoint displaced by a candidate.
-
-        Args:
-            score: Qualifying candidate score.
+    def _displaced_step(self) -> int | None:
+        """Select the deterministic worst ranked checkpoint displaced by a qualifying candidate.
 
         Returns:
-            Existing checkpoint step to delete, or `None`.
+            Ranked checkpoint step to remove from the ranking, or `None` while the ranking has room.
         """
-        del score
-        if self.monitor is None or self.save_top_k in {-1, 0} or len(self._scores) < self.save_top_k:
+        if self.save_top_k in {-1, 0} or len(self._scores) < self.save_top_k:
             return None
-        key = (lambda item: (item[1], item[0])) if self.mode == "min" else (lambda item: (-item[1], item[0]))
-        return max(self._scores.items(), key=key)[0]
+        if self._rank_mode == "min":
+            return max(self._scores.items(), key=lambda item: (item[1], item[0]))[0]
+        return max(self._scores.items(), key=lambda item: (-item[1], item[0]))[0]
 
     def _update_best(self) -> None:
-        """Refresh public best-checkpoint attributes from retained scores."""
+        """Refresh public best-checkpoint attributes from ranked scores."""
         if not self._scores:
             self.best_model_path = None
             self.best_model_score = None
             return
         best = (
             min(self._scores.items(), key=lambda item: (item[1], item[0]))
-            if self.mode == "min"
+            if self._rank_mode == "min"
             else max(self._scores.items(), key=lambda item: (item[1], -item[0]))
         )
         self.best_model_path = self.checkpoint_io.checkpoint_path(best[0])
-        self.best_model_score = best[1]
+        self.best_model_score = best[1] if self.monitor is not None else None
 
     def state_dict(self) -> Mapping[str, Any]:
         """Return checkpoint ranking and path state.
@@ -400,6 +461,7 @@ class ModelCheckpoint(Callback):
         return {
             "scores": {str(step): score for step, score in self._scores.items()},
             "last_saved_step": self._last_saved_step,
+            "last_step": self._last_step,
             "best_model_path": None if self.best_model_path is None else str(self.best_model_path),
             "best_model_score": self.best_model_score,
             "last_model_path": None if self.last_model_path is None else str(self.last_model_path),
@@ -415,16 +477,20 @@ class ModelCheckpoint(Callback):
             ValueError: If the saved state is malformed.
         """
         required = {"scores", "last_saved_step", "best_model_path", "best_model_score", "last_model_path"}
-        if set(state) != required or not isinstance(state["scores"], Mapping):
+        # PhiJAX 0.2.0b5 and earlier did not store `last_step`.
+        if not required <= set(state) <= required | {"last_step"} or not isinstance(state["scores"], Mapping):
             raise ValueError("ModelCheckpoint state is malformed.")
         try:
             self._scores = {int(step): float(score) for step, score in state["scores"].items()}
         except (TypeError, ValueError) as error:
             raise ValueError("ModelCheckpoint scores are malformed.") from error
         last_saved_step = state["last_saved_step"]
-        if last_saved_step is not None and not isinstance(last_saved_step, int):
-            raise ValueError("ModelCheckpoint `last_saved_step` is malformed.")
+        last_step = state.get("last_step")
+        for name, value in (("last_saved_step", last_saved_step), ("last_step", last_step)):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise ValueError(f"ModelCheckpoint `{name}` is malformed.")
         self._last_saved_step = last_saved_step
+        self._last_step = last_step
         best_path = state["best_model_path"]
         last_path = state["last_model_path"]
         self.best_model_path = None if best_path is None else Path(str(best_path))
