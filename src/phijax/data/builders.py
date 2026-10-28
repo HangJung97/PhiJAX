@@ -519,7 +519,16 @@ def _grid_pool(
 
     dense_indices = np.arange(int(np.prod(full_shape)), dtype=np.int64).reshape(full_shape)
     flat_index = dense_indices[axis_slices].reshape(-1)
-    metadata: dict[str, Any] = {"coordinate_names": axis_names, "output_names": target_names}
+    metadata: dict[str, Any] = {"coordinate_names": axis_names}
+    if target_names:
+        # Artifact output names label channels, so vector fields expand to one name per feature.
+        metadata["output_names"] = tuple(
+            channel_name
+            for field_name, column in zip(target_names, target_columns, strict=True)
+            for channel_name in (
+                (field_name,) if column.shape[1] == 1 else tuple(f"{field_name}_{i}" for i in range(column.shape[1]))
+            )
+        )
     if all(coordinates[axis].bounds is not None for axis in axis_names):
         metadata["sampling_bounds"] = tuple(
             (axis, *cast(tuple[float, float], coordinates[axis].bounds)) for axis in axis_names
