@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -176,6 +177,31 @@ def test_phase_wrapped_fidelity_validates_static_component_policy() -> None:
             output_indices=(0, 1),
             target_indices=(0,),
         )
+
+
+@pytest.mark.parametrize(
+    ("indices", "match"),
+    [
+        ({"output_indices": (0, 5), "target_indices": (0, 1)}, r"output_indices.*component 5.*2 components"),
+        ({"output_indices": (0,), "target_indices": (3,)}, r"target_indices.*component 3.*1 components"),
+    ],
+)
+def test_fidelity_rejects_out_of_range_components(indices: dict[str, Any], match: str) -> None:
+    """Verify out-of-range component indices raise instead of producing NaN residuals.
+
+    Args:
+        indices: Output and target component selections.
+        match: Expected error-message pattern.
+    """
+    batch = {"inputs": jnp.ones((2, 2)), "targets": jnp.ones((2, 1))}
+    with pytest.raises(ValueError, match=match):
+        base_data_fidelity(lambda state, point: point, None, batch, weight_key=None, projection_key=None, **indices)
+    with pytest.raises(ValueError, match=match):
+        jax.jit(
+            lambda inputs: base_data_fidelity(
+                lambda state, point: point, None, {**batch, "inputs": inputs}, weight_key=None, **indices
+            )
+        )(batch["inputs"])
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
