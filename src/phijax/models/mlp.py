@@ -10,7 +10,7 @@ from jax.typing import ArrayLike
 from phijax.models.activations import Activation, ActivationName, resolve_activation
 from phijax.models.contracts import InitializedModel
 from phijax.models.initialization import InitializationName, Initializer, resolve_initializer
-from phijax.models.layers import PeriodicFeatures, RandomFourierFeatures, create_dense, normalize_coordinates
+from phijax.models.layers import PeriodicFeatures, RandomFourierFeatures, create_dense
 from phijax.models.nnx_adapter import initialize_nnx_model
 from phijax.models.regularization import apply_dropout
 from phijax.training.precision import PrecisionName, PrecisionPolicy
@@ -76,8 +76,7 @@ class MLP(nnx.Module):
             periodic_features_kwargs: Options for :class:`PeriodicFeatures`, including `axes` and `frequencies`.
             fourier_features: Whether to embed inputs with random Fourier features.
             fourier_features_kwargs: Options for :class:`RandomFourierFeatures`, including `embed_dim` and `scale`.
-            input_norm: Whether to apply explicit per-input mean and standard deviation arrays. Periodic-feature
-                axes are left in physical units so their configured period is preserved.
+            input_norm: Whether to apply explicit per-input mean and standard deviation arrays.
             input_norm_eps: Minimum standard deviation used during normalization.
             compute_dtype: Data type used for model arithmetic while parameters remain `float32`.
             parameter_dtype: Data type used to initialize trainable parameters.
@@ -220,10 +219,11 @@ class MLP(nnx.Module):
             raise ValueError(f"Expected final input width {self.input_dim}, got {inputs.shape[-1]}.")
         values = inputs.astype(self.compute_dtype)
         if self.input_norm:
-            periodic_axes = () if self.periodic_embedding is None else self.periodic_embedding.axes
-            values = normalize_coordinates(
-                values, input_mean, input_std, eps=self.input_norm_eps, periodic_axes=periodic_axes
-            )
+            mean = jnp.zeros((self.input_dim,), dtype=self.compute_dtype) if input_mean is None else input_mean
+            std = jnp.ones((self.input_dim,), dtype=self.compute_dtype) if input_std is None else input_std
+            if mean.shape[-1] != self.input_dim or std.shape[-1] != self.input_dim:
+                raise ValueError("Input statistics must match `input_dim`.")
+            values = (values - mean) / jnp.maximum(std, self.input_norm_eps)
         if self.periodic_embedding is not None:
             values = self.periodic_embedding(values)
         if self.embedding is not None:

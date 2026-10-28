@@ -37,8 +37,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `OrbaxCheckpointIO.delete` now ignores steps that are not stored.
 - `build_array_pools` now raises for a field stored in a different axis order from its declared `axes`, instead of
   silently reshaping it. Single-value coordinates, such as one time slice, now load.
-- Built-in models with `input_norm=True` no longer normalize periodic-feature axes, so periodic outputs keep the
-  configured `2*pi/frequency` period in physical units.
 
 ## [0.2.0b5] - 2026-09-11
 
