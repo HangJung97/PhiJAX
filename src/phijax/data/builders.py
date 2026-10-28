@@ -138,7 +138,8 @@ def _resolve_coordinates(
             configured_bounds = spec.get("bounds")
         if not isinstance(key, str) or not key.strip():
             raise ValueError(f"Coordinate `{name}` must use a non-empty source `key`.")
-        values = np.asarray(get_array(arrays, key), dtype=dtype).squeeze()
+        # `atleast_1d` keeps a squeezed single-value coordinate one-dimensional.
+        values = np.atleast_1d(np.asarray(get_array(arrays, key), dtype=dtype).squeeze())
         if values.ndim != 1 or values.size == 0:
             raise ValueError(f"Coordinate `{name}` must resolve to a non-empty one-dimensional array.")
         if not np.isfinite(values).all():
@@ -200,6 +201,18 @@ def _resolve_constant_field(
     return _Field(values=values, axes=())
 
 
+def _without_singletons(shape: tuple[int, ...]) -> tuple[int, ...]:
+    """Return a shape with size-one axes removed, preserving axis order.
+
+    Args:
+        shape: Array shape.
+
+    Returns:
+        Shape containing only axes larger than one.
+    """
+    return tuple(size for size in shape if size != 1)
+
+
 def _resolve_source_field(
     arrays: Mapping[str, Any],
     name: str,
@@ -247,8 +260,9 @@ def _resolve_source_field(
         values = values[..., None]
     elif values.ndim == len(axes) + 1 and values.shape[:-1] == expected_shape:
         pass
-    elif values.size == int(np.prod(expected_shape, dtype=np.int64)):
-        # SciPy may squeeze singleton MATLAB dimensions, which can be restored from the named coordinate sizes.
+    elif _without_singletons(values.shape) == _without_singletons(expected_shape):
+        # SciPy may squeeze singleton MATLAB dimensions. Restore only those; a reshape that reorders non-singleton
+        # axes would silently scramble the field.
         values = values.reshape(expected_shape)[..., None]
     else:
         raise ValueError(

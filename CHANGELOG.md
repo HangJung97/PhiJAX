@@ -35,6 +35,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `ModelCheckpoint` deletes a displaced checkpoint only after the next checkpoint write has committed, so an
   interrupted asynchronous write never removes the only valid checkpoint.
 - `OrbaxCheckpointIO.delete` now ignores steps that are not stored.
+- `build_array_pools` now raises for a field stored in a different axis order from its declared `axes`, instead of
+  silently reshaping it. Single-value coordinates, such as one time slice, now load.
 
 ## [0.2.0b5] - 2026-09-11
 
