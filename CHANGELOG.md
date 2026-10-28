@@ -9,6 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- `build_array_pools` now raises for a field stored in a different axis order from its declared `axes`, instead of
+  silently reshaping it. Single-value coordinates, such as one time slice, now load.
+
 ## [0.2.0b5] - 2026-09-11
 
 ### Added

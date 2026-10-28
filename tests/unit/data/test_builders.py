@@ -129,6 +129,46 @@ def test_build_array_pools_aligns_fields_declared_in_a_different_axis_order(tmp_
     np.testing.assert_array_equal(pools["predict"].targets[:, 0], solution.reshape(-1))
 
 
+def test_build_array_pools_rejects_fields_stored_in_undeclared_axis_order(tmp_path: Path) -> None:
+    """Verify a field whose storage order differs from its declared axes raises instead of being reshaped.
+
+    Args:
+        tmp_path: Temporary directory used for the source archive.
+    """
+    path = tmp_path / "misordered.npz"
+    solution = np.arange(12, dtype=np.float32).reshape(3, 4)
+    np.savez(path, t=np.linspace(0.0, 1.0, 4), x=np.linspace(0.0, 1.0, 3), usol=solution)
+
+    with pytest.raises(ValueError, match=r"sample shape \(4, 3\)"):
+        build_array_pools(
+            source={"path": path},
+            coordinates={"t": "t", "x": "x"},
+            fields={"u": {"key": "usol", "axes": ["t", "x"]}},
+            pools={"predict": {"inputs": ["t", "x"], "targets": ["u"]}},
+        )
+
+
+def test_build_array_pools_restores_squeezed_singleton_axes(tmp_path: Path) -> None:
+    """Verify fields with squeezed size-one coordinate axes still load in declared order.
+
+    Args:
+        tmp_path: Temporary directory used for the source archive.
+    """
+    path = tmp_path / "squeezed.npz"
+    solution = np.arange(6, dtype=np.float32).reshape(2, 3)
+    np.savez(path, t=np.asarray([0.5]), y=np.asarray([0.0, 1.0]), x=np.asarray([0.0, 1.0, 2.0]), usol=solution)
+
+    pools = build_array_pools(
+        source={"path": path},
+        coordinates={"t": "t", "y": "y", "x": "x"},
+        fields={"u": {"key": "usol", "axes": ["t", "y", "x"]}},
+        pools={"predict": {"inputs": ["t", "y", "x"], "targets": ["u"]}},
+    )
+
+    np.testing.assert_array_equal(pools["predict"].targets[:, 0], solution.reshape(-1))
+    assert pools["predict"].reference_shape == (1, 2, 3)
+
+
 def test_build_array_pools_runs_an_optional_source_preparation_hook(tmp_path: Path) -> None:
     """Verify an application generation hook can prepare a missing artifact without defining a data builder.
 
