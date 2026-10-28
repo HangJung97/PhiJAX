@@ -311,3 +311,29 @@ def test_schema_2_checkpoint_restores_with_template_statistics(tmp_path: Path) -
     assert int(resumed.step) == 4
     assert resumed.input_statistics is template.input_statistics
     assert stored is None
+
+
+def test_checkpoint_metadata_reads_do_not_log_restore_warnings(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Verify restore and metadata reads do not log Orbax's unrestorable-item warning.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+        caplog: Pytest fixture capturing log records.
+    """
+    source = dataclasses.replace(_state(weight=2.0, slot=3.0, step=4), input_statistics=_statistics(1.0))
+    with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
+        checkpoint_io.save(source, 4, callback_states={"phijax.callbacks.Example:0": {"count": 1}})
+    caplog.clear()
+
+    with caplog.at_level("WARNING"), OrbaxCheckpointIO(tmp_path / "checkpoints") as checkpoint_io:
+        restored = checkpoint_io.restore(_state(weight=9.0, slot=8.0, step=0))
+        callback_states = checkpoint_io.restore_callback_states()
+        statistics = checkpoint_io.restore_input_statistics()
+
+    assert float(restored.model_state["weight"]) == 2.0
+    assert callback_states == {"phijax.callbacks.Example:0": {"count": 1}}
+    assert statistics is not None
+    assert not [record.getMessage() for record in caplog.records if "could not be restored" in record.getMessage()]
