@@ -1,5 +1,5 @@
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 
 import jax
 
@@ -9,6 +9,21 @@ type ModelApply = Callable[[Any, jax.Array], jax.Array]
 type ResidualStream = Literal["residual", "output"]
 type ResidualGroup = tuple[jax.Array, ...]
 type ResidualGroups = tuple[ResidualGroup, ...]
+
+
+class InputStatistics(NamedTuple):
+    """Hold per-coordinate model-input normalization statistics.
+
+    The Trainer stores the statistics in :class:`phijax.training.TrainState` so checkpoints restore the normalization
+    a model was trained with. A NamedTuple keeps tuple unpacking, `mean, std = statistics`, working.
+
+    Attributes:
+        mean: Per-coordinate mean with shape `[input_dim]`.
+        std: Per-coordinate standard deviation with shape `[input_dim]`.
+    """
+
+    mean: Any
+    std: Any
 
 
 class JaxDevice(Protocol):
@@ -82,6 +97,7 @@ class ResidualFunction(Protocol):
 
 __all__ = [
     "ArrayMapping",
+    "InputStatistics",
     "JaxDevice",
     "ModelApply",
     "ModelSummaryFunction",

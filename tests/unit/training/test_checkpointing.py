@@ -1,14 +1,17 @@
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+import orbax.checkpoint as ocp
 import pytest
 
 from phijax import __version__ as phijax_version
 from phijax.balancers import BalancerState
-from phijax.training import OrbaxCheckpointIO, TrainState
+from phijax.training import InputStatistics, OrbaxCheckpointIO, TrainState, load_input_statistics
 from phijax.training import checkpointing as checkpointing_module
 
 
@@ -55,7 +58,7 @@ def test_orbax_checkpoint_supports_resume_and_weights_only_loading(tmp_path: Pat
     assert float(weights_only.model_state["weight"]) == 2.0
     assert float(weights_only.optimizer_state["slot"]) == 8.0
     assert int(weights_only.step) == 0
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["step"] == 4
     assert manifest["phijax_version"] == phijax_version
     assert manifest["callbacks"] == callback_states
@@ -132,11 +135,36 @@ def test_checkpoint_state_identifier_tracks_structure_not_values() -> None:
         ),
         (
             {
+                "schema_version": 4,
+                "phijax_version": phijax_version,
+                "step": 4,
+            },
+            "schema",
+        ),
+        (
+            {
                 "schema_version": 2,
                 "phijax_version": "0.1.0b1",
                 "step": 4,
             },
             "cannot be restored",
+        ),
+        (
+            {
+                "schema_version": 3,
+                "phijax_version": phijax_version,
+                "step": 4,
+            },
+            "input-statistics layout",
+        ),
+        (
+            {
+                "schema_version": 3,
+                "phijax_version": phijax_version,
+                "step": 4,
+                "input_statistics": {"shape": [2, 1], "dtype": "float32"},
+            },
+            "input-statistics layout",
         ),
     ],
 )
@@ -156,3 +184,130 @@ def test_checkpoint_manifest_rejects_incompatible_producers(metadata: dict[str, 
 
     with pytest.raises(ValueError, match=message):
         checkpoint_io._validate_metadata(target, 4)
+
+
+def _statistics(scale: float) -> InputStatistics:
+    """Build distinguishable two-coordinate input statistics.
+
+    Args:
+        scale: Multiplier applied to the base statistics.
+
+    Returns:
+        `float32` mean and standard deviation arrays.
+    """
+    return InputStatistics(mean=scale * jnp.asarray([1.0, 2.0]), std=scale * jnp.asarray([0.5, 0.25]))
+
+
+@pytest.mark.parametrize("template_statistics", [None, 7.0], ids=["template-without", "template-with-other"])
+def test_full_restore_uses_checkpoint_input_statistics(tmp_path: Path, template_statistics: float | None) -> None:
+    """Verify full restoration takes stored statistics regardless of the template, and weights-only keeps the target.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+        template_statistics: Scale of the template statistics, or `None` for a template without statistics.
+    """
+    source = dataclasses.replace(_state(weight=2.0, slot=3.0, step=4), input_statistics=_statistics(1.0))
+    target_statistics = None if template_statistics is None else _statistics(template_statistics)
+    target = dataclasses.replace(_state(weight=9.0, slot=8.0, step=0), input_statistics=target_statistics)
+    with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
+        checkpoint_io.save(source, 4)
+        manifest = checkpoint_io._manager.metadata(4).custom_metadata["phijax"]
+        resumed = checkpoint_io.restore(target)
+        weights_only = checkpoint_io.restore_weights(target)
+
+    assert manifest["schema_version"] == 3
+    assert manifest["input_statistics"] == {"shape": [2], "dtype": "float32"}
+    np.testing.assert_array_equal(resumed.input_statistics.mean, [1.0, 2.0])
+    np.testing.assert_array_equal(resumed.input_statistics.std, [0.5, 0.25])
+    assert float(weights_only.model_state["weight"]) == 2.0
+    assert weights_only.input_statistics is target_statistics
+
+
+def test_restore_without_stored_statistics_ignores_template_statistics(tmp_path: Path) -> None:
+    """Verify a checkpoint saved without statistics restores `None` into a template that has statistics.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+    target = dataclasses.replace(_state(weight=9.0, slot=8.0, step=0), input_statistics=_statistics(1.0))
+    with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
+        checkpoint_io.save(_state(weight=2.0, slot=3.0, step=4), 4)
+        manifest = checkpoint_io._manager.metadata(4).custom_metadata["phijax"]
+        resumed = checkpoint_io.restore(target)
+
+    assert manifest["input_statistics"] is None
+    assert resumed.input_statistics is None
+    assert float(resumed.model_state["weight"]) == 2.0
+    assert checkpointing_module._state_identifier(target.replace(input_statistics=None)) == manifest["state_identifier"]
+
+
+def test_load_input_statistics_reads_only_the_stored_statistics(tmp_path: Path) -> None:
+    """Verify the transfer-learning helper returns stored statistics as host arrays, or `None`.
+
+    Args:
+        tmp_path: Temporary checkpoint roots.
+    """
+    with_statistics = dataclasses.replace(_state(weight=2.0, slot=3.0, step=4), input_statistics=_statistics(3.0))
+    with OrbaxCheckpointIO(tmp_path / "with", enable_async_checkpointing=False) as checkpoint_io:
+        checkpoint_io.save(with_statistics, 4)
+    with OrbaxCheckpointIO(tmp_path / "without", enable_async_checkpointing=False) as checkpoint_io:
+        checkpoint_io.save(_state(weight=2.0, slot=3.0, step=4), 4)
+
+    statistics = load_input_statistics(tmp_path / "with")
+
+    assert isinstance(statistics, InputStatistics)
+    assert isinstance(statistics.mean, np.ndarray)
+    assert statistics.mean.dtype == np.float32
+    np.testing.assert_array_equal(statistics.mean, [3.0, 6.0])
+    np.testing.assert_array_equal(statistics.std, [1.5, 0.75])
+    assert load_input_statistics(tmp_path / "without", step=4) is None
+    with pytest.raises(FileNotFoundError):
+        load_input_statistics(tmp_path / "missing")
+
+
+def _write_schema_2_checkpoint(directory: Path, state: TrainState, step: int) -> None:
+    """Write a checkpoint in the PhiJAX 0.2.0b5 layout, which has no `input_statistics` node.
+
+    Args:
+        directory: Checkpoint root.
+        state: State whose fields other than `input_statistics` are saved.
+        step: Checkpoint step.
+    """
+    legacy_state = {
+        field.name: getattr(state, field.name)
+        for field in dataclasses.fields(TrainState)
+        if field.name != "input_statistics"
+    }
+    manifest = {
+        "schema_version": 2,
+        "phijax_version": phijax_version,
+        "step": step,
+        "state_identifier": checkpointing_module._state_identifier(state.replace(input_statistics=None)),
+        "callbacks": {},
+    }
+    options = ocp.CheckpointManagerOptions(enable_async_checkpointing=False)
+    with ocp.CheckpointManager(directory, options=options) as manager:
+        manager.save(step, args=ocp.args.StandardSave(legacy_state), custom_metadata={"phijax": manifest})
+
+
+def test_schema_2_checkpoint_restores_with_template_statistics(tmp_path: Path) -> None:
+    """Verify checkpoints written before statistics were stored restore and keep the template statistics.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+    directory = tmp_path / "checkpoints"
+    _write_schema_2_checkpoint(directory, _state(weight=2.0, slot=3.0, step=4), 4)
+    template = dataclasses.replace(_state(weight=9.0, slot=8.0, step=0), input_statistics=_statistics(5.0))
+
+    with OrbaxCheckpointIO(directory, enable_async_checkpointing=False) as checkpoint_io:
+        with pytest.warns(UserWarning, match="before PhiJAX stored input statistics"):
+            resumed = checkpoint_io.restore(template)
+        stored = checkpoint_io.restore_input_statistics()
+
+    assert isinstance(resumed, TrainState)
+    assert float(resumed.model_state["weight"]) == 2.0
+    assert float(resumed.optimizer_state["slot"]) == 3.0
+    assert int(resumed.step) == 4
+    assert resumed.input_statistics is template.input_statistics
+    assert stored is None

@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import fields, replace
 from hashlib import sha256
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, cast
 
 import jax
+import numpy as np
 import orbax.checkpoint as ocp
 
 from phijax.training.state import TrainState
+from phijax.types import InputStatistics
 
-_CHECKPOINT_SCHEMA_VERSION = 2
+_CHECKPOINT_SCHEMA_VERSION = 3
+# Schema 2 (PhiJAX 0.2.0b5 and earlier) predates `TrainState.input_statistics` and is still restorable.
+_LEGACY_SCHEMA_VERSION = 2
 
 
 def _state_identifier(state: TrainState) -> str:
@@ -52,6 +57,31 @@ def _version_line(value: str) -> tuple[int, int]:
     return int(fields[0]), int(fields[1])
 
 
+def _with_statistics_layout(target: TrainState, layout: Mapping[str, Any] | None) -> TrainState:
+    """Give a restore target the input-statistics structure stored in a checkpoint.
+
+    Orbax requires the restore target to match the stored tree, so the statistics layout comes from the checkpoint
+    manifest rather than from the template.
+
+    Args:
+        target: Restore template.
+        layout: Stored statistics layout from the checkpoint manifest, or `None`.
+
+    Returns:
+        `target` with statistics arrays or abstract placeholders matching the checkpoint.
+    """
+    if layout is None:
+        return replace(target, input_statistics=None)
+    shape, dtype = tuple(layout["shape"]), np.dtype(layout["dtype"])
+    template = target.input_statistics
+    if template is not None and tuple(template.mean.shape) == shape and np.dtype(template.mean.dtype) == dtype:
+        return target
+    # Place restored statistics like the other replicated scalar state.
+    sharding = getattr(target.step, "sharding", None)
+    placeholder = jax.ShapeDtypeStruct(shape, dtype, sharding=sharding)
+    return replace(target, input_statistics=InputStatistics(mean=placeholder, std=placeholder))
+
+
 def _checkpoint_metadata(
     state: TrainState,
     step: int,
@@ -67,12 +97,18 @@ def _checkpoint_metadata(
     Returns:
         JSON-compatible PhiJAX checkpoint metadata.
     """
+    statistics = state.input_statistics
+    # Restore targets read this layout so they can match the stored tree without relying on the template.
+    layout = None
+    if statistics is not None:
+        layout = {"shape": [int(size) for size in statistics.mean.shape], "dtype": str(statistics.mean.dtype)}
     return {
         "phijax": {
             "schema_version": _CHECKPOINT_SCHEMA_VERSION,
             "phijax_version": version("phijax"),
             "step": step,
             "state_identifier": _state_identifier(state),
+            "input_statistics": layout,
             "callbacks": dict(callback_states or {}),
         }
     }
@@ -193,43 +229,80 @@ class OrbaxCheckpointIO:
         manager.delete(step)
         manager.wait_until_finished()
 
+    def _resolve_step(self, step: int | None) -> int:
+        """Resolve an explicit or latest committed checkpoint step.
+
+        Args:
+            step: Checkpoint step, or `None` for the latest committed step.
+
+        Returns:
+            Committed checkpoint step.
+
+        Raises:
+            FileNotFoundError: If no checkpoint exists.
+        """
+        resolved_step = self.latest_step if step is None else step
+        if resolved_step is None:
+            raise FileNotFoundError(f"No checkpoints exist below `{self.directory}`.")
+        return resolved_step
+
     def restore(self, target: TrainState, step: int | None = None) -> TrainState:
         """Restore a complete state for exact training resumption.
+
+        The restored `input_statistics` come from the checkpoint, whatever the template holds. Checkpoints written
+        before PhiJAX stored input statistics (schema 2) keep the template's statistics and emit a warning.
 
         Args:
             target: Abstract or concrete state defining the expected structure and sharding.
             step: Checkpoint step, or `None` for the latest committed step.
 
         Returns:
-            Restored model, optimizer, balancer, PRNG, step, and precision state.
+            Restored model, optimizer, balancer, PRNG, step, precision, and input-statistics state.
 
         Raises:
             FileNotFoundError: If no requested checkpoint exists.
         """
-        resolved_step = self.latest_step if step is None else step
-        if resolved_step is None:
-            raise FileNotFoundError(f"No checkpoints exist below `{self.directory}`.")
-        self._validate_metadata(target, resolved_step)
+        resolved_step = self._resolve_step(step)
+        manifest = self._validate_metadata(target, resolved_step)
         manager = self._active_manager()
-        return cast(TrainState, manager.restore(resolved_step, args=ocp.args.StandardRestore(target)))
+        if manifest["schema_version"] == _LEGACY_SCHEMA_VERSION:
+            warnings.warn(
+                f"Checkpoint step {resolved_step} was written before PhiJAX stored input statistics. The restored "
+                "state keeps the input statistics of the restore template.",
+                UserWarning,
+                stacklevel=2,
+            )
+            # A schema-2 tree has no `input_statistics` node, so restore every other field by name.
+            legacy_target = {
+                field.name: getattr(target, field.name)
+                for field in fields(TrainState)
+                if field.name != "input_statistics"
+            }
+            restored = manager.restore(resolved_step, args=ocp.args.StandardRestore(legacy_target))
+            return TrainState(**restored, input_statistics=target.input_statistics)
+        restore_target = _with_statistics_layout(target, manifest["input_statistics"])
+        return cast(TrainState, manager.restore(resolved_step, args=ocp.args.StandardRestore(restore_target)))
 
-    def _validate_metadata(self, target: TrainState, step: int) -> None:
-        """Validate checkpoint schema, producer line, step, and target structure.
+    def _read_manifest(self, step: int) -> dict[str, Any]:
+        """Read and validate the checkpoint schema, producer line, step, and statistics layout.
 
         Args:
-            target: Restore template defining the expected state structure.
             step: Resolved checkpoint step.
 
+        Returns:
+            Validated PhiJAX checkpoint manifest.
+
         Raises:
-            ValueError: If metadata is absent or incompatible with this runtime and target.
+            ValueError: If the manifest is absent, malformed, or incompatible with this runtime.
         """
         metadata = self._active_manager().metadata(step).custom_metadata.get("phijax")
         if not isinstance(metadata, dict):
             raise ValueError("Checkpoint does not contain a PhiJAX compatibility manifest.")
-        if metadata.get("schema_version") != _CHECKPOINT_SCHEMA_VERSION:
+        schema_version = metadata.get("schema_version")
+        if schema_version not in {_LEGACY_SCHEMA_VERSION, _CHECKPOINT_SCHEMA_VERSION}:
             raise ValueError(
-                f"Checkpoint schema `{metadata.get('schema_version')}` is incompatible with "
-                f"schema `{_CHECKPOINT_SCHEMA_VERSION}`."
+                f"Checkpoint schema `{schema_version}` is incompatible with schemas "
+                f"`{_LEGACY_SCHEMA_VERSION}` and `{_CHECKPOINT_SCHEMA_VERSION}`."
             )
         producer = metadata.get("phijax_version")
         if not isinstance(producer, str) or _version_line(producer) != _version_line(version("phijax")):
@@ -240,9 +313,72 @@ class OrbaxCheckpointIO:
         if metadata.get("step") != step:
             manifest_step = metadata.get("step")
             raise ValueError(f"Checkpoint manifest step `{manifest_step}` does not match directory step `{step}`.")
-        expected_identifier = _state_identifier(target)
-        if metadata.get("state_identifier") != expected_identifier:
+        if schema_version == _CHECKPOINT_SCHEMA_VERSION:
+            layout = metadata.get("input_statistics", ...)
+            valid_layout = layout is None or (
+                isinstance(layout, dict)
+                and isinstance(layout.get("shape"), list)
+                and len(layout["shape"]) == 1
+                and all(isinstance(size, int) and size > 0 for size in layout["shape"])
+                and isinstance(layout.get("dtype"), str)
+            )
+            if not valid_layout:
+                raise ValueError("Checkpoint input-statistics layout is missing or malformed.")
+        return metadata
+
+    def _validate_metadata(self, target: TrainState, step: int) -> dict[str, Any]:
+        """Validate the checkpoint manifest and the restore target structure.
+
+        Args:
+            target: Restore template defining the expected state structure.
+            step: Resolved checkpoint step.
+
+        Returns:
+            Validated PhiJAX checkpoint manifest.
+
+        Raises:
+            ValueError: If metadata is absent or incompatible with this runtime and target.
+        """
+        manifest = self._read_manifest(step)
+        if manifest["schema_version"] == _LEGACY_SCHEMA_VERSION:
+            # `None` adds no leaves, so a schema-2 identifier matches the template without statistics.
+            restore_target = replace(target, input_statistics=None)
+        else:
+            restore_target = _with_statistics_layout(target, manifest["input_statistics"])
+        if manifest.get("state_identifier") != _state_identifier(restore_target):
             raise ValueError("Checkpoint state structure does not match the supplied restore template.")
+        return manifest
+
+    def restore_input_statistics(self, step: int | None = None) -> InputStatistics | None:
+        """Read only the stored input statistics as host NumPy arrays.
+
+        Use this to give a transfer-learning DataModule the source model's statistics, or a per-axis mix, from
+        :meth:`~phijax.data.PhiDataModule.input_statistics`.
+
+        Args:
+            step: Checkpoint step, or `None` for the latest committed step.
+
+        Returns:
+            Stored `float32` statistics, or `None` when the checkpoint stores none or predates stored statistics.
+
+        Raises:
+            FileNotFoundError: If no requested checkpoint exists.
+            ValueError: If the checkpoint manifest is absent or incompatible with this runtime.
+        """
+        resolved_step = self._resolve_step(step)
+        layout = self._read_manifest(resolved_step).get("input_statistics")
+        if layout is None:
+            return None
+        shape, dtype = tuple(layout["shape"]), np.dtype(layout["dtype"])
+        item = {"input_statistics": {"mean": np.zeros(shape, dtype), "std": np.zeros(shape, dtype)}}
+        restore_args = jax.tree.map(lambda _: ocp.RestoreArgs(restore_type=np.ndarray), item)
+        restored = ocp.PyTreeCheckpointer().restore(
+            # `CheckpointManager` stores its single unnamed item under `default`.
+            self.checkpoint_path(resolved_step) / "default",
+            args=ocp.args.PyTreeRestore(item, restore_args=restore_args, partial_restore=True),
+        )
+        statistics = restored["input_statistics"]
+        return InputStatistics(mean=statistics["mean"], std=statistics["std"])
 
     def restore_weights(self, target: TrainState, step: int | None = None) -> TrainState:
         """Restore model weights while preserving fresh optimization and run state.
@@ -252,7 +388,7 @@ class OrbaxCheckpointIO:
             step: Checkpoint step, or `None` for the latest committed step.
 
         Returns:
-            `target` with only `model_state` replaced from the checkpoint.
+            `target` with only `model_state` replaced from the checkpoint. The target's input statistics are kept.
         """
         restored = self.restore(target, step)
         return replace(target, model_state=restored.model_state)
@@ -270,9 +406,7 @@ class OrbaxCheckpointIO:
             FileNotFoundError: If no requested checkpoint exists.
             ValueError: If callback metadata is malformed.
         """
-        resolved_step = self.latest_step if step is None else step
-        if resolved_step is None:
-            raise FileNotFoundError(f"No checkpoints exist below `{self.directory}`.")
+        resolved_step = self._resolve_step(step)
         metadata = self._active_manager().metadata(resolved_step).custom_metadata.get("phijax")
         if not isinstance(metadata, dict) or not isinstance(metadata.get("callbacks"), dict):
             raise ValueError("Checkpoint does not contain compatible callback state metadata.")
@@ -358,4 +492,27 @@ def restore_checkpoint(
         return checkpoint_io.restore(target, step)
 
 
-__all__ = ["OrbaxCheckpointIO", "restore_checkpoint"]
+def load_input_statistics(ckpt_path: str | Path, *, step: int | None = None) -> InputStatistics | None:
+    """Read the input statistics stored in a checkpoint without restoring the training state.
+
+    Weights-only restoration (transfer learning) uses the current DataModule's statistics. To start from the source
+    model's statistics instead, or to mix them per axis, return this function's result from
+    :meth:`~phijax.data.PhiDataModule.input_statistics`.
+
+    Args:
+        ckpt_path: Orbax checkpoint-root directory.
+        step: Checkpoint step, or `None` for the latest committed step.
+
+    Returns:
+        Stored statistics as host `float32` NumPy arrays, or `None` when the checkpoint stores none or was written
+        before PhiJAX stored input statistics.
+
+    Raises:
+        FileNotFoundError: If the requested checkpoint does not exist.
+        ValueError: If the checkpoint manifest is absent or incompatible with this runtime.
+    """
+    with OrbaxCheckpointIO(ckpt_path, enable_async_checkpointing=False) as checkpoint_io:
+        return checkpoint_io.restore_input_statistics(step)
+
+
+__all__ = ["OrbaxCheckpointIO", "load_input_statistics", "restore_checkpoint"]

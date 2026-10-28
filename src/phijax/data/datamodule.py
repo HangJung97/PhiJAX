@@ -140,6 +140,10 @@ class PhiDataModule(ABC):
         returning empirical statistics from :func:`phijax.data.input_statistics` or exact statistics for a continuous
         sampling distribution.
 
+        The Trainer stores the statistics in the training state. A full resume and prediction from a checkpoint use the
+        stored statistics; fresh and weights-only runs use this method. For transfer learning with the source model's
+        statistics, return :func:`phijax.training.load_input_statistics` here.
+
         Returns:
             Per-coordinate mean and safely positive standard deviation arrays, or `None` to skip normalization.
         """
