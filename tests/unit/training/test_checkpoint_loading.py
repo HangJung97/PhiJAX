@@ -73,7 +73,7 @@ def test_restore_checkpoint_selects_full_resume_or_weights_only_transfer(
     assert weights_result is transferred
     manager.restore.assert_called_once_with(target, 4)
     manager.restore_weights.assert_called_once_with(target, None)
-    checkpoint_io.assert_called_with(tmp_path, max_to_keep=None, enable_async_checkpointing=False)
+    checkpoint_io.assert_called_with(tmp_path, enable_async_checkpointing=False)
 
 
 @pytest.mark.parametrize(

@@ -79,32 +79,26 @@ def _checkpoint_metadata(
 
 
 class OrbaxCheckpointIO:
-    """Manage lazily opened asynchronous full-state checkpoints with Orbax."""
+    """Manage lazily opened asynchronous full-state checkpoints with Orbax.
+
+    The backend never deletes checkpoints on its own. :class:`~phijax.callbacks.ModelCheckpoint` owns retention through
+    `save_top_k`, as Lightning's checkpoint callback does.
+    """
 
     def __init__(
         self,
         directory: str | Path,
         *,
-        max_to_keep: int | None = 3,
         enable_async_checkpointing: bool = True,
     ) -> None:
         """Initialize an Orbax checkpoint manager.
 
         Args:
             directory: Checkpoint-root directory.
-            max_to_keep: Maximum recent checkpoints retained, or `None` to retain all.
             enable_async_checkpointing: Whether saves may finish in a background thread.
-
-        Raises:
-            ValueError: If `max_to_keep` is not positive or `None`.
         """
-        if max_to_keep is not None and max_to_keep < 1:
-            raise ValueError("`max_to_keep` must be positive or `None`.")
         self.directory = Path(directory).expanduser().resolve()
-        self._options = ocp.CheckpointManagerOptions(
-            max_to_keep=max_to_keep,
-            enable_async_checkpointing=enable_async_checkpointing,
-        )
+        self._options = ocp.CheckpointManagerOptions(enable_async_checkpointing=enable_async_checkpointing)
         self._manager: ocp.CheckpointManager | None = None
 
     def open(self) -> None:
@@ -188,10 +182,14 @@ class OrbaxCheckpointIO:
     def delete(self, step: int) -> None:
         """Delete one committed checkpoint and wait for completion.
 
+        Deleting a step that is not stored is a no-op.
+
         Args:
             step: Checkpoint step to remove.
         """
         manager = self._active_manager()
+        if step not in manager.all_steps():
+            return
         manager.delete(step)
         manager.wait_until_finished()
 
@@ -354,7 +352,7 @@ def restore_checkpoint(
         raise ValueError("`ckpt_path` must be a non-empty checkpoint-root path or `None`.")
     if step is not None and (isinstance(step, bool) or not isinstance(step, int) or step < 0):
         raise ValueError("`ckpt_step` must be a nonnegative integer or `None`.")
-    with OrbaxCheckpointIO(ckpt_path, max_to_keep=None, enable_async_checkpointing=False) as checkpoint_io:
+    with OrbaxCheckpointIO(ckpt_path, enable_async_checkpointing=False) as checkpoint_io:
         if weights_only:
             return checkpoint_io.restore_weights(target, step)
         return checkpoint_io.restore(target, step)

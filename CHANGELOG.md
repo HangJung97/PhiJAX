@@ -9,8 +9,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `ModelCheckpoint` accepts `monitor="step"` to rank checkpoints by training step.
+- The terminal checkpoint from `save_last` or `save_on_exception` is replaced by the next one, including across
+  resumed fits, instead of accumulating.
+
+### Breaking changes
+
+- `ModelCheckpoint` now owns checkpoint retention, following Lightning's `ModelCheckpoint`:
+    - `OrbaxCheckpointIO` no longer accepts `max_to_keep` and never deletes checkpoints on its own.
+    - `save_top_k` defaults to `1`, so `ModelCheckpoint(checkpoint_io)` keeps only the latest checkpoint instead of
+      every checkpoint. Pass `save_top_k=-1` to keep every checkpoint.
+    - Without `monitor`, `save_top_k` must be `-1`, `0`, or `1`.
+    - To keep the latest `k` checkpoints, replace `max_to_keep=k` with
+      `ModelCheckpoint(..., monitor="step", mode="max", save_top_k=k)`. See the
+      [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#checkpoint-retention).
+
 ### Fixed
 
+- Fixed a crash with `FileNotFoundError` when monitored top-k retention and Orbax `max_to_keep` deleted the same
+  checkpoints. Ranking now always matches the stored checkpoints, and restored ranking state drops steps that are no
+  longer stored.
+- Top-k displacement no longer deletes the checkpoint at `last_model_path`.
+- `ModelCheckpoint` deletes a displaced checkpoint only after the next checkpoint write has committed, so an
+  interrupted asynchronous write never removes the only valid checkpoint.
+- `OrbaxCheckpointIO.delete` now ignores steps that are not stored.
 - `build_array_pools` now raises for a field stored in a different axis order from its declared `axes`, instead of
   silently reshaping it. Single-value coordinates, such as one time slice, now load.
 
