@@ -7,7 +7,8 @@ They can also be composed into custom Flax NNX models.
 
 `PeriodicFeatures` replaces each selected scalar coordinate with cosine and sine features, increasing the width by one
 per selected axis. Configured frequencies are angular frequencies, so the physical period is
-`2*pi/abs(frequency)`.
+`2*pi/abs(frequency)`. When a built-in model uses `input_norm=True`, it normalizes only the non-periodic axes, so the
+period stays in physical units.
 
 ::: phijax.models.PeriodicFeatures
 

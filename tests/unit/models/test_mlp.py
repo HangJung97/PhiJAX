@@ -16,6 +16,7 @@ from phijax.models import (
     build_pirate_net,
     initialize_nnx_model,
 )
+from phijax.models.layers import normalize_coordinates
 
 
 @pytest.mark.parametrize(
@@ -98,6 +99,43 @@ def test_periodic_features_enforce_value_and_derivative_periodicity() -> None:
     np.testing.assert_allclose(lower_derivative, upper_derivative, rtol=1e-6, atol=1e-6)
     with pytest.raises(ValueError, match="final input width"):
         embedding(jnp.ones((2, 3), dtype=jnp.float32))
+
+
+@pytest.mark.parametrize("builder", [build_mlp, build_modified_mlp, build_pirate_net])
+def test_input_normalization_preserves_physical_periodic_period(builder: Callable[..., InitializedModel]) -> None:
+    """Verify normalized models keep the configured `2*pi/frequency` period on periodic axes.
+
+    Args:
+        builder: Built-in model factory under test.
+    """
+    model = builder(
+        jax.random.key(0),
+        3,
+        2,
+        input_mean=[0.5, 3.0, 0.5],
+        input_std=[0.3, 1.8, 0.3],
+        input_norm=True,
+        periodic_features=True,
+        periodic_features_kwargs={"axes": (1,), "frequencies": (1.0,)},
+    )
+    inputs = jnp.asarray([[0.7, 0.4, 0.2], [0.1, -2.0, 0.9]], dtype=jnp.float32)
+    shifted = inputs.at[:, 1].add(2.0 * jnp.pi)
+
+    np.testing.assert_allclose(model.apply(model.state, inputs), model.apply(model.state, shifted), atol=1e-5)
+
+
+def test_normalize_coordinates_skips_only_periodic_axes() -> None:
+    """Verify non-periodic axes are standardized while periodic axes keep physical values."""
+    values = jnp.asarray([[1.0, 2.0, 3.0]], dtype=jnp.float32)
+    mean = jnp.asarray([1.0, 1.0, 1.0], dtype=jnp.float32)
+    std = jnp.asarray([2.0, 2.0, 2.0], dtype=jnp.float32)
+
+    normalized = normalize_coordinates(values, mean, std, eps=1e-8, periodic_axes=(1,))
+
+    np.testing.assert_allclose(normalized, [[0.0, 2.0, 1.0]])
+    assert normalized.dtype == jnp.float32
+    with pytest.raises(ValueError, match="input_dim"):
+        normalize_coordinates(values, mean[:2], std, eps=1e-8)
 
 
 def test_mlp_composes_periodic_and_random_fourier_features() -> None:

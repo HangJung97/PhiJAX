@@ -4,9 +4,50 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 
 from phijax.models.initialization import Initializer
+
+
+def normalize_coordinates(
+    values: jax.Array,
+    input_mean: jax.Array | None,
+    input_std: jax.Array | None,
+    *,
+    eps: float,
+    periodic_axes: Sequence[int] = (),
+) -> jax.Array:
+    """Standardize input coordinates while leaving periodic axes in physical units.
+
+    :class:`PeriodicFeatures` applies its configured frequencies to physical coordinates. Normalizing a periodic axis
+    first would rescale its period by the axis standard deviation, so those axes use mean `0` and standard deviation
+    `1`.
+
+    Args:
+        values: Coordinate array with final width `input_dim`.
+        input_mean: Optional per-coordinate mean. `None` uses zeros.
+        input_std: Optional per-coordinate standard deviation. `None` uses ones.
+        eps: Minimum standard deviation used as the divisor.
+        periodic_axes: Coordinate axes later embedded by :class:`PeriodicFeatures`.
+
+    Returns:
+        Normalized coordinates with the shape and dtype of `values`.
+
+    Raises:
+        ValueError: If the statistics do not match the final input width.
+    """
+    input_dim = values.shape[-1]
+    mean = jnp.zeros((input_dim,), dtype=values.dtype) if input_mean is None else input_mean
+    std = jnp.ones((input_dim,), dtype=values.dtype) if input_std is None else input_std
+    if mean.shape[-1] != input_dim or std.shape[-1] != input_dim:
+        raise ValueError("Input statistics must match `input_dim`.")
+    if periodic_axes:
+        # Static mask built from configuration, so it adds no traced control flow.
+        periodic = np.isin(np.arange(input_dim), tuple(periodic_axes))
+        mean = jnp.where(periodic, 0.0, mean).astype(mean.dtype)
+        std = jnp.where(periodic, 1.0, std).astype(std.dtype)
+    return (values - mean) / jnp.maximum(std, eps)
 
 
 class PeriodicFeatures(nnx.Module):
