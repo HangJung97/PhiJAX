@@ -79,8 +79,17 @@ checkpoint_callback = ModelCheckpoint(
 
 Equal scores do not displace an already retained checkpoint. When a better checkpoint enters a full top-k set, the
 deterministic worst entry is removed through the backend. The checkpoint at `last_model_path` is never removed by
-top-k ranking. Callback state is stored under stable callback identifiers and restored before fit-start hooks. A changed callback set or malformed state raises clearly instead of applying a
-partial restoration.
+top-k ranking. Callback state is stored under stable callback identifiers and restored before fit-start hooks.
+
+Resuming with a different set of callbacks follows Lightning:
+
+- Callbacks without stored state, such as callbacks added since the checkpoint was written, start fresh.
+- Stored state for a callback the Trainer no longer has is skipped with a `UserWarning`. Stateless callbacks, such as
+  progress bars, store no state and never trigger the warning.
+- A callback that rejects its stored state raises instead of applying a partial restoration.
+
+Identifiers combine the callback class with its position among callbacks of the same class. Keep callbacks of the same
+class in the same order when resuming.
 
 ## Restore behavior
 

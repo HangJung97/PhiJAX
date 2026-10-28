@@ -192,14 +192,15 @@ def test_fit_stores_statistics_and_resume_keeps_them(
         return original_build(trainer, module, *args)
 
     monkeypatch.setattr(trainer_module, "build_training_plan", recording_build)
-    # A full resume restores callback state, so the resuming trainer needs the same callbacks.
-    resumed = _trainer(tmp_path, tmp_path / "resumed").fit(
-        _module(),
-        datamodule=_ShiftedDataModule(5.0),
-        optimizer=optax.adam(1e-2),
-        seed=1,
-        ckpt_path=checkpoints,
-    )
+    # The resuming trainer has no checkpoint callback, so the stored callback state is skipped with a warning.
+    with pytest.warns(UserWarning, match="callbacks this Trainer does not have"):
+        resumed = _trainer(tmp_path).fit(
+            _module(),
+            datamodule=_ShiftedDataModule(5.0),
+            optimizer=optax.adam(1e-2),
+            seed=1,
+            ckpt_path=checkpoints,
+        )
 
     _assert_statistics(source_result.state.input_statistics, source_statistics)
     _assert_statistics(source_result.module.input_statistics, source_statistics)

@@ -1,4 +1,5 @@
 import json
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import replace
@@ -263,22 +264,34 @@ class Trainer:
         return states
 
     def load_callback_state_dict(self, states: Mapping[str, Mapping[str, Any]]) -> None:
-        """Restore callback states using stable identifiers.
+        """Restore callback states using stable identifiers, following Lightning.
+
+        Callbacks without a stored state, such as callbacks added since the checkpoint was written or stateless
+        callbacks, keep their fresh state. Non-empty stored states without a matching callback are skipped with a
+        warning.
 
         Args:
             states: Checkpoint callback states.
 
         Raises:
-            ValueError: If checkpoint and Trainer callback identifiers differ.
+            ValueError: If a callback rejects its stored state.
         """
-        expected = set(self._callback_identifiers)
-        received = set(states)
-        if received != expected:
-            missing = sorted(expected - received)
-            unexpected = sorted(received - expected)
-            raise ValueError(f"Checkpoint callback state is incompatible; missing={missing}, unexpected={unexpected}.")
+        identifiers = set(self._callback_identifiers)
+        # Empty states come from stateless callbacks, such as progress bars, so removing them loses nothing.
+        unmatched = sorted(
+            identifier for identifier, state in states.items() if state and identifier not in identifiers
+        )
+        if unmatched and self.strategy.is_global_zero:
+            warnings.warn(
+                "The checkpoint stores state for callbacks this Trainer does not have, so that state is not restored: "
+                f"{unmatched}. Add these callbacks to the Trainer to resume their state.",
+                UserWarning,
+                stacklevel=2,
+            )
         for identifier, callback in zip(self._callback_identifiers, self.callbacks, strict=True):
-            callback.load_state_dict(states[identifier])
+            state = states.get(identifier)
+            if state:
+                callback.load_state_dict(state)
 
     def print_environment_info(self) -> None:
         """Print Lightning-style precision and accelerator information on global rank zero."""
