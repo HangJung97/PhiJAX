@@ -6,8 +6,21 @@ import pytest
 from phijax.equations.pde.navier_stokes import spherical_navier_stokes
 
 
-def test_inviscid_spherical_residuals_match_manufactured_fields() -> None:
-    """Verify weighted continuity and all inviscid spherical momentum terms analytically."""
+@pytest.mark.parametrize(
+    "points",
+    [
+        [[0.7, 0.6, 0.3, 0.2], [1.5, 1.2, -0.2, 0.4]],
+        # Polar angles outside `[0, pi]` have negative `sin(th)`; the clamp must preserve its sign.
+        [[0.7, -0.5, 0.3, 0.2], [1.5, 4.0, -0.2, 0.4]],
+    ],
+    ids=["standard-polar-range", "negative-sine"],
+)
+def test_inviscid_spherical_residuals_match_manufactured_fields(points: list[list[float]]) -> None:
+    """Verify weighted continuity and all inviscid spherical momentum terms analytically.
+
+    Args:
+        points: Coordinate rows ordered as `[r, th, phi, t]`.
+    """
 
     def predict_one(params: None, point: jax.Array) -> jax.Array:
         """Evaluate manufactured spherical velocity and pressure fields.
@@ -30,7 +43,7 @@ def test_inviscid_spherical_residuals_match_manufactured_fields() -> None:
             )
         )
 
-    inputs = jnp.asarray([[0.7, 0.6, 0.3, 0.2], [1.5, 1.2, -0.2, 0.4]], dtype=jnp.float32)
+    inputs = jnp.asarray(points, dtype=jnp.float32)
     pressure_coefficient = 0.5
     groups = spherical_navier_stokes(
         predict_one,

@@ -126,7 +126,8 @@ def spherical_navier_stokes(
         viscosity_coefficient: Nonnegative coefficient multiplying spherical vector-Laplacian terms. Use `0.0` for
             inviscid flow or `1 / Re` for a nondimensional viscous equation.
         radius_epsilon: Minimum radius used in reciprocal geometric terms.
-        sine_epsilon: Minimum value of `sin(th)` used in reciprocal geometric terms.
+        sine_epsilon: Minimum magnitude of `sin(th)` used in reciprocal geometric terms. The sign of `sin(th)` is
+            preserved.
         stream: Equation representation requested by the objective. Navier--Stokes supports only `"residual"`.
 
     Returns:
@@ -210,7 +211,14 @@ def spherical_navier_stokes(
             point[3],
         )
         radius = jnp.maximum(point[0], jnp.asarray(radius_epsilon, dtype=point.dtype))
-        sin_theta = jnp.maximum(jnp.sin(point[1]), jnp.asarray(sine_epsilon, dtype=point.dtype))
+        # Clamp the magnitude of `sin(th)` away from zero while keeping its sign for angles outside `[0, pi]`.
+        raw_sin_theta = jnp.sin(point[1])
+        min_sin_theta = jnp.asarray(sine_epsilon, dtype=point.dtype)
+        sin_theta = jnp.where(
+            raw_sin_theta >= 0.0,
+            jnp.maximum(raw_sin_theta, min_sin_theta),
+            jnp.minimum(raw_sin_theta, -min_sin_theta),
+        )
         cos_theta = jnp.cos(point[1])
         r_sin_theta = radius * sin_theta
         u_r, u_theta, u_phi, _ = prediction

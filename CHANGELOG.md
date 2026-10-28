@@ -65,6 +65,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   progress bar or model summary, neither fails nor warns.
 - `OrbaxCheckpointIO` no longer makes Orbax log `Item "default" ... could not be restored` on every checkpoint
   metadata read, such as each restore.
+- `spherical_navier_stokes` now preserves the sign of `sin(th)` when clamping it, so polar angles outside `[0, pi]`
+  give correct residuals.
 
 ## [0.2.0b5] - 2026-09-11
 
