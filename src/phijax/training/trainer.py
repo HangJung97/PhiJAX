@@ -1,6 +1,8 @@
 import json
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Self, cast
 
@@ -29,10 +31,10 @@ from phijax.training.loops.prediction_loop import _PredictionLoop
 from phijax.training.plans import TrainingPlan
 from phijax.training.precision import MatmulPrecision, PrecisionName, PrecisionPolicy
 from phijax.training.results import FitResult
-from phijax.training.state import TrainState, initialize_train_state
+from phijax.training.state import TrainState, as_input_statistics, initialize_train_state
 from phijax.training.steps import TrainStep, make_train_step
 from phijax.training.strategies import Accelerator, DeviceSelection, Strategy, create_strategy
-from phijax.types import JaxDevice
+from phijax.types import InputStatistics, JaxDevice
 
 type BatchSource = Iterable[Any] | Callable[[int], Any]
 
@@ -262,22 +264,34 @@ class Trainer:
         return states
 
     def load_callback_state_dict(self, states: Mapping[str, Mapping[str, Any]]) -> None:
-        """Restore callback states using stable identifiers.
+        """Restore callback states using stable identifiers, following Lightning.
+
+        Callbacks without a stored state, such as callbacks added since the checkpoint was written or stateless
+        callbacks, keep their fresh state. Non-empty stored states without a matching callback are skipped with a
+        warning.
 
         Args:
             states: Checkpoint callback states.
 
         Raises:
-            ValueError: If checkpoint and Trainer callback identifiers differ.
+            ValueError: If a callback rejects its stored state.
         """
-        expected = set(self._callback_identifiers)
-        received = set(states)
-        if received != expected:
-            missing = sorted(expected - received)
-            unexpected = sorted(received - expected)
-            raise ValueError(f"Checkpoint callback state is incompatible; missing={missing}, unexpected={unexpected}.")
+        identifiers = set(self._callback_identifiers)
+        # Empty states come from stateless callbacks, such as progress bars, so removing them loses nothing.
+        unmatched = sorted(
+            identifier for identifier, state in states.items() if state and identifier not in identifiers
+        )
+        if unmatched and self.strategy.is_global_zero:
+            warnings.warn(
+                "The checkpoint stores state for callbacks this Trainer does not have, so that state is not restored: "
+                f"{unmatched}. Add these callbacks to the Trainer to resume their state.",
+                UserWarning,
+                stacklevel=2,
+            )
         for identifier, callback in zip(self._callback_identifiers, self.callbacks, strict=True):
-            callback.load_state_dict(states[identifier])
+            state = states.get(identifier)
+            if state:
+                callback.load_state_dict(state)
 
     def print_environment_info(self) -> None:
         """Print Lightning-style precision and accelerator information on global rank zero."""
@@ -320,6 +334,7 @@ class Trainer:
         *,
         sampling_key: jax.Array | None = None,
         balancer_key: jax.Array | None = None,
+        input_statistics: InputStatistics | None = None,
     ) -> TrainState:
         """Initialize functional state with this trainer's precision policy.
 
@@ -330,6 +345,8 @@ class Trainer:
             key: Root training key, or model-runtime key when both persistent keys are supplied.
             sampling_key: Optional explicit DataModule sampling key.
             balancer_key: Optional explicit adaptive-balancer diagnostic key.
+            input_statistics: Optional normalization statistics the model was built with. When omitted,
+                :meth:`fit_state` and :meth:`predict_state` take them from the module.
 
         Returns:
             Complete precision-aware training state.
@@ -342,6 +359,7 @@ class Trainer:
             self.precision,
             sampling_key=sampling_key,
             balancer_key=balancer_key,
+            input_statistics=input_statistics,
         )
 
     def compile_train_step(
@@ -411,7 +429,8 @@ class Trainer:
 
         Args:
             module: Unbound :class:`PhiModule` containing a model factory and objective.
-            datamodule: Application DataModule supplying normalization statistics and training batches.
+            datamodule: Application DataModule supplying training batches and normalization statistics. Its statistics
+                apply to fresh and weights-only runs; a full resume uses the statistics stored in the checkpoint.
             optimizer: Optax transformation used to initialize state and compile updates.
             seed: Integer seed or valid JAX key. PhiJAX does not modify Python or NumPy global random state.
             balancer: Functional loss balancer, or `None` for equal static weights.
@@ -428,7 +447,6 @@ class Trainer:
             ValueError: If model, balancing, checkpoint, or DataModule options are inconsistent.
         """
         datamodule.prepare_stage("fit")
-        fit_state_owns_teardown = False
         try:
             root_key = _normalize_seed(seed)
             model_key, runtime_key, sampling_key, balancer_key = jax.random.split(root_key, 4)
@@ -442,7 +460,6 @@ class Trainer:
                     precision=self.precision,
                 )
                 resolved_balancer = StaticLossBalancer(bound_module.loss_names) if balancer is None else balancer
-                plan = build_training_plan(self, bound_module, resolved_balancer, optimizer)
                 state = self.initialize_state(
                     model_state,
                     optimizer,
@@ -450,21 +467,26 @@ class Trainer:
                     runtime_key,
                     sampling_key=sampling_key,
                     balancer_key=balancer_key,
+                    input_statistics=bound_module.input_statistics,
                 )
-            fit_state_owns_teardown = True
-            return self.fit_state(
-                bound_module,
-                plan,
+            self._pending_callback_states = None
+            state = self._restore_state(
                 state,
-                hyperparameters=hyperparameters,
-                ckpt_path=ckpt_path,
-                ckpt_step=ckpt_step,
+                ckpt_path,
+                ckpt_step,
                 weights_only=weights_only,
-                datamodule=datamodule,
+                restore_callbacks=not weights_only and ckpt_path is not None,
+            )
+            with jax.default_device(self.strategy.root_device):
+                # A full resume restores the checkpoint's statistics. Rebind before the training plan captures the
+                # module, because compiled steps and balancer updates close over its model application.
+                bound_module = bound_module.bind_input_statistics(state.input_statistics)
+                plan = build_training_plan(self, bound_module, resolved_balancer, optimizer)
+            return self._run_fit(
+                bound_module, plan, state, None, hyperparameters=hyperparameters, datamodule=datamodule
             )
         finally:
-            if not fit_state_owns_teardown:
-                datamodule.teardown_stage("fit")
+            datamodule.teardown_stage("fit")
 
     def fit_state(
         self,
@@ -496,7 +518,8 @@ class Trainer:
             Bound module, final state, metrics, and termination status.
 
         Raises:
-            ValueError: If checkpoint restoration or DataModule source options are incomplete or invalid.
+            ValueError: If checkpoint restoration or DataModule source options are incomplete or invalid, or the
+                restored input statistics differ from the statistics the module's model was built with.
             RuntimeError: If a custom training step does not increment `TrainState.step` exactly once.
             BaseException: Re-raises training lifecycle errors after cleanup.
         """
@@ -504,32 +527,65 @@ class Trainer:
             plan = training if isinstance(training, TrainingPlan) else TrainingPlan(training)
             self._pending_callback_states = None
             state = self._restore_state(
-                state,
+                _with_module_statistics(state, module),
                 ckpt_path,
                 ckpt_step,
                 weights_only=weights_only,
                 restore_callbacks=not weights_only and ckpt_path is not None,
             )
-            state = self.strategy.place_state(state)
-            initial_step = _state_step(state)
-            batches = self._training_batch_source(plan, batches, datamodule, state.sampling_key)
-            balancer_update = self._balancer_update_runtime(plan, batches, state.balancer_key, initial_step)
-            precision_context = (
-                nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
-            )
-            with precision_context:
-                return self._fit_loop.run(
-                    module,
-                    plan.train_step,
-                    state,
-                    batches,
-                    initial_step=initial_step,
-                    balancer_update=balancer_update,
-                    hyperparameters=hyperparameters,
+            # The plan was compiled for the module's statistics, so it cannot be rebound here.
+            if module.bind_input_statistics(state.input_statistics) is not module:
+                raise ValueError(
+                    "The restored input statistics differ from the statistics the module's model was built with. "
+                    "Rebuild the module and training plan with the checkpoint statistics, or use `Trainer.fit()`."
                 )
+            return self._run_fit(module, plan, state, batches, hyperparameters=hyperparameters, datamodule=datamodule)
         finally:
             if datamodule is not None:
                 datamodule.teardown_stage("fit")
+
+    def _run_fit(
+        self,
+        module: BasePhiModule,
+        plan: TrainingPlan,
+        state: TrainState,
+        batches: BatchSource | None,
+        *,
+        hyperparameters: Mapping[str, Any] | None,
+        datamodule: PhiDataModule | None,
+    ) -> FitResult:
+        """Place a restored state and run the fit loop.
+
+        Callers own DataModule teardown.
+
+        Args:
+                    module: Bound module whose model applies `state.input_statistics`.
+                    plan: Training plan compiled for `module`.
+                    state: Restored or fresh functional training state.
+                    batches: Optional explicit training source.
+                    hyperparameters: Optional resolved configuration recorded before the first update.
+                    datamodule: Optional DataModule supplying the source when `batches` is omitted.
+
+        Returns:
+                    Bound module, final state, metrics, and termination status.
+        """
+        state = self.strategy.place_state(state)
+        initial_step = _state_step(state)
+        batches = self._training_batch_source(plan, batches, datamodule, state.sampling_key)
+        balancer_update = self._balancer_update_runtime(plan, batches, state.balancer_key, initial_step)
+        precision_context = (
+            nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
+        )
+        with precision_context:
+            return self._fit_loop.run(
+                module,
+                plan.train_step,
+                state,
+                batches,
+                initial_step=initial_step,
+                balancer_update=balancer_update,
+                hyperparameters=hyperparameters,
+            )
 
     def _training_batch_source(
         self,
@@ -652,7 +708,8 @@ class Trainer:
         """Predict from an explicitly bound module and functional state template.
 
         This follows Lightning's `ckpt_path` convention while preserving PhiJAX's explicit functional state. The
-        supplied `state` defines the complete Orbax restore structure; only its model state is replaced for prediction.
+        supplied `state` defines the complete Orbax restore structure. Prediction uses the checkpoint's model state and
+        input statistics, and the module is rebound to those statistics when they differ.
         When `batches` is omitted, the trainer prepares and sets up `datamodule` for prediction and requests its batch
         source. Prediction is skipped when neither source is available.
 
@@ -681,7 +738,12 @@ class Trainer:
                 batches = datamodule.predict_batch_source()
                 if batches is None:
                     return None
-            restored_state = self._restore_state(state, ckpt_path, ckpt_step, weights_only=ckpt_path is not None)
+            # Prediction is not transfer learning: use the statistics the checkpointed model was trained with.
+            restored_state = self._restore_state(
+                _with_module_statistics(state, module), ckpt_path, ckpt_step, weights_only=False
+            )
+            with jax.default_device(self.strategy.root_device):
+                module = module.bind_input_statistics(restored_state.input_statistics)
             precision_context = (
                 nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
             )
@@ -904,6 +966,24 @@ def _callback_identifiers(callbacks: Sequence[Callback]) -> tuple[str, ...]:
         counts[base] = index + 1
         identifiers.append(f"{base}:{index}")
     return tuple(identifiers)
+
+
+def _with_module_statistics(state: TrainState, module: BasePhiModule) -> TrainState:
+    """Fill a state without input statistics from the statistics the module's model was built with.
+
+    Restore templates built without statistics, such as downstream prediction scripts, then still describe the
+    module's normalization instead of "no normalization".
+
+    Args:
+        state: Fresh state or restore template.
+        module: Bound module.
+
+    Returns:
+        `state`, with input statistics taken from `module` when it had none.
+    """
+    if state.input_statistics is not None or module.input_statistics is None:
+        return state
+    return replace(state, input_statistics=as_input_statistics(module.input_statistics))
 
 
 __all__ = ["BatchSource", "FitResult", "TrainStep", "Trainer"]

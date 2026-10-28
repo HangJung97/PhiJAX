@@ -1,4 +1,5 @@
 import signal
+import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -2355,9 +2356,8 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         """
         assert ckpt_path is not None
         calls.append((Path(ckpt_path), weights_only, step))
-        if weights_only:
-            return target.replace(model_state={"weight": jnp.asarray(3.0)})
-        return target.replace(step=jnp.asarray(4, jnp.int32))
+        restored = target.replace(model_state={"weight": jnp.asarray(3.0)})
+        return restored if weights_only else restored.replace(step=jnp.asarray(4, jnp.int32))
 
     monkeypatch.setattr(trainer_module, "restore_checkpoint", restore)
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
@@ -2420,7 +2420,8 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         datamodule=prediction_data_module,
     )
 
-    assert calls == [(tmp_path, False, 4), (tmp_path, True, 5)]
+    # Prediction restores the full state so it uses the checkpoint's model state and input statistics.
+    assert calls == [(tmp_path, False, 4), (tmp_path, False, 5)]
     assert requested_steps == [4]
     assert int(fit_result.state.step) == 5
     np.testing.assert_array_equal(predictions, [[6.0]])
@@ -2619,3 +2620,110 @@ def test_trainer_predict_can_stream_without_retaining_predictions() -> None:
     assert result is None
     assert "callback:predict_batch_end:0" in timeline
     assert timeline[-2:] == ["callback:predict_end", "callback:teardown"]
+
+
+class _CountingCallback(Callback):
+    """Hold one persistent counter for callback-state restoration checks."""
+
+    def __init__(self, count: int = 0) -> None:
+        """Initialize the counter.
+
+        Args:
+            count: Initial counter value.
+        """
+        self.count = count
+
+    def state_dict(self) -> Mapping[str, Any]:
+        """Return the persistent counter.
+
+        Returns:
+            JSON-compatible callback state.
+        """
+        return {"count": self.count}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore the counter.
+
+        Args:
+            state: State returned by :meth:`state_dict`.
+
+        Raises:
+            ValueError: If the state has no integer counter.
+        """
+        if not isinstance(state.get("count"), int):
+            raise ValueError("Counter state is malformed.")
+        self.count = state["count"]
+
+
+class _OtherCountingCallback(_CountingCallback):
+    """Provide a second stateful callback class with its own identifier."""
+
+
+def _quiet_trainer(*callbacks: Callback, progress_bar: bool = False, model_summary: bool = False) -> Trainer:
+    """Create a CPU trainer with explicit callbacks and no logger.
+
+    Args:
+        *callbacks: Callbacks in Trainer order.
+        progress_bar: Whether to add the default progress bar.
+        model_summary: Whether to add the default model summary.
+
+    Returns:
+        Configured trainer.
+    """
+    return Trainer(
+        max_steps=1,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+        logger=False,
+        enable_progress_bar=progress_bar,
+        enable_model_summary=model_summary,
+        callbacks=callbacks,
+    )
+
+
+def test_callback_state_restore_keeps_added_callbacks_fresh() -> None:
+    """Verify callbacks added since the checkpoint was written start from their fresh state without warnings."""
+    states = _quiet_trainer(_CountingCallback(3)).callback_state_dict()
+    restored, added = _CountingCallback(), _OtherCountingCallback(5)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _quiet_trainer(restored, added).load_callback_state_dict(states)
+
+    assert restored.count == 3
+    assert added.count == 5
+
+
+def test_callback_state_restore_warns_for_removed_stateful_callbacks() -> None:
+    """Verify stored state without a matching callback is skipped with a warning while other states restore."""
+    states = _quiet_trainer(_CountingCallback(3), _OtherCountingCallback(7)).callback_state_dict()
+    restored = _CountingCallback()
+
+    with pytest.warns(UserWarning, match="_OtherCountingCallback"):
+        _quiet_trainer(restored).load_callback_state_dict(states)
+
+    assert restored.count == 3
+
+
+def test_callback_state_restore_ignores_toggled_stateless_callbacks() -> None:
+    """Verify enabling or disabling stateless default callbacks between runs neither fails nor warns."""
+    with_defaults = _quiet_trainer(_CountingCallback(4), progress_bar=True, model_summary=True)
+    states = with_defaults.callback_state_dict()
+    restored = _CountingCallback()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _quiet_trainer(restored).load_callback_state_dict(states)
+        with_defaults.load_callback_state_dict(_quiet_trainer(_CountingCallback(2)).callback_state_dict())
+
+    assert len(states) == 3
+    assert restored.count == 4
+    assert with_defaults.callbacks[0].count == 2
+
+
+def test_callback_state_restore_raises_for_rejected_state() -> None:
+    """Verify a callback that rejects its stored state stops the restore."""
+    trainer = _quiet_trainer(_CountingCallback())
+    (identifier,) = trainer.callback_state_dict()
+
+    with pytest.raises(ValueError, match="malformed"):
+        trainer.load_callback_state_dict({identifier: {"count": "three"}})

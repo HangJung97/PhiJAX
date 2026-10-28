@@ -14,6 +14,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `ModelCheckpoint` accepts `monitor="step"` to rank checkpoints by training step.
 - The terminal checkpoint from `save_last` or `save_on_exception` is replaced by the next one, including across
   resumed fits, instead of accumulating.
+- `TrainState.input_statistics` stores the model's input normalization statistics as `InputStatistics`, so checkpoints
+  keep the normalization a model was trained with.
+- `load_input_statistics()` reads the statistics stored in a checkpoint. Return it from a DataModule's
+  `input_statistics()` to start transfer learning from the source statistics.
+- `BasePhiModule.input_statistics` and `bind_input_statistics()` let the Trainer rebind a module to restored statistics.
 
 ### Breaking changes
 
@@ -26,6 +31,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
       `ModelCheckpoint(..., monitor="step", mode="max", save_top_k=k)`. See the
       [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#checkpoint-retention).
 
+### Changed
+
+- Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's
+  input statistics with a warning. PhiJAX 0.2.0b5 cannot read schema-3 checkpoints.
+- `Trainer.predict_state(..., ckpt_path=...)` restores the full checkpoint and uses its model state and input
+  statistics, instead of restoring model weights only.
+
 ### Fixed
 
 - Fixed a crash with `FileNotFoundError` when monitored top-k retention and Orbax `max_to_keep` deleted the same
@@ -37,6 +49,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `OrbaxCheckpointIO.delete` now ignores steps that are not stored.
 - `build_array_pools` now raises for a field stored in a different axis order from its declared `axes`, instead of
   silently reshaping it. Single-value coordinates, such as one time slice, now load.
+- A full resume and prediction from a checkpoint now use the input statistics the model was trained with. Previously
+  they were recomputed from the current DataModule, which silently changed the model if the data had changed.
+  Transfer learning with `weights_only=True` still uses the current DataModule's statistics.
+- Resuming with a different set of callbacks no longer raises. Following Lightning, added callbacks start fresh, and
+  stored state for a removed stateful callback is skipped with a warning. Toggling stateless callbacks, such as the
+  progress bar or model summary, neither fails nor warns.
+- `OrbaxCheckpointIO` no longer makes Orbax log `Item "default" ... could not be restored` on every checkpoint
+  metadata read, such as each restore.
 
 ## [0.2.0b5] - 2026-09-11
 
