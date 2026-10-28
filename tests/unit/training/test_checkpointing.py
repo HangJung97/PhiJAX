@@ -1,6 +1,7 @@
 import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import jax
@@ -47,16 +48,16 @@ def test_orbax_checkpoint_supports_resume_and_weights_only_loading(tmp_path: Pat
     with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
         assert checkpoint_io.save(source, 4, {"train/loss": 1.0}, callback_states=callback_states) is True
         checkpoint_io.wait_until_finished()
-        manifest = checkpoint_io._manager.metadata(4).custom_metadata["phijax"]
+        manifest = checkpoint_io._active_manager().metadata(4).custom_metadata["phijax"]
         resumed = checkpoint_io.restore(target)
         weights_only = checkpoint_io.restore_weights(target)
         restored_callback_states = checkpoint_io.restore_callback_states()
 
     assert float(resumed.model_state["weight"]) == 2.0
-    assert float(resumed.optimizer_state["slot"]) == 3.0
+    assert float(cast(dict[str, jax.Array], resumed.optimizer_state)["slot"]) == 3.0
     assert int(resumed.step) == 4
     assert float(weights_only.model_state["weight"]) == 2.0
-    assert float(weights_only.optimizer_state["slot"]) == 8.0
+    assert float(cast(dict[str, jax.Array], weights_only.optimizer_state)["slot"]) == 8.0
     assert int(weights_only.step) == 0
     assert manifest["schema_version"] == 3
     assert manifest["step"] == 4
@@ -115,7 +116,7 @@ def test_checkpoint_state_identifier_tracks_structure_not_values() -> None:
     """Verify checkpoint identifiers are stable across values and change with leaf shapes."""
     first = _state(weight=1.0, slot=2.0, step=0)
     second = _state(weight=3.0, slot=4.0, step=5)
-    changed = first.replace(model_state={"weight": jnp.ones((2,))})
+    changed = dataclasses.replace(first, model_state={"weight": jnp.ones((2,))})
 
     assert checkpointing_module._state_identifier(first) == checkpointing_module._state_identifier(second)
     assert checkpointing_module._state_identifier(first) != checkpointing_module._state_identifier(changed)
@@ -178,7 +179,7 @@ def test_checkpoint_manifest_rejects_incompatible_producers(metadata: dict[str, 
     target = _state(weight=1.0, slot=2.0, step=0)
     checkpoint_io = OrbaxCheckpointIO.__new__(OrbaxCheckpointIO)
     custom_metadata = {} if not metadata else {"phijax": metadata | {"state_identifier": "unused"}}
-    checkpoint_io._manager = SimpleNamespace(
+    cast(Any, checkpoint_io)._manager = SimpleNamespace(
         metadata=lambda step: SimpleNamespace(custom_metadata=custom_metadata),
     )
 
@@ -211,12 +212,13 @@ def test_full_restore_uses_checkpoint_input_statistics(tmp_path: Path, template_
     target = dataclasses.replace(_state(weight=9.0, slot=8.0, step=0), input_statistics=target_statistics)
     with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
         checkpoint_io.save(source, 4)
-        manifest = checkpoint_io._manager.metadata(4).custom_metadata["phijax"]
+        manifest = checkpoint_io._active_manager().metadata(4).custom_metadata["phijax"]
         resumed = checkpoint_io.restore(target)
         weights_only = checkpoint_io.restore_weights(target)
 
     assert manifest["schema_version"] == 3
     assert manifest["input_statistics"] == {"shape": [2], "dtype": "float32"}
+    assert resumed.input_statistics is not None
     np.testing.assert_array_equal(resumed.input_statistics.mean, [1.0, 2.0])
     np.testing.assert_array_equal(resumed.input_statistics.std, [0.5, 0.25])
     assert float(weights_only.model_state["weight"]) == 2.0
@@ -232,13 +234,16 @@ def test_restore_without_stored_statistics_ignores_template_statistics(tmp_path:
     target = dataclasses.replace(_state(weight=9.0, slot=8.0, step=0), input_statistics=_statistics(1.0))
     with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
         checkpoint_io.save(_state(weight=2.0, slot=3.0, step=4), 4)
-        manifest = checkpoint_io._manager.metadata(4).custom_metadata["phijax"]
+        manifest = checkpoint_io._active_manager().metadata(4).custom_metadata["phijax"]
         resumed = checkpoint_io.restore(target)
 
     assert manifest["input_statistics"] is None
     assert resumed.input_statistics is None
     assert float(resumed.model_state["weight"]) == 2.0
-    assert checkpointing_module._state_identifier(target.replace(input_statistics=None)) == manifest["state_identifier"]
+    assert (
+        checkpointing_module._state_identifier(dataclasses.replace(target, input_statistics=None))
+        == manifest["state_identifier"]
+    )
 
 
 def test_load_input_statistics_reads_only_the_stored_statistics(tmp_path: Path) -> None:
@@ -282,7 +287,7 @@ def _write_schema_2_checkpoint(directory: Path, state: TrainState, step: int) ->
         "schema_version": 2,
         "phijax_version": phijax_version,
         "step": step,
-        "state_identifier": checkpointing_module._state_identifier(state.replace(input_statistics=None)),
+        "state_identifier": checkpointing_module._state_identifier(dataclasses.replace(state, input_statistics=None)),
         "callbacks": {},
     }
     options = ocp.CheckpointManagerOptions(enable_async_checkpointing=False)
@@ -307,7 +312,7 @@ def test_schema_2_checkpoint_restores_with_template_statistics(tmp_path: Path) -
 
     assert isinstance(resumed, TrainState)
     assert float(resumed.model_state["weight"]) == 2.0
-    assert float(resumed.optimizer_state["slot"]) == 3.0
+    assert float(cast(dict[str, jax.Array], resumed.optimizer_state)["slot"]) == 3.0
     assert int(resumed.step) == 4
     assert resumed.input_statistics is template.input_statistics
     assert stored is None
