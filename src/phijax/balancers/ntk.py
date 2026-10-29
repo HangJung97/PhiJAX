@@ -269,14 +269,16 @@ class ExactNTKBalancer:
 
         Returns:
             New stopped-gradient state containing nonnegative mean diagonals and smoothed weights. Zero entries
-            preserve their previous weights; an all-zero vector leaves every weight unchanged.
+            preserve their previous weights; an all-zero vector, or any NaN or infinite entry, leaves every weight
+            unchanged.
         """
         nonnegative = jnp.maximum(traces.astype(jnp.float32), 0.0)
         mean_ntk = jnp.mean(nonnegative)
         safe_traces = jnp.maximum(nonnegative, self.eps)
         raw_weights = jnp.where(nonnegative > self.eps, mean_ntk / safe_traces, state.weights)
         updated = self.momentum * state.weights + (1.0 - self.momentum) * raw_weights
-        weights = jnp.where(mean_ntk > self.eps, updated, state.weights)
+        # A NaN or infinite trace would corrupt every weight through the mean, so skip the whole update.
+        weights = jnp.where((mean_ntk > self.eps) & jnp.all(jnp.isfinite(nonnegative)), updated, state.weights)
         return BalancerState(weights=jax.lax.stop_gradient(weights), traces=jax.lax.stop_gradient(nonnegative))
 
     def update(

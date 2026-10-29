@@ -8,6 +8,10 @@ objective can use static, gradient-norm, exact-NTK, or custom weighting.
 `BalancerState.weights` is aligned with objective `loss_names`. The `traces` field stores the latest adaptive
 diagnostic: parameter-gradient norms for `GradNormBalancer`, or mean pointwise diagonal NTKs for `ExactNTKBalancer`.
 
+An update keeps the previous weights when every diagnostic is zero or when any diagnostic is NaN or infinite, for
+example after an overflow. The `traces` field still records the raw values, so the logged `train/grad_norm/...` or
+`train/ntk/...` metrics show the problem.
+
 `BalancerUpdatePlan` contains a compiled functional update, its host-side cadence, and optional diagnostic batch
 sizes. A `None` batch-size mapping reuses the current training batches.
 

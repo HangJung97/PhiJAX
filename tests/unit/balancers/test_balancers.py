@@ -62,6 +62,19 @@ def test_ntk_weights_use_mean_diagonal_ratio_and_smoothing() -> None:
     np.testing.assert_allclose(state.weights, [1.5, 5.0 / 6.0], rtol=1e-6)
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_ntk_non_finite_traces_preserve_previous_weights(value: float) -> None:
+    """Verify one NaN or infinite mean diagonal leaves every weight unchanged and stays visible as a diagnostic.
+
+    Args:
+        value: Non-finite mean diagonal of the second loss.
+    """
+    balancer = ExactNTKBalancer(("a", "b"), update_every_n_steps=1, kernel_size=1, initial_weights={"a": 2.0, "b": 3.0})
+    state = balancer.update_from_traces(jnp.asarray([1.0, value]), balancer.initialize())
+    np.testing.assert_array_equal(state.weights, [2.0, 3.0])
+    np.testing.assert_array_equal(state.traces, [1.0, value])
+
+
 def test_ntk_update_averages_pointwise_diagonals_independently_of_batch_size() -> None:
     """Verify duplicated kernel samples do not change the mean diagonal-NTK diagnostic."""
     balancer = ExactNTKBalancer(("linear",), update_every_n_steps=1, kernel_size=1, moving_average_coefficient=0.0)
