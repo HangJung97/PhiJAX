@@ -149,6 +149,21 @@ Previously, every fit call ran `max_steps` more updates, so a resumed run traine
 | Progress bars restart at `0` after a resume           | Progress bars start at the restored step                    |
 | Resuming a finished run trains `max_steps` more steps | Resuming a finished run runs the fit hooks without training |
 
+### Early stopping
+
+From PhiJAX 0.2.0b6, `EarlyStopping` follows Lightning's callback and checks metrics in `on_train_metrics()`.
+
+| PhiJAX 0.2.0b5 and earlier                            | PhiJAX 0.2.0b6 and later                                       |
+| ----------------------------------------------------- | -------------------------------------------------------------- |
+| Stops after `patience + 1` checks without improvement | Stops after `patience` checks without improvement              |
+| `best` and `bad_checks` attributes                    | `best_score` and `wait_count` attributes                       |
+| A NaN loss counts as one non-improving check          | A NaN or infinite loss stops immediately (`check_finite=True`) |
+| Sees only metrics from the compiled step              | Also sees module-logged and callback metrics                   |
+| Progress restarts on resume                           | Progress is stored in checkpoints                              |
+| Callbacks stop by returning `True`                    | Callbacks set `trainer.should_stop = True`; `True` still works |
+
+The new rule stops one check earlier. To stop at the same step as before, increase `patience` by one.
+
 ## Adaptive balancing
 
 Adaptive balancers now own their update cadence and diagnostic settings:

@@ -110,6 +110,7 @@ class _FitLoop:
             metrics_connector.logger,
             is_global_zero=trainer.strategy.is_global_zero,
         )
+        trainer.should_stop = False
         signal_connector.reset()
         signal_connector.install()
 
@@ -138,6 +139,10 @@ class _FitLoop:
             if remaining_steps == 0 and trainer.strategy.is_global_zero:
                 log.info(f"`Trainer.fit` stopped: `max_steps={trainer.max_steps}` reached at step {initial_step}.")
             for iteration in range(remaining_steps):
+                if trainer.should_stop:
+                    # A fit-start hook requested stopping before the first update.
+                    stopped_early = True
+                    break
                 try:
                     global_step = initial_step + iteration
                     batch = batches(global_step) if callable(batches) else next(batch_iterator)  # type: ignore[arg-type]
@@ -198,8 +203,10 @@ class _FitLoop:
                     should_log=should_log,
                     has_logger=metrics_connector.has_logger,
                 )
+                # Every callback runs its hook; a `True` return is the legacy way to set `should_stop`.
                 stop_requests = [callback.on_train_batch_end(context) for callback in trainer.callbacks]
-                stopped_early = any(stop_requests)
+                if any(stop_requests):
+                    trainer.should_stop = True
                 with _collect_module_metrics() as collected_metrics:
                     model_state, device_metrics = module.on_train_batch_end(state.model_state, module_context)
                     collected_metrics.add_defaults(device_metrics)
@@ -235,6 +242,7 @@ class _FitLoop:
                 context = replace(context, callback_states=trainer.callback_state_dict())
                 for callback in trainer.callbacks:
                     callback.on_train_metrics(context)
+                stopped_early = trainer.should_stop
 
                 if stopped_early or step == trainer.max_steps:
                     jax.block_until_ready(device_metrics)

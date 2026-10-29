@@ -5,8 +5,26 @@ update.
 
 ## Early stopping
 
-`mode` accepts `"min"` or `"max"`, represented by the public `MonitorMode` alias. Use `"min"` for losses and `"max"`
-for scores where larger values are better.
+`EarlyStopping` follows Lightning's callback. It checks the monitored metric in `on_train_metrics()`, so it can monitor
+metrics logged by the module with `self.log()` and metrics contributed by other callbacks. When it stops, it sets
+`Trainer.should_stop` and logs the reason.
+
+| Option                | Behavior                                                                             |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `patience`            | Stop once `wait_count`, the number of checks without improvement, reaches it         |
+| `min_delta`           | Smallest change over `best_score` that counts as an improvement                      |
+| `mode`                | `"min"` for losses, `"max"` for scores where larger values are better                |
+| `check_finite`        | Stop immediately on a NaN or infinite value; enabled by default                      |
+| `check_every_n_steps` | Check only at global steps divisible by this interval, avoiding a host sync per step |
+
+Checkpoints store `wait_count`, `best_score`, and `stopped_step`, so a resumed fit stops at the same step as an
+uninterrupted one. They also store `monitor`, `mode`, and `patience`:
+
+- Resuming with a different `monitor` or `mode` skips the stored progress with a warning, because a best score of
+  another metric is not comparable.
+- Resuming with a different `patience` keeps the configured value and warns, so `patience` can be changed on resume.
+
+`mode` uses the public `MonitorMode` alias.
 
 ::: phijax.callbacks.EarlyStopping
 

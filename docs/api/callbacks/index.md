@@ -45,8 +45,10 @@ on_exception
 teardown
 ```
 
-`on_train_batch_end()` returns `True` to request a clean early stop. Callbacks run before corresponding
-`BasePhiModule` hooks.
+To stop fitting cleanly, set `trainer.should_stop = True` from a hook, as in Lightning. Keep the Trainer passed to
+`connect()` for this. The fit loop resets the flag when a fit starts and checks it before each step and after each
+step's `on_train_metrics()` hooks, so the step that requests the stop still completes. Returning `True` from
+`on_train_batch_end()` also sets the flag. Callbacks run before corresponding `BasePhiModule` hooks.
 
 `training_metrics()` is a read-only extension point evaluated after the module batch-end hook. Metric names must be
 non-empty and may not replace metrics produced by the compiled step, the module, or another callback.
@@ -68,7 +70,8 @@ and `progress_bar_metrics`. Callback `training_metrics()` values are logger-only
 
 ## Compose callbacks
 
-Pass callbacks to the Trainer in dispatch order:
+Pass callbacks to the Trainer in dispatch order. As in Lightning, the Trainer moves `ModelCheckpoint` to the end, so
+each checkpoint stores the state every other callback reached at that step:
 
 ```python
 trainer = Trainer(
