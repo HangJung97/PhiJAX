@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -66,7 +67,7 @@ def test_rich_model_summary_respects_rank_and_missing_summary_provider(
         ({"console_width": 0}, "console_width"),
     ],
 )
-def test_rich_model_summary_rejects_invalid_display_policy(kwargs: dict[str, int], match: str) -> None:
+def test_rich_model_summary_rejects_invalid_display_policy(kwargs: dict[str, Any], match: str) -> None:
     """Verify invalid summary depth and console width fail during callback construction.
 
     Args:

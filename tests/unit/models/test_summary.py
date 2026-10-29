@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -35,7 +37,7 @@ def test_tabulate_nnx_model_reports_shapes_layers_and_parameter_count() -> None:
         ({"console_width": 0}, "console_width"),
     ],
 )
-def test_tabulate_nnx_model_rejects_invalid_display_policy(kwargs: dict[str, int], match: str) -> None:
+def test_tabulate_nnx_model_rejects_invalid_display_policy(kwargs: dict[str, Any], match: str) -> None:
     """Verify invalid summary display settings fail before graph reconstruction.
 
     Args:

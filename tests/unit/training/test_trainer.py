@@ -1,3 +1,4 @@
+import dataclasses
 import signal
 import warnings
 from collections.abc import Mapping
@@ -17,6 +18,7 @@ import phijax.training.trainer as trainer_module
 from phijax.balancers import BalancerState, BalancerUpdatePlan, StaticLossBalancer
 from phijax.callbacks import (
     Callback,
+    CallbackContext,
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
@@ -37,6 +39,7 @@ from phijax.training import (
     build_training_plan,
 )
 from phijax.training.connectors.signal_connector import _SignalConnector
+from phijax.types import ArrayMapping, NamedBatches
 
 
 class _RecordingCallback(Callback):
@@ -101,13 +104,14 @@ class _RecordingCallback(Callback):
         """
         self._record(f"fit_end:{context.step}")
 
-    def on_exception(self, exception: BaseException, context: TrainerContext) -> None:
+    def on_exception(self, exception: BaseException, context: CallbackContext) -> None:
         """Record callback exception handling.
 
         Args:
             exception: Raised training exception.
             context: Most recent trainer context.
         """
+        assert isinstance(context, TrainerContext)
         self._record(f"exception:{type(exception).__name__}:{context.step}")
 
     def on_predict_start(self, context: PredictionContext) -> None:
@@ -230,7 +234,7 @@ class _RecordingModule(BasePhiModule):
     def training_step(
         self,
         model_state: Any,
-        batches: dict[str, dict[str, jax.Array]],
+        batches: NamedBatches,
     ) -> Mapping[str, jax.Array]:
         """Evaluate the synthetic scalar loss.
 
@@ -790,7 +794,7 @@ def _state() -> TrainState:
 
 
 @jax.jit
-def _train_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainState, dict[str, jax.Array]]:
+def _train_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
     """Apply one deterministic scalar test update.
 
     Args:
@@ -801,10 +805,10 @@ def _train_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainSt
         Updated state and constant loss metric.
     """
     model_state = {"weight": state.model_state["weight"] + batch["increment"]}
-    return state.replace(model_state=model_state, step=state.step + 1), {"train/loss": jnp.asarray(1.0)}
+    return dataclasses.replace(state, model_state=model_state, step=state.step + 1), {"train/loss": jnp.asarray(1.0)}
 
 
-def _failing_train_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainState, dict[str, jax.Array]]:
+def _failing_train_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
     """Raise a deterministic training error for exception-order tests.
 
     Args:
@@ -821,7 +825,7 @@ def _failing_train_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple
     raise RuntimeError("synthetic step failure")
 
 
-def _balancer_train_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainState, dict[str, jax.Array]]:
+def _balancer_train_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
     """Apply one synthetic update and expose the active balancer weight.
 
     Args:
@@ -832,7 +836,9 @@ def _balancer_train_step(state: TrainState, batch: dict[str, jax.Array]) -> tupl
         Updated state and the balancer weight used by this step.
     """
     model_state = {"weight": state.model_state["weight"] + batch["increment"]}
-    return state.replace(model_state=model_state, step=state.step + 1), {"train/loss": state.balancer_state.weights[0]}
+    return dataclasses.replace(state, model_state=model_state, step=state.step + 1), {
+        "train/loss": state.balancer_state.weights[0]
+    }
 
 
 @pytest.mark.parametrize(
@@ -855,7 +861,7 @@ def test_trainer_schedules_adaptive_balancer_updates_from_host_steps(
 
     def update(
         model_state: dict[str, jax.Array],
-        batches: dict[str, jax.Array],
+        batches: Any,
         balancer_state: BalancerState,
     ) -> BalancerState:
         """Record the selected batch and increment the synthetic weight.
@@ -877,7 +883,7 @@ def test_trainer_schedules_adaptive_balancer_updates_from_host_steps(
         every_n_steps=2,
         update_start_step=update_start_step,
     )
-    state = _state().replace(step=jnp.asarray(initial_step, jnp.int32))
+    state = dataclasses.replace(_state(), step=jnp.asarray(initial_step, jnp.int32))
     trainer = Trainer(
         max_steps=3,
         logger=False,
@@ -936,7 +942,7 @@ def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -
 
     def update(
         model_state: dict[str, jax.Array],
-        batches: dict[str, jax.Array],
+        batches: Any,
         balancer_state: BalancerState,
     ) -> BalancerState:
         """Record the fixed diagnostic value and update the synthetic weight.
@@ -957,7 +963,7 @@ def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -
         )
 
     source = SampleableSource()
-    state = _state().replace(step=jnp.asarray(3, jnp.int32))
+    state = dataclasses.replace(_state(), step=jnp.asarray(3, jnp.int32))
     update_plan = BalancerUpdatePlan(
         update,
         every_n_steps=1,
@@ -1075,7 +1081,7 @@ def test_trainer_does_not_synchronize_unused_metrics_at_logging_cadence(monkeypa
 def test_trainer_rejects_custom_step_without_one_step_increment() -> None:
     """Verify host and device progress divergence fails before successful fit finalization."""
 
-    def invalid_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainState, dict[str, jax.Array]]:
+    def invalid_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
         """Return metrics without advancing the explicit optimizer step.
 
         Args:
@@ -1272,7 +1278,7 @@ def test_trainer_routes_causal_diagnostics_to_logger_not_default_progress() -> N
     """Verify unmatched diagnostics stay logger-only while total loss remains visible."""
     experiment_logger = _RecordingLogger()
 
-    def diagnostic_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainState, dict[str, jax.Array]]:
+    def diagnostic_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
         """Return total loss and one causal-style scalar diagnostic.
 
         Args:
@@ -1324,7 +1330,7 @@ def test_module_log_overrides_destinations_and_adds_host_metrics() -> None:
     """Verify host module declarations override defaults without hiding callback diagnostics."""
     experiment_logger = _RecordingLogger()
 
-    def diagnostic_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainState, dict[str, jax.Array]]:
+    def diagnostic_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
         """Return scalar and array diagnostics for host-side routing.
 
         Args:
@@ -1657,7 +1663,7 @@ def test_trainer_applies_and_restores_matmul_precision_for_fit_and_prediction() 
     """Verify explicit matmul precision covers lazy execution without leaking process-global state."""
     observed: list[tuple[str, Any]] = []
 
-    def recording_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainState, dict[str, jax.Array]]:
+    def recording_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
         """Record fit-time JAX precision before applying one synthetic update.
 
         Args:
@@ -1673,7 +1679,7 @@ def test_trainer_applies_and_restores_matmul_precision_for_fit_and_prediction() 
     class RecordingPredictionModule(_RecordingModule):
         """Record JAX precision from prediction computation."""
 
-        def predict_step(self, model_state: Any, batch: dict[str, jax.Array]) -> jax.Array:
+        def predict_step(self, model_state: Any, batch: ArrayMapping) -> jax.Array:
             """Record and evaluate one prediction batch.
 
             Args:
@@ -1695,7 +1701,7 @@ def test_trainer_applies_and_restores_matmul_precision_for_fit_and_prediction() 
     trainer.fit_state(_RecordingModule(), recording_step, _state(), ({"increment": jnp.asarray(1.0)},))
     trainer.predict_state(
         RecordingPredictionModule(),
-        _state().replace(model_state={"weight": jnp.asarray(2.0)}),
+        dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)}),
         ({"inputs": jnp.asarray([[1.0]])},),
     )
 
@@ -1707,7 +1713,7 @@ def test_trainer_null_matmul_precision_preserves_external_policy() -> None:
     """Verify a null trainer option does not override an externally configured JAX policy."""
     observed: list[Any] = []
 
-    def recording_step(state: TrainState, batch: dict[str, jax.Array]) -> tuple[TrainState, dict[str, jax.Array]]:
+    def recording_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
         """Record the ambient JAX policy before one synthetic update.
 
         Args:
@@ -1730,7 +1736,7 @@ def test_trainer_null_matmul_precision_preserves_external_policy() -> None:
 def test_trainer_rejects_unknown_matmul_precision() -> None:
     """Verify the trainer rejects unsupported matrix-multiplication precision names."""
     with pytest.raises(ValueError, match="`matmul_precision`"):
-        Trainer(max_steps=1, matmul_precision="float32")
+        Trainer(max_steps=1, matmul_precision=cast(Any, "float32"))
 
 
 def test_trainer_rejects_removed_deterministic_argument() -> None:
@@ -1859,7 +1865,7 @@ def test_trainer_restores_sampling_state_before_building_data_module_source(
         tmp_path: Synthetic checkpoint-root path.
     """
     restored_key = jax.random.key(19)
-    restored_state = _state().replace(step=jnp.asarray(5, jnp.int32), sampling_key=restored_key)
+    restored_state = dataclasses.replace(_state(), step=jnp.asarray(5, jnp.int32), sampling_key=restored_key)
     source = _PreparableSource()
     data_module = MagicMock(spec=PhiDataModule)
     data_module.train_batch_source.return_value = source
@@ -1905,7 +1911,7 @@ class _ScalarObjective:
         self,
         model_apply: Any,
         model_state: Any,
-        batches: dict[str, dict[str, jax.Array]],
+        batches: NamedBatches,
     ) -> dict[str, jax.Array]:
         """Evaluate a squared scalar prediction loss.
 
@@ -2069,7 +2075,7 @@ def test_concise_fit_is_deterministic_for_integer_and_typed_key_seeds() -> None:
             jax.tree.leaves(comparison.state),
             strict=True,
         ):
-            if jax.dtypes.issubdtype(first_leaf.dtype, jax.dtypes.prng_key):
+            if jnp.issubdtype(first_leaf.dtype, jax.dtypes.prng_key):
                 np.testing.assert_array_equal(jax.random.key_data(first_leaf), jax.random.key_data(comparison_leaf))
             else:
                 np.testing.assert_array_equal(first_leaf, comparison_leaf)
@@ -2199,7 +2205,7 @@ def test_trainer_builds_consistent_mixed_precision_state_and_step() -> None:
 
 def test_trainer_routes_restore_and_close_through_model_checkpoint() -> None:
     """Verify trainer restore helpers use the configured checkpoint callback backend."""
-    restored_state = _state().replace(step=jnp.asarray(4, jnp.int32))
+    restored_state = dataclasses.replace(_state(), step=jnp.asarray(4, jnp.int32))
     requested_batch_steps: list[int] = []
     checkpoint_io = _MemoryCheckpointIO(restored_state)
     checkpoint = ModelCheckpoint(checkpoint_io, save_last=False)
@@ -2359,8 +2365,8 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         """
         assert ckpt_path is not None
         calls.append((Path(ckpt_path), weights_only, step))
-        restored = target.replace(model_state={"weight": jnp.asarray(3.0)})
-        return restored if weights_only else restored.replace(step=jnp.asarray(4, jnp.int32))
+        restored = dataclasses.replace(target, model_state={"weight": jnp.asarray(3.0)})
+        return restored if weights_only else dataclasses.replace(restored, step=jnp.asarray(4, jnp.int32))
 
     monkeypatch.setattr(trainer_module, "restore_checkpoint", restore)
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
@@ -2466,7 +2472,7 @@ def test_trainer_predict_concatenates_only_valid_padded_rows() -> None:
         {"inputs": jnp.asarray([[3.0], [0.0]]), "mask": jnp.asarray([True, False])},
     )
 
-    state = _state().replace(model_state={"weight": jnp.asarray(2.0)})
+    state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})
     predictions = trainer.predict_state(module, state, batches)
 
     np.testing.assert_array_equal(predictions, [[2.0], [4.0], [6.0]])
@@ -2507,7 +2513,7 @@ def test_trainer_predict_sets_up_and_uses_data_module_source() -> None:
     data_module = MagicMock(spec=PhiDataModule)
     data_module.predict_batch_source.return_value = ChunkedPredictionSource(pool, 2)
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
-    state = _state().replace(model_state={"weight": jnp.asarray(2.0)})
+    state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})
 
     predictions = trainer.predict_state(_RecordingModule(), state, datamodule=data_module)
 
@@ -2573,7 +2579,7 @@ def test_trainer_prediction_context_exposes_source_pool_and_rank() -> None:
         precision=trainer.precision,
     )
 
-    state = _state().replace(model_state={"weight": jnp.asarray(2.0)})
+    state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})
     trainer.predict_state(module, state, ChunkedPredictionSource(pool, 2))
 
     assert callback.context is not None
@@ -2615,7 +2621,7 @@ def test_trainer_predict_can_stream_without_retaining_predictions() -> None:
 
     result = trainer.predict_state(
         module,
-        _state().replace(model_state={"weight": jnp.asarray(2.0)}),
+        dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)}),
         ({"inputs": jnp.asarray([[1.0], [2.0]])},),
         return_predictions=False,
     )
@@ -2720,6 +2726,7 @@ def test_callback_state_restore_ignores_toggled_stateless_callbacks() -> None:
 
     assert len(states) == 3
     assert restored.count == 4
+    assert isinstance(with_defaults.callbacks[0], _CountingCallback)
     assert with_defaults.callbacks[0].count == 2
 
 

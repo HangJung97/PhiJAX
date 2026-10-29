@@ -159,8 +159,11 @@ def test_composite_objective_infers_terms_batch_keys_names_and_streams() -> None
         "pde/momentum_r",
         "pde/momentum_th",
     )
-    assert objective.terms["boundary"].ntk_stream == "output"
-    assert objective.terms["pde"].ntk_stream == "residual"
+    boundary_term, pde_term = objective.terms["boundary"], objective.terms["pde"]
+    assert isinstance(boundary_term, ResidualTerm)
+    assert isinstance(pde_term, ResidualTerm)
+    assert boundary_term.ntk_stream == "output"
+    assert pde_term.ntk_stream == "residual"
 
 
 def test_polar_term_supports_nonzero_viscosity() -> None:

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -121,7 +123,7 @@ def test_custom_pirate_net_uses_generic_nnx_adapter() -> None:
         ({"hidden_dim": 8, "output_names": ("duplicate", "duplicate")}, "unique"),
     ],
 )
-def test_pirate_net_rejects_invalid_architecture_options(kwargs: dict[str, object], match: str) -> None:
+def test_pirate_net_rejects_invalid_architecture_options(kwargs: dict[str, Any], match: str) -> None:
     """Verify malformed embedding and residual policies fail during construction.
 
     Args:

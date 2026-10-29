@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -7,7 +8,7 @@ import pytest
 from phijax.data import build_array_pools, reconstruct_predictions
 
 
-def _schema(path: Path, *, initial_index: int | list[int] = 0) -> dict[str, object]:
+def _schema(path: Path, *, initial_index: int | list[int] = 0) -> dict[str, Any]:
     """Create a compact declarative pool schema for tests.
 
     Args:
@@ -209,7 +210,7 @@ def test_build_array_pools_broadcasts_keyed_and_inline_constant_fields(tmp_path:
     """
     path = tmp_path / "constants.npz"
     times = np.asarray([0.0, 0.5, 1.0])
-    np.savez(path, t=times, **{"parameters/viscosity": np.asarray([[0.25]])})
+    np.savez(path, t=times, **cast(Any, {"parameters/viscosity": np.asarray([[0.25]])}))
 
     pools = build_array_pools(
         source={"path": path},
@@ -252,7 +253,7 @@ def test_build_array_pools_broadcasts_keyed_and_inline_constant_fields(tmp_path:
 )
 def test_build_array_pools_rejects_invalid_constant_field_definitions(
     tmp_path: Path,
-    field: dict[str, object],
+    field: dict[str, Any],
     match: str,
 ) -> None:
     """Verify constant kinds enforce exclusive sources, axis independence, and fixed feature shapes.
@@ -340,7 +341,7 @@ def test_build_array_pools_rejects_invalid_scalar_and_range_indices(
 )
 def test_build_array_pools_rejects_invalid_schema(
     tmp_path: Path,
-    mutate: Callable[[dict[str, object]], object],
+    mutate: Callable[[dict[str, Any]], object],
     match: str,
 ) -> None:
     """Verify invalid dtype, fields, and sampling policies fail eagerly.

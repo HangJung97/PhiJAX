@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -95,7 +97,7 @@ def test_custom_modified_mlp_uses_generic_nnx_adapter_and_named_outputs() -> Non
         ({"output_names": ("duplicate", "duplicate")}, "unique"),
     ],
 )
-def test_modified_mlp_rejects_invalid_architecture_options(kwargs: dict[str, object], match: str) -> None:
+def test_modified_mlp_rejects_invalid_architecture_options(kwargs: dict[str, Any], match: str) -> None:
     """Verify malformed widths, normalization, and dense policies fail eagerly.
 
     Args:

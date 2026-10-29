@@ -1,9 +1,12 @@
+from typing import cast
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phijax.balancers import GradNormBalancer
+from phijax.core import BasePhiModule
 
 
 class _QuadraticLossModule:
@@ -41,7 +44,7 @@ def test_grad_norm_update_matches_named_loss_gradient_norms_and_smoothing() -> N
     """Verify sequential loss gradients, mean normalization, and moving-average smoothing."""
     module = _QuadraticLossModule()
     balancer = GradNormBalancer(module.loss_names, update_every_n_steps=1, eps=0.0, moving_average_coefficient=0.5)
-    update = balancer.make_update(module)
+    update = balancer.make_update(cast(BasePhiModule, module))
     model_state = {"weight": jnp.asarray(2.0, dtype=jnp.float32)}
     batches = {"data": {"scale": jnp.asarray(1.0, dtype=jnp.float32)}}
 
@@ -72,7 +75,7 @@ def test_grad_norm_update_plan_reuses_current_training_batches() -> None:
     """Verify generic adaptive assembly receives a current-batch gradient-norm plan."""
     balancer = GradNormBalancer(("a", "b"), update_every_n_steps=10, update_start_step=5)
 
-    plan = balancer.build_update_plan(_QuadraticLossModule(), ("data", "pde"))
+    plan = balancer.build_update_plan(cast(BasePhiModule, _QuadraticLossModule()), ("data", "pde"))
 
     assert plan.batch_sizes is None
     assert plan.every_n_steps == 10
@@ -84,7 +87,7 @@ def test_grad_norm_defaults_update_start_to_one_interval() -> None:
     """Verify an omitted start step preserves the previous delayed-first-update behavior."""
     balancer = GradNormBalancer(("a", "b"), update_every_n_steps=10)
 
-    plan = balancer.build_update_plan(_QuadraticLossModule(), ("data", "pde"))
+    plan = balancer.build_update_plan(cast(BasePhiModule, _QuadraticLossModule()), ("data", "pde"))
 
     assert balancer.update_start_step == 10
     assert plan.update_start_step == 10

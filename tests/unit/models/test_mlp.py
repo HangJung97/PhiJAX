@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -29,7 +30,7 @@ from phijax.models import (
 )
 def test_model_builders_skip_optional_input_normalization(
     builder: Callable[..., InitializedModel],
-    architecture: dict[str, object],
+    architecture: dict[str, Any],
 ) -> None:
     """Verify built-in factories work when a DataModule supplies no input statistics.
 
@@ -133,7 +134,7 @@ def test_mlp_composes_periodic_and_random_fourier_features() -> None:
         ({"periods": {1: float("inf")}}, "finite and positive"),
     ],
 )
-def test_periodic_features_reject_invalid_configuration(kwargs: dict[str, object], match: str) -> None:
+def test_periodic_features_reject_invalid_configuration(kwargs: dict[str, Any], match: str) -> None:
     """Verify invalid periodic coordinate policies fail during model construction.
 
     Args:
@@ -261,7 +262,7 @@ def test_mlp_clamps_singleton_input_standard_deviation() -> None:
         ({"output_names": ("duplicate", "duplicate")}, "unique"),
     ],
 )
-def test_mlp_rejects_invalid_dynamic_options(kwargs: dict[str, object], message: str) -> None:
+def test_mlp_rejects_invalid_dynamic_options(kwargs: dict[str, Any], message: str) -> None:
     """Verify incompatible or malformed architecture options fail eagerly.
 
     Args:

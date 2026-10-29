@@ -1,9 +1,11 @@
+from typing import Any, cast
+
 import jax
 import jax.numpy as jnp
 import pytest
 
 from phijax.models import build_mlp
-from phijax.training import PrecisionPolicy
+from phijax.training import PrecisionName, PrecisionPolicy
 
 
 @pytest.mark.parametrize(
@@ -17,7 +19,7 @@ from phijax.training import PrecisionPolicy
     ],
 )
 def test_precision_policy_resolves_lightning_modes(
-    name: str,
+    name: PrecisionName,
     parameter_dtype: jnp.dtype,
     compute_dtype: jnp.dtype,
     output_dtype: jnp.dtype,
@@ -98,4 +100,4 @@ def test_precision_policy_casts_only_floating_batch_leaves() -> None:
 def test_precision_policy_rejects_unknown_modes() -> None:
     """Verify an unsupported precision string fails before training begins."""
     with pytest.raises(ValueError, match="Unknown precision mode"):
-        PrecisionPolicy.from_name("fp8-magic")
+        PrecisionPolicy.from_name(cast(Any, "fp8-magic"))

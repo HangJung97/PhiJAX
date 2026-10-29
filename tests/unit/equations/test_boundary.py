@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -78,8 +79,9 @@ def test_no_slip_boundary_rejects_invalid_indices(option: str, indices: tuple[in
         option: Component selection option to validate.
         indices: Invalid component selection.
     """
+    options: dict[str, Any] = {option: indices}
     with pytest.raises(ValueError, match="unique nonnegative"):
-        no_slip_boundary(lambda state, point: point, None, {}, **{option: indices})
+        no_slip_boundary(lambda state, point: point, None, {}, **options)
 
 
 def test_no_slip_boundary_rejects_mismatched_selections_and_unknown_stream() -> None:
@@ -87,7 +89,7 @@ def test_no_slip_boundary_rejects_mismatched_selections_and_unknown_stream() -> 
     with pytest.raises(ValueError, match="equal lengths"):
         no_slip_boundary(lambda state, point: point, None, {}, target_indices=(0,))
     with pytest.raises(ValueError, match="stream"):
-        no_slip_boundary(lambda state, point: point, None, {}, stream="unknown")
+        no_slip_boundary(lambda state, point: point, None, {}, stream=cast(Any, "unknown"))
 
 
 def test_base_boundary_returns_direct_component_residuals() -> None:

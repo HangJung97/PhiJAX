@@ -11,6 +11,7 @@ from phijax.equations import (
     phase_wrapped_fidelity,
     phase_wrapped_residuals,
 )
+from phijax.types import ResidualStream
 
 
 def test_base_data_fidelity_supports_weight_and_target_negation() -> None:
@@ -199,7 +200,7 @@ def test_fidelity_projection_keys(wrapped: bool, projection_key: str, sample_cou
         projection_key: jnp.asarray([[0.5, 1.0], [1.0, -1.0]], dtype=jnp.float32)[:sample_count],
     }
 
-    def evaluate(scale: jax.Array, points: jax.Array, stream: str = "residual") -> tuple:
+    def evaluate(scale: jax.Array, points: jax.Array, stream: ResidualStream = "residual") -> tuple:
         """Evaluate the configured fidelity with explicit model state and inputs.
 
         Args:

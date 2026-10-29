@@ -1,5 +1,6 @@
 from typing import Any
 
+import jax
 import pytest
 
 from phijax.balancers import BalancerUpdatePlan
@@ -12,7 +13,7 @@ def _balancer_update(model_state: Any, batches: Any, state: Any) -> Any:
     return state
 
 
-def _train_step(state: Any, batch: Any) -> tuple[Any, dict[str, float]]:
+def _train_step(state: Any, batch: Any) -> tuple[Any, dict[str, jax.Array]]:
     """Return unchanged state and empty metrics for plan validation tests."""
     return state, {}
 

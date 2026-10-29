@@ -13,6 +13,7 @@ def test_get_colorlogger_is_idempotent_and_formats_records() -> None:
     repeated = get_colorlogger("phijax.tests.colorlogger", logging.INFO)
     handlers = [handler for handler in logger.handlers if getattr(handler, "_phijax_colorlog", False)]
     stream = io.StringIO()
+    assert isinstance(handlers[0], logging.StreamHandler)
     handlers[0].setStream(stream)
 
     logger.info("configured")
