@@ -124,6 +124,35 @@ def test_exact_ntk_update_plan_declares_fixed_diagnostic_batches() -> None:
     assert callable(plan.update)
 
 
+@pytest.mark.parametrize("resample", [False, True])
+def test_exact_ntk_update_plan_sets_kernel_size_per_batch_key(resample: bool) -> None:
+    """Verify per-key kernel sizes, full-pool `"all"` sizes, and `resample` reach the update plan.
+
+    Args:
+        resample: Whether diagnostic batches are redrawn for every update.
+    """
+    module = cast(BasePhiModule, _LinearResidualModule())
+    balancer = ExactNTKBalancer(
+        ("linear",),
+        update_every_n_steps=1,
+        kernel_size={"pde": 16, "boundary": "all"},
+        resample=resample,
+    )
+
+    plan = balancer.build_update_plan(module, ("boundary", "pde"))
+    shared = ExactNTKBalancer(("linear",), update_every_n_steps=1, kernel_size="all").build_update_plan(
+        module, ("boundary", "pde")
+    )
+
+    assert plan.batch_sizes == {"boundary": "all", "pde": 16}
+    assert plan.resample is resample
+    assert shared.batch_sizes == {"boundary": "all", "pde": "all"}
+    with pytest.raises(ValueError, match=r"missing \['initial'\], unknown \[\]"):
+        balancer.build_update_plan(module, ("boundary", "initial", "pde"))
+    with pytest.raises(ValueError, match=r"missing \[\], unknown \['pde'\]"):
+        balancer.build_update_plan(module, ("boundary",))
+
+
 def test_exact_ntk_defaults_update_start_to_one_interval() -> None:
     """Verify an omitted start step delays the first NTK update by one interval."""
     balancer = ExactNTKBalancer(("linear",), update_every_n_steps=25, kernel_size=3)
@@ -140,6 +169,9 @@ def test_exact_ntk_defaults_update_start_to_one_interval() -> None:
         ({"update_every_n_steps": True, "kernel_size": 2}, "update_every_n_steps"),
         ({"update_every_n_steps": 1, "update_start_step": True, "kernel_size": 2}, "update_start_step"),
         ({"update_every_n_steps": 1, "kernel_size": 1.5}, "kernel_size"),
+        ({"update_every_n_steps": 1, "kernel_size": "half"}, "kernel_size"),
+        ({"update_every_n_steps": 1, "kernel_size": {"pde": 1.5}}, "kernel_size"),
+        ({"update_every_n_steps": 1, "kernel_size": 2, "resample": 1}, "resample"),
         ({"update_every_n_steps": 1, "kernel_size": 2, "kernel_chunk_size": 1.5}, "kernel_chunk_size"),
     ],
 )
@@ -160,6 +192,8 @@ def test_exact_ntk_rejects_non_integer_update_settings(kwargs: dict[str, object]
         ({"update_every_n_steps": 0, "kernel_size": 2}, "update_every_n_steps"),
         ({"update_every_n_steps": 1, "update_start_step": -1, "kernel_size": 2}, "update_start_step"),
         ({"update_every_n_steps": 1, "kernel_size": 0}, "kernel_size"),
+        ({"update_every_n_steps": 1, "kernel_size": {"pde": 0}}, "kernel_size"),
+        ({"update_every_n_steps": 1, "kernel_size": {}}, "kernel_size"),
         ({"update_every_n_steps": 1, "kernel_size": 2, "kernel_chunk_size": 0}, "kernel_chunk_size"),
     ],
 )

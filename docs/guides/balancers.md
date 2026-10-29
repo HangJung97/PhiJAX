@@ -202,7 +202,9 @@ def build_update_plan(
 ```
 
 `batch_sizes=None` reuses the current training batches, as gradient-norm balancing does. A mapping such as
-`dict.fromkeys(batch_keys, kernel_size)` requests one fixed diagnostic batch per key, as exact NTK does.
+`dict.fromkeys(batch_keys, kernel_size)` requests one diagnostic batch per key, as exact NTK does. Each size is a row
+count or `"all"` for every row of a finite pool. Diagnostic batches are drawn once per fit; set `resample=True` on the
+plan to draw new ones for every update.
 Put cadence and method-specific diagnostic settings on the balancer itself:
 
 ```python

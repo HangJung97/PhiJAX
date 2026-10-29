@@ -1,6 +1,6 @@
 from collections.abc import Callable, Mapping, Sequence
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -9,6 +9,8 @@ from jax.flatten_util import ravel_pytree
 from phijax.balancers.base import BalancerState, BalancerUpdatePlan
 from phijax.core import BasePhiModule
 from phijax.types import NamedBatches
+
+type KernelSize = int | Literal["all"]
 
 
 def exact_ntk_trace(stream_fn: Callable[[Any], jax.Array], model_state: Any) -> jax.Array:
@@ -101,6 +103,28 @@ def _validate_kernel_chunk_size(kernel_chunk_size: int | None) -> int | None:
     return kernel_chunk_size
 
 
+def _validate_kernel_size(kernel_size: Any) -> KernelSize:
+    """Validate one diagnostic sample count.
+
+    Args:
+        kernel_size: Candidate positive row count or `"all"`.
+
+    Returns:
+        Validated sample count.
+
+    Raises:
+        TypeError: If `kernel_size` is neither an integer nor `"all"`.
+        ValueError: If an integer `kernel_size` is not positive.
+    """
+    if kernel_size == "all":
+        return "all"
+    if isinstance(kernel_size, bool) or not isinstance(kernel_size, int):
+        raise TypeError("`kernel_size` must be a positive integer or 'all'.")
+    if kernel_size < 1:
+        raise ValueError("`kernel_size` must be positive.")
+    return kernel_size
+
+
 class ExactNTKBalancer:
     """Balance named losses with exact diagonal-NTK ratios and optional smoothing.
 
@@ -123,8 +147,9 @@ class ExactNTKBalancer:
         loss_names: Sequence[str],
         *,
         update_every_n_steps: int,
-        kernel_size: int,
+        kernel_size: KernelSize | Mapping[str, KernelSize],
         kernel_chunk_size: int | None = 1,
+        resample: bool = False,
         update_start_step: int | None = None,
         eps: float = 1.0e-10,
         moving_average_coefficient: float = 0.9,
@@ -135,9 +160,12 @@ class ExactNTKBalancer:
         Args:
             loss_names: Unique non-empty sequence defining loss and trace ordering.
             update_every_n_steps: Positive optimizer-step interval between NTK updates.
-            kernel_size: Positive diagnostic sample count requested for every objective batch.
+            kernel_size: Diagnostic sample count: a positive row count, or `"all"` for every row of a finite pool. A
+                mapping sets the count per objective batch key and must name every batch key of the objective.
             kernel_chunk_size: Positive number of diagnostic samples differentiated in parallel, or `None` for a full
                 :func:`jax.vmap`.
+            resample: Whether to draw new diagnostic samples for every update instead of once per fit. Batches whose
+                `kernel_size` is `"all"` contain the same rows either way.
             update_start_step: Nonnegative absolute optimizer step of the first update. `None` starts after one update
                 interval.
             eps: Positive mean-diagonal floor used to avoid division by zero.
@@ -145,7 +173,7 @@ class ExactNTKBalancer:
             initial_weights: Optional initial weights keyed by loss name; unspecified names use `1.0`.
 
         Raises:
-            TypeError: If update scheduling or kernel-size values have invalid types.
+            TypeError: If update scheduling, kernel-size, or `resample` values have invalid types.
             ValueError: If names are invalid, sizes are not positive, `eps` is not positive, or smoothing is outside
                 `[0, 1)`.
         """
@@ -155,10 +183,16 @@ class ExactNTKBalancer:
             raise TypeError("`update_every_n_steps` must be an integer.")
         if update_every_n_steps < 1:
             raise ValueError("`update_every_n_steps` must be positive.")
-        if isinstance(kernel_size, bool) or not isinstance(kernel_size, int):
-            raise TypeError("`kernel_size` must be an integer.")
-        if kernel_size < 1:
-            raise ValueError("`kernel_size` must be positive.")
+        if isinstance(kernel_size, Mapping):
+            if not kernel_size or any(not isinstance(name, str) or not name.strip() for name in kernel_size):
+                raise ValueError("A `kernel_size` mapping must have non-empty string batch keys.")
+            resolved_kernel_size: KernelSize | dict[str, KernelSize] = {
+                name: _validate_kernel_size(size) for name, size in kernel_size.items()
+            }
+        else:
+            resolved_kernel_size = _validate_kernel_size(kernel_size)
+        if not isinstance(resample, bool):
+            raise TypeError("`resample` must be a boolean.")
         if kernel_chunk_size is not None and (
             isinstance(kernel_chunk_size, bool) or not isinstance(kernel_chunk_size, int)
         ):
@@ -178,8 +212,9 @@ class ExactNTKBalancer:
         self.loss_names = tuple(loss_names)
         self.update_every_n_steps = update_every_n_steps
         self.update_start_step = update_every_n_steps if update_start_step is None else update_start_step
-        self.kernel_size = kernel_size
+        self.kernel_size: KernelSize | dict[str, KernelSize] = resolved_kernel_size
         self.kernel_chunk_size = kernel_chunk_size
+        self.resample = resample
         self.eps = float(eps)
         self.momentum = float(moving_average_coefficient)
         self.initial_weights = jnp.asarray([configured.get(name, 1.0) for name in self.loss_names], dtype=jnp.float32)
@@ -333,18 +368,32 @@ class ExactNTKBalancer:
         module: BasePhiModule,
         batch_keys: Sequence[str],
     ) -> BalancerUpdatePlan:
-        """Describe an exact-NTK refresh with fixed diagnostic samples.
+        """Describe an exact-NTK refresh with diagnostic samples.
 
         Args:
             module: Module exposing one-at-a-time named residual streams.
             batch_keys: Stable objective batch keys sampled for every NTK refresh.
 
         Returns:
-            Update plan containing scheduling, the compiled NTK update, and fixed diagnostic batch sizes.
+            Update plan containing scheduling, the compiled NTK update, and diagnostic batch sizes.
+
+        Raises:
+            ValueError: If a `kernel_size` mapping does not name exactly the objective batch keys.
         """
+        if isinstance(self.kernel_size, Mapping):
+            missing = sorted(set(batch_keys) - set(self.kernel_size))
+            unknown = sorted(set(self.kernel_size) - set(batch_keys))
+            if missing or unknown:
+                raise ValueError(
+                    f"`kernel_size` must name every objective batch key; missing {missing}, unknown {unknown}."
+                )
+            batch_sizes: dict[str, KernelSize] = {name: self.kernel_size[name] for name in batch_keys}
+        else:
+            batch_sizes = dict.fromkeys(batch_keys, self.kernel_size)
         return BalancerUpdatePlan(
             update=self.make_update(module, kernel_chunk_size=self.kernel_chunk_size),
             every_n_steps=self.update_every_n_steps,
             update_start_step=self.update_start_step,
-            batch_sizes=dict.fromkeys(batch_keys, self.kernel_size),
+            batch_sizes=batch_sizes,
+            resample=self.resample,
         )

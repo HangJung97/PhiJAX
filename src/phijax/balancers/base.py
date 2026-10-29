@@ -1,7 +1,7 @@
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import jax
 from flax import struct
@@ -57,21 +57,25 @@ class BalancerUpdatePlan:
         update: Compiled functional update accepting model state, named batches, and balancer state.
         every_n_steps: Positive optimizer-step interval between updates.
         update_start_step: Nonnegative absolute optimizer step anchoring the update cadence.
-        batch_sizes: Optional positive diagnostic batch size for each objective batch key. `None` reuses the current
-            training batches instead of sampling a fixed diagnostic batch.
+        batch_sizes: Optional diagnostic batch size for each objective batch key: a positive row count, or `"all"` for
+            every row of a finite pool. `None` reuses the current training batches instead of sampling diagnostic
+            batches.
+        resample: Whether to draw new diagnostic batches for every update instead of once per fit. Batches with an
+            `"all"` size contain the same rows either way. Requires `batch_sizes`.
     """
 
     update: BalancerUpdate
     every_n_steps: int
     update_start_step: int
-    batch_sizes: Mapping[str, int] | None = None
+    batch_sizes: Mapping[str, int | Literal["all"]] | None = None
+    resample: bool = False
 
     def __post_init__(self) -> None:
         """Validate host scheduling and fixed diagnostic-batch sizes.
 
         Raises:
-            TypeError: If scheduling values or diagnostic batch names have invalid types.
-            ValueError: If an interval or diagnostic batch size is zero or negative.
+            TypeError: If scheduling values, `resample`, or diagnostic batch names have invalid types.
+            ValueError: If an interval or diagnostic batch size is invalid, or `resample` is set without `batch_sizes`.
         """
         if not callable(self.update):
             raise TypeError("`update` must be callable.")
@@ -83,17 +87,25 @@ class BalancerUpdatePlan:
             raise TypeError("`update_start_step` must be an integer.")
         if self.update_start_step < 0:
             raise ValueError("`update_start_step` must be nonnegative.")
+        if not isinstance(self.resample, bool):
+            raise TypeError("`resample` must be a boolean.")
         if self.batch_sizes is None:
+            if self.resample:
+                raise ValueError(
+                    "`resample` requires `batch_sizes`; current training batches are already new each step."
+                )
             return
         if any(not isinstance(name, str) or not name.strip() for name in self.batch_sizes):
             raise TypeError("Adaptive balancer diagnostic batch names must be non-empty strings.")
         invalid = {
             name: size
             for name, size in self.batch_sizes.items()
-            if isinstance(size, bool) or not isinstance(size, int) or size < 1
+            if size != "all" and (isinstance(size, bool) or not isinstance(size, int) or size < 1)
         }
         if invalid:
-            raise ValueError(f"Adaptive balancer diagnostic batch sizes must be positive integers, got {invalid}.")
+            raise ValueError(
+                f"Adaptive balancer diagnostic batch sizes must be positive integers or 'all', got {invalid}."
+            )
         object.__setattr__(self, "batch_sizes", MappingProxyType(dict(self.batch_sizes)))
 
 

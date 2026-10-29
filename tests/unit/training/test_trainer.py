@@ -28,7 +28,14 @@ from phijax.callbacks import (
     TrainerContext,
 )
 from phijax.core import BasePhiModule, PhiModule, PhiModuleContext
-from phijax.data import ChunkedPredictionSource, DataStage, HostPool, NamedBatchSource, PhiDataModule
+from phijax.data import (
+    ChunkedPredictionSource,
+    DataStage,
+    HostPool,
+    NamedBatchSource,
+    PhiDataModule,
+    RandomRowSampler,
+)
 from phijax.models import InitializedModel
 from phijax.training import (
     ExperimentLogger,
@@ -964,8 +971,13 @@ def test_fit_trains_until_global_max_steps(
     assert ("`max_steps=8` reached" in caplog.text) == (initial_step >= 8)
 
 
-def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -> None:
-    """Verify fixed adaptive diagnostics use the restored key and remain separate from current batches."""
+@pytest.mark.parametrize("initial_step", [0, 3], ids=["fresh", "resumed"])
+def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state(initial_step: int) -> None:
+    """Verify fixed diagnostics use the restored key, independent of the resume step, and stay separate from batches.
+
+    Args:
+        initial_step: Restored optimizer step before fitting.
+    """
 
     class SampleableSource:
         """Provide current training batches and record one fixed diagnostic sample."""
@@ -989,7 +1001,7 @@ def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -
             """Record and return a fixed diagnostic batch.
 
             Args:
-                key: Diagnostic sampling key folded with the restored step.
+                key: Diagnostic sampling key derived from the restored balancer key.
                 batch_sizes: Requested objective batch sizes.
 
             Returns:
@@ -1023,7 +1035,7 @@ def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -
         )
 
     source = SampleableSource()
-    state = dataclasses.replace(_state(), step=jnp.asarray(3, jnp.int32))
+    state = dataclasses.replace(_state(), step=jnp.asarray(initial_step, jnp.int32))
     update_plan = BalancerUpdatePlan(
         update,
         every_n_steps=1,
@@ -1031,7 +1043,7 @@ def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -
         batch_sizes={"train": 2},
     )
     trainer = Trainer(
-        max_steps=5,
+        max_steps=initial_step + 2,
         logger=False,
         enable_progress_bar=False,
         enable_model_summary=False,
@@ -1048,10 +1060,92 @@ def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -
     assert diagnostic_values == [9.0, 9.0]
     assert len(source.sample_calls) == 1
     sampled_key, batch_sizes = source.sample_calls[0]
-    expected_key = jax.random.fold_in(state.balancer_key, 3)
+    # Fresh and resumed fits draw the same fixed diagnostic batches.
+    expected_key = jax.random.fold_in(state.balancer_key, 0)
     np.testing.assert_array_equal(jax.random.key_data(sampled_key), jax.random.key_data(expected_key))
     assert batch_sizes == {"train": 2}
     np.testing.assert_array_equal(result.state.balancer_state.weights, [19.0])
+
+
+def _record_diagnostic_batches(*, resample: bool, initial_step: int) -> dict[int, dict[str, np.ndarray]]:
+    """Fit with per-step balancer updates and record the diagnostic batches each update receives.
+
+    Args:
+        resample: Whether diagnostic batches are redrawn for every update.
+        initial_step: Restored optimizer step before fitting.
+
+    Returns:
+        Diagnostic `inputs` arrays keyed by global step and batch name.
+    """
+    recorded: dict[int, dict[str, np.ndarray]] = {}
+    current_step = [initial_step]
+
+    def update(model_state: Any, batches: Any, balancer_state: BalancerState) -> BalancerState:
+        """Record the diagnostic inputs of one update.
+
+        Args:
+            model_state: Unused explicit model state.
+            batches: Diagnostic batches for this update.
+            balancer_state: Unchanged balancer state.
+
+        Returns:
+            The unchanged balancer state.
+        """
+        del model_state
+        recorded[current_step[0]] = {name: np.asarray(batch["inputs"]) for name, batch in batches.items()}
+        return balancer_state
+
+    def train_step(state: TrainState, batch: NamedBatches) -> tuple[TrainState, dict[str, jax.Array]]:
+        """Advance the step counter without numerical work.
+
+        Args:
+            state: Current training state.
+            batch: Unused training batches.
+
+        Returns:
+            State with the next step, and a constant loss.
+        """
+        del batch
+        current_step[0] += 1
+        return dataclasses.replace(state, step=state.step + 1), {"train/loss": jnp.asarray(0.0)}
+
+    pools = {
+        "boundary": RandomRowSampler({"inputs": np.arange(4, dtype=np.float32).reshape(4, 1)}),
+        "pde": RandomRowSampler({"inputs": np.arange(100, 200, dtype=np.float32).reshape(100, 1)}),
+    }
+    source = NamedBatchSource(pools, {"boundary": 2, "pde": 2}, jax.random.key(7))
+    update_plan = BalancerUpdatePlan(
+        update, every_n_steps=1, update_start_step=0, batch_sizes={"boundary": "all", "pde": 3}, resample=resample
+    )
+    trainer = Trainer(
+        max_steps=6,
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+    )
+    state = dataclasses.replace(_state(), step=jnp.asarray(initial_step, jnp.int32))
+    trainer.fit_state(_RecordingModule(), TrainingPlan(train_step, balancer_update=update_plan), state, source)
+    return recorded
+
+
+def test_trainer_resamples_diagnostic_batches_reproducibly_and_keeps_full_pools_fixed() -> None:
+    """Verify `resample` redraws sized batches per update, keeps `"all"` batches whole, and survives resume."""
+    fixed = _record_diagnostic_batches(resample=False, initial_step=0)
+    resampled = _record_diagnostic_batches(resample=True, initial_step=0)
+    resumed = _record_diagnostic_batches(resample=True, initial_step=3)
+
+    full_boundary = np.arange(4, dtype=np.float32).reshape(4, 1)
+    for batches in (*fixed.values(), *resampled.values()):
+        np.testing.assert_array_equal(batches["boundary"], full_boundary)
+        assert batches["pde"].shape == (3, 1)
+    assert all(np.array_equal(batches["pde"], fixed[0]["pde"]) for batches in fixed.values())
+    # Step 0 uses the same key with or without resampling; later updates draw new rows.
+    np.testing.assert_array_equal(resampled[0]["pde"], fixed[0]["pde"])
+    assert len({resampled[step]["pde"].tobytes() for step in resampled}) > 1
+    assert sorted(resumed) == [3, 4, 5]
+    for step, batches in resumed.items():
+        np.testing.assert_array_equal(batches["pde"], resampled[step]["pde"])
 
 
 def test_trainer_reads_device_step_only_at_fit_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:

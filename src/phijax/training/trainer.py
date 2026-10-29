@@ -582,7 +582,7 @@ class Trainer:
         state = self.strategy.place_state(state)
         initial_step = _state_step(state)
         batches = self._training_batch_source(plan, batches, datamodule, state.sampling_key)
-        balancer_update = self._balancer_update_runtime(plan, batches, state.balancer_key, initial_step)
+        balancer_update = self._balancer_update_runtime(plan, batches, state.balancer_key)
         precision_context = (
             nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
         )
@@ -634,7 +634,6 @@ class Trainer:
         plan: TrainingPlan,
         batches: BatchSource,
         balancer_key: jax.Array,
-        initial_step: int,
     ) -> _BalancerUpdateRuntime | None:
         """Resolve optional adaptive-balancer diagnostics for host scheduling.
 
@@ -642,29 +641,46 @@ class Trainer:
             plan: Training plan containing the compiled optimizer step and optional update schedule.
             batches: Prepared training source used for fixed diagnostic sampling when requested.
             balancer_key: Persistent adaptive-balancer diagnostic key from the restored state.
-            initial_step: Restored global step folded into fixed diagnostic sampling.
 
         Returns:
             Resolved adaptive update runtime, or `None` for static balancing.
 
         Raises:
-            TypeError: If fixed diagnostics are requested from a source without explicit sampling support.
+            TypeError: If diagnostic batches are requested from a source without explicit sampling support.
         """
         update_plan = plan.balancer_update
         if update_plan is None:
             return None
         update_batches = None
-        if update_plan.batch_sizes is not None:
+        sample_batches: Callable[[int], Any] | None = None
+        batch_sizes = update_plan.batch_sizes
+        if batch_sizes is not None:
             sample = getattr(batches, "sample", None)
             if not callable(sample):
-                raise TypeError("Fixed adaptive-balancer diagnostics require a training source with `sample()`.")
-            diagnostic_key = jax.random.fold_in(balancer_key, initial_step)
-            update_batches = self.prepare_batch(sample(diagnostic_key, update_plan.batch_sizes))
+                raise TypeError("Adaptive-balancer diagnostic batches require a training source with `sample()`.")
+
+            def draw(step: int) -> Any:
+                """Draw diagnostic batches for one global step.
+
+                Args:
+                    step: Global optimizer step folded into the persistent balancer key.
+
+                Returns:
+                    Diagnostic batches placed on the Trainer's device.
+                """
+                # Keys depend only on `balancer_key` and the global step, so resumed fits draw the same batches.
+                return self.prepare_batch(sample(jax.random.fold_in(balancer_key, step), batch_sizes))
+
+            if update_plan.resample:
+                sample_batches = draw
+            else:
+                update_batches = draw(0)
         return _BalancerUpdateRuntime(
             update=update_plan.update,
             batches=update_batches,
             every_n_steps=update_plan.every_n_steps,
             update_start_step=update_plan.update_start_step,
+            sample_batches=sample_batches,
         )
 
     def predict(
