@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 
 from phijax.models import build_mlp
-from phijax.training import PrecisionName, PrecisionPolicy
+from phijax.training import PrecisionName, PrecisionPolicy, Trainer
 
 
 @pytest.mark.parametrize(
@@ -101,3 +101,45 @@ def test_precision_policy_rejects_unknown_modes() -> None:
     """Verify an unsupported precision string fails before training begins."""
     with pytest.raises(ValueError, match="Unknown precision mode"):
         PrecisionPolicy.from_name(cast(Any, "fp8-magic"))
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"derivative_dtype": jnp.float32}, {"initial_loss_scale": 1024.0}, {"growth_interval": 10}],
+    ids=["derivative_dtype", "initial_loss_scale", "growth_interval"],
+)
+def test_precision_policy_rejects_options_combined_with_a_resolved_policy(options: dict[str, Any]) -> None:
+    """Verify options that a resolved policy would ignore raise instead.
+
+    Args:
+        options: One option that conflicts with an existing policy.
+    """
+    policy = PrecisionPolicy.from_name("16-mixed")
+
+    assert PrecisionPolicy.from_name(policy) is policy
+    with pytest.raises(ValueError, match=f"already fixes `{next(iter(options))}`"):
+        PrecisionPolicy.from_name(policy, **options)
+
+
+def test_precision_names_keep_default_loss_scaling_and_accept_overrides() -> None:
+    """Verify omitted loss-scaling options keep their defaults and explicit values apply to precision names."""
+    default = PrecisionPolicy.from_name("16-mixed")
+    configured = PrecisionPolicy.from_name("16-mixed", initial_loss_scale=1024.0, growth_interval=10)
+
+    assert (default.initial_loss_scale, default.growth_interval) == (32768.0, 2000)
+    assert (configured.initial_loss_scale, configured.growth_interval) == (1024.0, 10)
+
+
+def test_trainer_rejects_precision_options_combined_with_a_resolved_policy() -> None:
+    """Verify the Trainer forwards its precision options and rejects ones a resolved policy would ignore."""
+    policy = PrecisionPolicy.from_name("16-mixed")
+
+    assert Trainer(max_steps=1, precision=policy, logger=False).precision is policy
+    with pytest.raises(ValueError, match="`initial_loss_scale`"):
+        Trainer(max_steps=1, precision=policy, initial_loss_scale=1024.0, logger=False)
+    assert (
+        Trainer(
+            max_steps=1, precision="16-mixed", loss_scale_growth_interval=10, logger=False
+        ).precision.growth_interval
+        == 10
+    )

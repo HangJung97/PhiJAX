@@ -85,8 +85,12 @@ performance and compilation trade-offs, and the official OpenXLA and JAX referen
 | `precision`                  | `"64-true"`, `"32-true"`, `"16-true"`, `"bf16-true"`, `"16-mixed"`, `"bf16-mixed"` | `"32-true"` |
 | `matmul_precision`           | `None`, `"default"`, `"high"`, `"highest"`                                         | `None`      |
 | `derivative_dtype`           | Floating dtype override                                                            | `None`      |
-| `initial_loss_scale`         | Positive FP16 dynamic-loss scale                                                   | `32768.0`   |
-| `loss_scale_growth_interval` | Positive interval between finite FP16 scale increases                              | `2000`      |
+| `initial_loss_scale`         | Positive FP16 dynamic-loss scale; `None` uses `32768.0`                            | `None`      |
+| `loss_scale_growth_interval` | Positive interval between finite FP16 scale increases; `None` uses `2000`          | `None`      |
+
+`precision` also accepts a resolved `PrecisionPolicy`, which already fixes its dtypes and loss scaling. Combining one
+with `derivative_dtype`, `initial_loss_scale`, or `loss_scale_growth_interval` raises `ValueError` instead of
+silently ignoring the option.
 
 An explicit [`Strategy`](strategies.md) controls placement and distributed behavior. See [Precision](precision.md) for
 dtype behavior and supported device combinations.
