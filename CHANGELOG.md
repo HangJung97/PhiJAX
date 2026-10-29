@@ -27,6 +27,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   that sets the sample count per objective batch key, such as `{"pde": 1024, "boundary": "all"}`.
 - `ExactNTKBalancer(resample=True)` draws new diagnostic batches for every update instead of once per fit. Custom
   balancers request the same behavior with `BalancerUpdatePlan(resample=True)`.
+- `Trainer.should_stop` lets callbacks request a clean stop, as in Lightning. Returning `True` from
+  `on_train_batch_end()` still works and sets the flag.
+- `EarlyStopping` accepts `check_finite` and `check_every_n_steps`, and stores its progress in checkpoints, so a
+  resumed fit stops at the same step as an uninterrupted one. Progress stored for a different `monitor` or `mode` is
+  skipped with a warning, and a changed `patience` keeps the configured value with a warning.
 
 ### Breaking changes
 
@@ -42,6 +47,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   from step `N` runs `max_steps - N` updates instead of `max_steps` more, and logs and progress bars follow the global
   step. Resume with `max_steps = N + extra` to train `extra` more steps. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#global-max_steps).
+- `EarlyStopping` follows Lightning's callback: it checks metrics in `on_train_metrics()`, so it sees module-logged and
+  callback metrics, and stops once `wait_count >= patience` instead of `> patience`. `best` and `bad_checks` are
+  renamed `best_score` and `wait_count`, and a NaN or infinite metric stops training immediately by default. See the
+  [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#early-stopping).
 - Periodic features use physical periods of the physical coordinate, so input normalization no longer affects periodic
   axes. `PeriodicFeatures` takes `periods={axis: T}` instead of `axes` and `frequencies`, model factories receive
   `input_periods`, and `bind_input_statistics()` is now `bind_inputs()`. See the
@@ -53,6 +62,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   input statistics with a warning. PhiJAX 0.2.0b5 cannot read schema-3 checkpoints.
 - `Trainer.predict_state(..., ckpt_path=...)` restores the full checkpoint and uses its model state and input
   statistics, instead of restoring model weights only.
+- The Trainer runs `ModelCheckpoint` after all other callbacks, as in Lightning, so each checkpoint stores the state
+  every other callback reached at that step.
 
 ### Fixed
 

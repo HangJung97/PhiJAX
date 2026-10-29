@@ -120,7 +120,8 @@ class Callback:
             context: Trainer context after the compiled update.
 
         Returns:
-            `True` to request a clean early stop, otherwise `False`.
+            `True` to request a clean early stop, otherwise `False`. Callbacks may instead set
+            :attr:`phijax.training.Trainer.should_stop`, as in Lightning.
         """
         return False
 

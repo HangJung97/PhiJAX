@@ -39,6 +39,7 @@ from phijax.data import (
 from phijax.models import InitializedModel
 from phijax.training import (
     ExperimentLogger,
+    OrbaxCheckpointIO,
     SingleDeviceStrategy,
     Strategy,
     Trainer,
@@ -1263,6 +1264,130 @@ def test_trainer_rejects_custom_step_without_one_step_increment() -> None:
             _state(),
             lambda _: {"increment": jnp.asarray(1.0)},
         )
+
+
+class _ScoreCallback(Callback):
+    """Contribute a constant callback metric for early-stopping tests."""
+
+    def training_metrics(self, context: TrainerContext) -> Mapping[str, Any]:
+        """Return a score that never improves.
+
+        Args:
+            context: Post-module trainer context.
+
+        Returns:
+            Constant scalar score.
+        """
+        del context
+        return {"callback/score": jnp.asarray(1.0)}
+
+
+class _StopCallback(Callback):
+    """Request stopping either at fit start or through the legacy batch-end return value."""
+
+    def __init__(self, *, at_fit_start: bool = False, legacy_step: int | None = None) -> None:
+        """Store when stopping is requested.
+
+        Args:
+            at_fit_start: Whether to set `Trainer.should_stop` in `on_fit_start`.
+            legacy_step: Optional step at which `on_train_batch_end` returns `True`.
+        """
+        self.at_fit_start = at_fit_start
+        self.legacy_step = legacy_step
+        self.trainer: Any = None
+
+    def connect(self, trainer: Any) -> None:
+        """Keep the owning Trainer.
+
+        Args:
+            trainer: Host Trainer coordinating callback hooks.
+        """
+        self.trainer = trainer
+
+    def on_fit_start(self, context: TrainerContext) -> None:
+        """Optionally request stopping before the first update.
+
+        Args:
+            context: Initial trainer context.
+        """
+        del context
+        if self.at_fit_start:
+            self.trainer.should_stop = True
+
+    def on_train_batch_end(self, context: TrainerContext) -> bool:
+        """Return the legacy stop request at the configured step.
+
+        Args:
+            context: Trainer context after the compiled update.
+
+        Returns:
+            Whether to stop.
+        """
+        return context.step == self.legacy_step
+
+
+@pytest.mark.parametrize(
+    ("callbacks", "expected_steps"),
+    [
+        ((_ScoreCallback(), EarlyStopping(monitor="callback/score", patience=2)), 3),
+        ((_StopCallback(legacy_step=2),), 2),
+        ((_StopCallback(at_fit_start=True),), 0),
+    ],
+    ids=["early-stopping-on-callback-metric", "legacy-return", "fit-start"],
+)
+def test_trainer_should_stop_ends_fit_after_the_requesting_step(
+    callbacks: tuple[Callback, ...], expected_steps: int
+) -> None:
+    """Verify `Trainer.should_stop` ends a fit cleanly, whichever way a callback requests it.
+
+    Args:
+        callbacks: Callbacks requesting the stop.
+        expected_steps: Updates completed before the fit stops.
+    """
+    trainer = Trainer(
+        max_steps=10,
+        callbacks=callbacks,
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+    )
+
+    result = trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+
+    assert result.stopped_early is True
+    assert result.iterations == expected_steps
+    assert int(result.state.step) == expected_steps
+    assert trainer.should_stop is True
+
+
+def test_checkpoints_store_early_stopping_state_of_the_same_step(tmp_path: Path) -> None:
+    """Verify `ModelCheckpoint` runs last, so each checkpoint stores early-stopping progress through its own step.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+    checkpoint = ModelCheckpoint(
+        OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False), every_n_steps=1, save_top_k=-1, save_last=False
+    )
+    early_stopping = EarlyStopping(monitor="train/loss", patience=10)
+    trainer = Trainer(
+        max_steps=3,
+        callbacks=(checkpoint, early_stopping),
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+    )
+
+    trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+    identifier = dict(zip(trainer.callbacks, trainer._callback_identifiers, strict=True))[early_stopping]
+    with OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False) as checkpoint_io:
+        stored = {step: checkpoint_io.restore_callback_states(step)[identifier] for step in (1, 2, 3)}
+
+    # `train/loss` is constant, so the first check sets the best score and each later check waits once more.
+    assert [stored[step]["wait_count"] for step in (1, 2, 3)] == [0, 1, 2]
+    assert trainer.callbacks[-1] is checkpoint
 
 
 def test_trainer_runs_callbacks_multiple_loggers_and_early_stopping() -> None:

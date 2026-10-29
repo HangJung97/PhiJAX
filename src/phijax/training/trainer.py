@@ -49,6 +49,8 @@ class Trainer:
 
     Attributes:
         prediction_writer: Configured prediction artifact callback, or `None`.
+        should_stop: Whether a callback has requested that fitting stop. The fit loop resets it when a fit starts and
+            checks it before each step and after each step's `on_train_metrics` hooks, as in Lightning.
     """
 
     def __init__(
@@ -142,7 +144,10 @@ class Trainer:
         if enable_model_summary and not summary_callbacks:
             resolved_callbacks += (ModelSummary(warn_if_unavailable=False),)
         self.enable_model_summary = enable_model_summary
-        self.callbacks = resolved_callbacks
+        # As in Lightning, checkpoint callbacks run last so a saved checkpoint includes this step's state from every
+        # other callback. Identifiers count positions within one callback class, so they are unaffected.
+        self.callbacks = tuple(sorted(resolved_callbacks, key=lambda callback: isinstance(callback, ModelCheckpoint)))
+        self.should_stop = False
         self._callback_identifiers = _callback_identifiers(self.callbacks)
         checkpoint_callbacks = tuple(callback for callback in self.callbacks if isinstance(callback, ModelCheckpoint))
         if len(checkpoint_callbacks) > 1:
