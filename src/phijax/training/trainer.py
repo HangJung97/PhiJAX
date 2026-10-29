@@ -62,8 +62,8 @@ class Trainer:
         precision: PrecisionName | PrecisionPolicy = "32-true",
         matmul_precision: MatmulPrecision | None = None,
         derivative_dtype: Any | None = None,
-        initial_loss_scale: float = 32768.0,
-        loss_scale_growth_interval: int = 2000,
+        initial_loss_scale: float | None = None,
+        loss_scale_growth_interval: int | None = None,
         log_every_n_steps: int = 10,
         enable_progress_bar: bool = True,
         enable_model_summary: bool = True,
@@ -82,11 +82,12 @@ class Trainer:
             accelerator: Device backend selected when `strategy` is absent. Choose `auto`, `cpu`, `gpu`, or `tpu`.
             devices: Positive device count, explicit device indices, or `auto` for all matching visible devices.
             precision: Precision name or resolved policy. Supported names are `64-true`, `32-true`, `16-true`,
-                `bf16-true`, `16-mixed`, and `bf16-mixed`; common dtype aliases are also accepted.
+                `bf16-true`, `16-mixed`, and `bf16-mixed`; common dtype aliases are also accepted. A resolved policy
+                cannot be combined with `derivative_dtype`, `initial_loss_scale`, or `loss_scale_growth_interval`.
             matmul_precision: Optional `default`, `high`, or `highest` JAX matrix-multiplication precision override.
             derivative_dtype: Optional floating batch and coordinate-derivative dtype override.
-            initial_loss_scale: Initial dynamic scale for `16-mixed` training.
-            loss_scale_growth_interval: Finite optimizer updates between FP16 scale increases.
+            initial_loss_scale: Initial dynamic scale for `16-mixed` training. `None` uses `32768.0`.
+            loss_scale_growth_interval: Finite optimizer updates between FP16 scale increases. `None` uses `2000`.
             log_every_n_steps: Positive interval between scalar logger updates.
             enable_progress_bar: Whether to enable a TQDM or explicitly configured progress callback.
             enable_model_summary: Whether to add a plain model summary when none is supplied explicitly.
@@ -99,7 +100,8 @@ class Trainer:
 
         Raises:
             TypeError: If a display flag or logger configuration has an invalid type.
-            ValueError: If a step, interval, callback, logger, or matrix-multiplication precision option is invalid.
+            ValueError: If a step, interval, callback, logger, precision, or matrix-multiplication precision option is
+                invalid.
         """
         if max_steps < 1:
             raise ValueError("`max_steps` must be positive.")

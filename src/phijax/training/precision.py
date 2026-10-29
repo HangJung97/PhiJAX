@@ -66,25 +66,40 @@ class PrecisionPolicy:
         precision: PrecisionName | PrecisionPolicy = "32-true",
         *,
         derivative_dtype: Any | None = None,
-        initial_loss_scale: float = 32768.0,
-        growth_interval: int = 2000,
+        initial_loss_scale: float | None = None,
+        growth_interval: int | None = None,
     ) -> PrecisionPolicy:
         """Resolve a Lightning-compatible precision mode.
 
         Args:
-            precision: Canonical precision mode, supported alias, or existing policy.
+            precision: Canonical precision mode, supported alias, or existing policy. An existing policy is returned
+                unchanged and cannot be combined with the other options.
             derivative_dtype: Optional override for floating input batches and coordinate derivatives.
-            initial_loss_scale: Initial dynamic scale for `16-mixed` training.
-            growth_interval: Successful updates between dynamic loss-scale growth events.
+            initial_loss_scale: Initial dynamic scale for `16-mixed` training. `None` uses `32768.0`.
+            growth_interval: Successful updates between dynamic loss-scale growth events. `None` uses `2000`.
 
         Returns:
             Fully resolved immutable precision policy.
 
         Raises:
-            ValueError: If a mode or loss-scaling option is invalid, or `64-true` is requested without JAX x64.
+            ValueError: If a mode or loss-scaling option is invalid, an existing policy is combined with an option, or
+                `64-true` is requested without JAX x64.
         """
         if isinstance(precision, PrecisionPolicy):
+            options = {
+                "derivative_dtype": derivative_dtype,
+                "initial_loss_scale": initial_loss_scale,
+                "growth_interval": growth_interval,
+            }
+            conflicting = [name for name, value in options.items() if value is not None]
+            if conflicting:
+                raise ValueError(
+                    f"A `PrecisionPolicy` already fixes {', '.join(f'`{name}`' for name in conflicting)}; "
+                    "set them on the policy or pass a precision name instead."
+                )
             return precision
+        initial_loss_scale = 32768.0 if initial_loss_scale is None else initial_loss_scale
+        growth_interval = 2000 if growth_interval is None else growth_interval
         mode = cast(PrecisionMode, _ALIASES.get(precision, precision))
         supported = {"64-true", "32-true", "16-true", "bf16-true", "16-mixed", "bf16-mixed"}
         if mode not in supported:
