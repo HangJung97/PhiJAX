@@ -43,9 +43,13 @@ def select_components(values: jax.Array, indices: Sequence[int], *, option: str)
         Array retaining selected components in configured order.
 
     Raises:
-        ValueError: If `indices` contains negative or duplicated components.
+        ValueError: If `indices` contains negative, duplicated, or out-of-range components.
     """
     resolved_indices = validate_component_indices(indices, option=option)
+    # The trailing width is static under tracing; `jnp.take` would fill out-of-range indices with NaN.
+    width = values.shape[-1]
+    if max(resolved_indices) >= width:
+        raise ValueError(f"`{option}` selects component {max(resolved_indices)}, but the array has {width} components.")
     return jnp.take(values, jnp.asarray(resolved_indices), axis=-1)
 
 
