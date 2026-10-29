@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -30,15 +30,17 @@ class _BalancerUpdateRuntime:
 
     Attributes:
         update: Independently compiled functional balancer update.
-        batches: Fixed diagnostic batches, or `None` to use the current training batch.
+        batches: Fixed diagnostic batches, or `None` to use the current training batch or `sample_batches`.
         every_n_steps: Positive interval between updates.
         update_start_step: Nonnegative absolute step anchoring the update cadence.
+        sample_batches: Optional function drawing new diagnostic batches for the global step of each update.
     """
 
     update: BalancerUpdate
     batches: Any | None
     every_n_steps: int
     update_start_step: int
+    sample_batches: Callable[[int], Any] | None = None
 
 
 class _FitLoop:
@@ -170,7 +172,12 @@ class _FitLoop:
                         and (global_step - balancer_update.update_start_step) % balancer_update.every_n_steps == 0
                     )
                     if update_due:
-                        update_batches = batch if balancer_update.batches is None else balancer_update.batches
+                        if balancer_update.sample_batches is not None:
+                            update_batches = balancer_update.sample_batches(global_step)
+                        elif balancer_update.batches is not None:
+                            update_batches = balancer_update.batches
+                        else:
+                            update_batches = batch
                         balancer_state = balancer_update.update(
                             state.model_state,
                             update_batches,

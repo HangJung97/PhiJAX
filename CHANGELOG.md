@@ -23,6 +23,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `PhiDataModule.input_periods()` declares physical periods of periodic input axes, and `TrainState.input_periods`
   stores them with checkpoints. Resume and prediction use the stored periods; transfer learning uses the target
   DataModule's; `periodic_features_kwargs['periods']` overrides both.
+- `ExactNTKBalancer(kernel_size=...)` accepts `"all"` to compute the NTK on every row of a finite pool, and a mapping
+  that sets the sample count per objective batch key, such as `{"pde": 1024, "boundary": "all"}`.
+- `ExactNTKBalancer(resample=True)` draws new diagnostic batches for every update instead of once per fit. Custom
+  balancers request the same behavior with `BalancerUpdatePlan(resample=True)`.
 
 ### Breaking changes
 
@@ -75,6 +79,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   instead of producing NaN residuals.
 - Pools built by `build_array_pools` now name every output channel, so prediction artifacts can be saved for
   vector-valued targets (`v_0`, `v_1`, ...) and for pools without targets.
+- A resumed fit now draws the same exact-NTK diagnostic batches as an uninterrupted run. Previously the batches
+  depended on the step the fit resumed from.
 
 ## [0.2.0b5] - 2026-09-11
 

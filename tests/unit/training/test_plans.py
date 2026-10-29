@@ -48,6 +48,21 @@ def test_balancer_update_plan_validates_and_freezes_batch_sizes() -> None:
         BalancerUpdatePlan(_balancer_update, 1, 0, batch_sizes={"pde": 0})
 
 
+def test_balancer_update_plan_accepts_all_rows_and_validates_resample() -> None:
+    """Verify `"all"` diagnostic sizes are accepted and `resample` requires sampled diagnostic batches."""
+    plan = BalancerUpdatePlan(_balancer_update, 1, 0, batch_sizes={"pde": 8, "boundary": "all"}, resample=True)
+
+    assert plan.batch_sizes == {"pde": 8, "boundary": "all"}
+    assert plan.resample is True
+    assert BalancerUpdatePlan(_balancer_update, 1, 0, batch_sizes={"pde": 8}).resample is False
+    with pytest.raises(ValueError, match="batch sizes"):
+        BalancerUpdatePlan(_balancer_update, 1, 0, batch_sizes={"pde": "half"})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="`resample` requires `batch_sizes`"):
+        BalancerUpdatePlan(_balancer_update, 1, 0, resample=True)
+    with pytest.raises(TypeError, match="resample"):
+        BalancerUpdatePlan(_balancer_update, 1, 0, batch_sizes={"pde": 8}, resample=1)  # type: ignore[arg-type]
+
+
 def test_training_plan_validates_step_and_batch_keys() -> None:
     """Verify training plans require callable steps and unique non-empty batch names."""
     with pytest.raises(TypeError, match="callable"):
