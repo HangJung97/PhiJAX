@@ -79,10 +79,11 @@ def build_coordinate_network(
     key: jax.Array,
     input_mean: jax.typing.ArrayLike | None,
     input_std: jax.typing.ArrayLike | None,
+    input_periods: Mapping[int, float] | None,
     precision: PrecisionName | PrecisionPolicy,
     **model_kwargs: object,
 ) -> InitializedModel:
-    del input_mean, input_std
+    del input_mean, input_std, input_periods
     policy = PrecisionPolicy.from_name(precision)
     options = policy.apply_model_dtype_defaults(model_kwargs)
     model = CoordinateNetwork(input_dim, output_dim, rngs=nnx.Rngs(params=key), **options)
@@ -92,7 +93,10 @@ def build_coordinate_network(
     )
 ```
 
-The factory may ignore `input_mean` and `input_std` when the architecture does not normalize inputs.
+The factory may ignore `input_mean` and `input_std` when the architecture does not normalize inputs, and
+`input_periods` when it has no periodic features. Declare every one of these arguments explicitly. With
+`**model_kwargs`, an undeclared `input_periods` would be forwarded to the model constructor and raise `TypeError`. A
+factory with periodic features reports the periods it applies through `InitializedModel.input_periods`.
 `apply_model_dtype_defaults()` is optional. Use it when the constructor accepts parameter, compute, and output dtype
 arguments. Explicit values in `model_kwargs` take precedence over the selected policy.
 

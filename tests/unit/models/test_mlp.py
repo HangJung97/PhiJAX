@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
+from omegaconf import OmegaConf
 
 from phijax.models import (
     MLP,
@@ -73,8 +74,8 @@ def test_factorized_dense_supports_biasless_custom_initialization() -> None:
 
 
 def test_periodic_features_enforce_value_and_derivative_periodicity() -> None:
-    """Verify fixed angular frequencies identify both ends of a periodic spatial interval."""
-    embedding = PeriodicFeatures(2, axes=(1,), frequencies=(jnp.pi,))
+    """Verify a physical period identifies both ends of a periodic spatial interval."""
+    embedding = PeriodicFeatures(2, periods={1: 2.0})
     inputs = jnp.asarray([[0.25, -1.0], [0.25, 1.0]], dtype=jnp.float32)
 
     features = embedding(inputs)
@@ -107,7 +108,7 @@ def test_mlp_composes_periodic_and_random_fourier_features() -> None:
         1,
         hidden=(4,),
         periodic_features=True,
-        periodic_features_kwargs={"axes": (1,), "frequencies": (jnp.pi,)},
+        periodic_features_kwargs={"periods": {1: 2.0}},
         fourier_features=True,
         fourier_features_kwargs={"embed_dim": 3, "scale": 2.0},
         rngs=nnx.Rngs(params=jax.random.key(17)),
@@ -124,11 +125,12 @@ def test_mlp_composes_periodic_and_random_fourier_features() -> None:
 @pytest.mark.parametrize(
     ("kwargs", "match"),
     [
-        ({"axes": (), "frequencies": ()}, "positive number"),
-        ({"axes": (0,), "frequencies": (1.0, 2.0)}, "same"),
-        ({"axes": (0, 0), "frequencies": (1.0, 2.0)}, "unique"),
-        ({"axes": (2,), "frequencies": (1.0,)}, "valid"),
-        ({"axes": (1,), "frequencies": (0.0,)}, "nonzero"),
+        ({"periods": {}}, "at least one"),
+        ({"periods": {2: 1.0}}, "valid input coordinate"),
+        ({"periods": {1: 1.0, "1": 2.0}}, "unique"),
+        ({"periods": {-1: 1.0}}, "nonnegative"),
+        ({"periods": {1: 0.0}}, "finite and positive"),
+        ({"periods": {1: float("inf")}}, "finite and positive"),
     ],
 )
 def test_periodic_features_reject_invalid_configuration(kwargs: dict[str, object], match: str) -> None:
@@ -268,3 +270,119 @@ def test_mlp_rejects_invalid_dynamic_options(kwargs: dict[str, object], message:
     """
     with pytest.raises(ValueError, match=message):
         MLP(2, 2, rngs=nnx.Rngs(29), **kwargs)
+
+
+def test_periodic_features_use_physical_coordinates() -> None:
+    """Verify periodic axes embed `2*pi*x/T` of the physical coordinate and other axes use the normalized values."""
+    period = 0.84
+    embedding = PeriodicFeatures(2, periods={1: period})
+    inputs = jnp.asarray([[0.3, 10.3], [-1.2, 0.05]], dtype=jnp.float32)
+    normalized = ((inputs - 1.0) / 3.0).astype(jnp.bfloat16)
+
+    features = embedding(inputs, normalized)
+    phase = 2.0 * np.pi * np.asarray(inputs[:, 1], np.float64) / period
+
+    assert embedding.periods == ((1, period),)
+    assert features.shape == (2, 3)
+    np.testing.assert_array_equal(features[:, 0], normalized[:, 0].astype(jnp.float32))
+    # The phase comes from the float32 physical inputs, not from the low-precision normalized values.
+    np.testing.assert_allclose(features[:, 1], np.cos(phase), atol=2e-5)
+    np.testing.assert_allclose(features[:, 2], np.sin(phase), atol=2e-5)
+    np.testing.assert_array_equal(embedding(inputs)[:, 0], inputs[:, 0])
+
+    def embedded_time(time: jax.Array) -> jax.Array:
+        """Embed one point as a function of its periodic coordinate.
+
+        Args:
+            time: Scalar periodic coordinate.
+
+        Returns:
+            Embedded feature vector.
+        """
+        return embedding(jnp.stack((jnp.asarray(0.3), time)))
+
+    derivative = jax.jacfwd(embedded_time)(jnp.asarray(0.25))
+    angle = 2.0 * np.pi * 0.25 / period
+    np.testing.assert_allclose(
+        derivative[1:], 2.0 * np.pi / period * np.asarray([-np.sin(angle), np.cos(angle)]), rtol=1e-5
+    )
+
+
+@pytest.mark.parametrize("input_norm", [True, False], ids=["normalized", "raw"])
+@pytest.mark.parametrize("builder", [build_mlp, build_modified_mlp, build_pirate_net])
+def test_models_repeat_every_declared_period_for_any_statistics(
+    builder: Callable[..., InitializedModel],
+    input_norm: bool,
+) -> None:
+    """Verify declared periods hold in physical units whatever the normalization statistics are.
+
+    Args:
+        builder: Built-in model factory under test.
+        input_norm: Whether the model normalizes its inputs.
+    """
+    period = 0.84
+    model = builder(
+        jax.random.key(0),
+        2,
+        1,
+        input_mean=[0.5, 1.59],
+        input_std=[0.4, 0.93],
+        input_periods={1: period},
+        input_norm=input_norm,
+        periodic_features=True,
+    )
+    inputs = jnp.asarray([[0.7, 0.25], [0.1, 2.3]], dtype=jnp.float32)
+
+    def gap(shift: float) -> float:
+        """Return the largest output change after shifting the periodic coordinate.
+
+        Args:
+            shift: Shift applied to the periodic coordinate in physical units.
+
+        Returns:
+            Maximum absolute output difference.
+        """
+        shifted = inputs.at[:, 1].add(shift)
+        return float(jnp.max(jnp.abs(model.apply(model.state, inputs) - model.apply(model.state, shifted))))
+
+    assert model.input_periods == ((1, period),)
+    assert gap(period) < 1e-5
+    assert gap(1.0) > 1e-3
+
+
+@pytest.mark.parametrize("builder", [build_mlp, build_modified_mlp, build_pirate_net])
+def test_model_factories_merge_declared_and_configured_periods(builder: Callable[..., InitializedModel]) -> None:
+    """Verify configured periods override or add to declared periods, and disabled features report none.
+
+    Args:
+        builder: Built-in model factory under test.
+    """
+
+    def periods(input_periods: dict[int, float] | None, configured: object = None, enabled: bool = True) -> object:
+        """Build one model and return the periods it reports.
+
+        Args:
+            input_periods: Periods declared by the DataModule or a checkpoint.
+            configured: Optional `periodic_features_kwargs`.
+            enabled: Whether periodic features are enabled.
+
+        Returns:
+            Resolved periods reported by the factory.
+        """
+        model = builder(
+            jax.random.key(0),
+            2,
+            1,
+            input_periods=input_periods,
+            periodic_features=enabled,
+            periodic_features_kwargs=configured,
+        )
+        return model.input_periods
+
+    assert periods({1: 0.8}) == ((1, 0.8),)
+    assert periods({1: 0.8}, {"periods": {1: 0.5}}) == ((1, 0.5),)
+    assert periods({1: 0.8}, {"periods": {0: 3.0}}) == ((0, 3.0), (1, 0.8))
+    assert periods(None, OmegaConf.create({"periods": {"1": 0.5}})) == ((1, 0.5),)
+    assert periods({1: 0.8}, enabled=False) is None
+    with pytest.raises(ValueError, match="requires periods"):
+        periods(None)

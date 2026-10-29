@@ -1,3 +1,6 @@
+import dataclasses
+from typing import Any, cast
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -102,3 +105,43 @@ def test_as_input_statistics_rejects_malformed_pairs(statistics: tuple[np.ndarra
     """
     with pytest.raises(ValueError, match="statistics"):
         as_input_statistics(statistics)
+
+
+def test_initialize_train_state_stores_static_input_periods() -> None:
+    """Verify periods are normalized static metadata that add no leaves and do not retrace compiled steps."""
+    model_state = {"weight": jnp.ones(2)}
+    balancer_state = BalancerState(weights=jnp.ones(1), traces=jnp.zeros(1))
+    without = initialize_train_state(model_state, optax.sgd(0.1), balancer_state, jax.random.key(0))
+    state = initialize_train_state(
+        model_state,
+        optax.sgd(0.1),
+        balancer_state,
+        jax.random.key(0),
+        input_periods=cast(Any, {"1": np.float32(0.5), 0: 2}),
+    )
+    step = jax.jit(lambda current: current.step + 1)
+    step(state)
+    step(dataclasses.replace(state, step=jnp.asarray(5, jnp.int32)))
+
+    assert state.input_periods == ((0, 2.0), (1, 0.5))
+    assert state.input_periods is not None
+    assert all(type(axis) is int and type(period) is float for axis, period in state.input_periods)
+    assert len(jax.tree.leaves(state)) == len(jax.tree.leaves(without))
+    assert cast(Any, step)._cache_size() == 1
+
+
+@pytest.mark.parametrize("periods", [{1: 0.0}, {-1: 1.0}, {1: 1.0, "1": 2.0}])
+def test_initialize_train_state_rejects_malformed_input_periods(periods: dict[Any, float]) -> None:
+    """Verify periods must be unique nonnegative axes with finite positive values.
+
+    Args:
+        periods: Malformed periods candidate.
+    """
+    with pytest.raises(ValueError, match=r"Periodic axes|Periods must"):
+        initialize_train_state(
+            {"weight": jnp.ones(2)},
+            optax.sgd(0.1),
+            BalancerState(weights=jnp.ones(1), traces=jnp.zeros(1)),
+            jax.random.key(0),
+            input_periods=periods,
+        )

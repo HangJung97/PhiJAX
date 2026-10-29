@@ -1970,6 +1970,7 @@ def _scalar_model_factory(
     key: jax.Array,
     input_mean: jax.typing.ArrayLike | None,
     input_std: jax.typing.ArrayLike | None,
+    input_periods: Any,
     precision: Any,
 ) -> InitializedModel:
     """Initialize one scalar model through the public factory contract.
@@ -1978,6 +1979,7 @@ def _scalar_model_factory(
         key: Model-parameter initialization key.
         input_mean: Optional input mean, expected to be absent in this fixture.
         input_std: Optional input standard deviation, expected to be absent in this fixture.
+        input_periods: Optional input periods, expected to be absent in this fixture.
         precision: Trainer precision policy.
 
     Returns:
@@ -1986,6 +1988,7 @@ def _scalar_model_factory(
     del precision
     assert input_mean is None
     assert input_std is None
+    assert input_periods is None
 
     def apply(state: dict[str, jax.Array], inputs: jax.Array) -> jax.Array:
         """Apply the scalar model weight.

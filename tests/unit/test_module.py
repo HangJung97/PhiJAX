@@ -339,9 +339,10 @@ def test_phi_module_records_and_rebinds_input_statistics() -> None:
     assert isinstance(statistics, InputStatistics)
     assert isinstance(statistics.mean, np.ndarray)
     assert statistics.mean.dtype == np.float32
-    assert module.bind_input_statistics(InputStatistics(np.asarray([0.5, 1.0]), np.asarray([2.0, 4.0]))) is module
+    same = InputStatistics(np.asarray([0.5, 1.0]), np.asarray([2.0, 4.0]))
+    assert module.bind_inputs(same, None) is module
 
-    rebound = module.bind_input_statistics(InputStatistics(jnp.asarray([3.0, -1.0]), jnp.asarray([0.5, 0.25])))
+    rebound = module.bind_inputs(InputStatistics(jnp.asarray([3.0, -1.0]), jnp.asarray([0.5, 0.25])), None)
     reference = build_mlp(
         jax.random.key(0),
         2,
@@ -358,9 +359,9 @@ def test_phi_module_records_and_rebinds_input_statistics() -> None:
     np.testing.assert_array_equal(module.input_statistics.mean, [0.5, 1.0])
     assert not np.allclose(module(model_state, inputs), rebound(model_state, inputs))
 
-    unnormalized = module.bind_input_statistics(None)
+    unnormalized = module.bind_inputs(None, None)
     assert unnormalized.input_statistics is None
-    assert unnormalized.bind_input_statistics(None) is unnormalized
+    assert unnormalized.bind_inputs(None, None) is unnormalized
 
 
 def test_input_statistics_rebinding_edge_cases() -> None:
@@ -369,9 +370,9 @@ def test_input_statistics_rebinding_edge_cases() -> None:
     statistics = InputStatistics(np.ones(1), np.ones(1))
 
     assert prebuilt.input_statistics is None
-    assert prebuilt.bind_input_statistics(statistics) is prebuilt
+    assert prebuilt.bind_inputs(statistics, None) is prebuilt
     with pytest.raises(RuntimeError, match="prepare_model"):
-        _normalized_mlp_module().bind_input_statistics(statistics)
+        _normalized_mlp_module().bind_inputs(statistics, None)
 
     class _CustomModule(BasePhiModule):
         """Expose the base-class statistics defaults."""
@@ -413,4 +414,38 @@ def test_input_statistics_rebinding_edge_cases() -> None:
 
     custom = _CustomModule()
     assert custom.input_statistics is None
-    assert custom.bind_input_statistics(statistics) is custom
+    assert custom.bind_inputs(statistics, None) is custom
+
+
+def test_phi_module_records_and_rebinds_input_periods() -> None:
+    """Verify modules record the periods their model applies and rebind only when the applied periods change."""
+    precision = PrecisionPolicy.from_name("32-true")
+    model = partial(build_mlp, input_dim=2, output_dim=1, hidden=(8,), periodic_features=True)
+    module, _ = PhiModule(model, _ConfiguredObjective()).prepare_model(
+        key=jax.random.key(0),
+        input_mean=None,
+        input_std=None,
+        precision=precision,
+        input_periods={1: 0.8},
+    )
+
+    assert module.input_periods == ((1, 0.8),)
+    assert module.bind_inputs(None, {1: 0.8}) is module
+    rebound = module.bind_inputs(None, {1: 0.5})
+    assert rebound is not module
+    assert rebound.input_periods == ((1, 0.5),)
+
+    overridden_model = partial(model, periodic_features_kwargs={"periods": {1: 0.5}})
+    overridden, _ = PhiModule(overridden_model, _ConfiguredObjective()).prepare_model(
+        key=jax.random.key(0),
+        input_mean=None,
+        input_std=None,
+        precision=precision,
+        input_periods={1: 0.8},
+    )
+    # The configured override wins, so restored periods that differ only there keep the same module.
+    assert overridden.input_periods == ((1, 0.5),)
+    assert overridden.bind_inputs(None, {1: 0.9}) is overridden
+
+    prebuilt = _bind(PhiModule(InitializedModel(_model_apply, {}, input_periods=((0, 1.0),)), _ConfiguredObjective()))
+    assert prebuilt.input_periods == ((0, 1.0),)

@@ -96,6 +96,22 @@ current DataModule's statistics and a warning. PhiJAX 0.2.0b5 cannot read schema
 Existing prediction scripts need no change. A restore template built without statistics takes them from the module,
 and the Trainer rebinds the module to the checkpoint statistics when they differ.
 
+### Periodic features in physical units
+
+From PhiJAX 0.2.0b6, periodic axes are declared with physical periods and embedded from the physical coordinate.
+Input normalization no longer affects them.
+
+| PhiJAX 0.2.0b5 and earlier                                                          | PhiJAX 0.2.0b6 and later                              |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `periodic_features_kwargs: {axes: [1], frequencies: [pi]}` with `input_norm: false` | `periodic_features_kwargs: {periods: {1: 2.0}}`       |
+| Measured period as that axis's `std`, with frequency `2*pi`                         | `PhiDataModule.input_periods()` returning `{axis: T}` |
+| `PeriodicFeatures(input_dim, axes, frequencies)`                                    | `PeriodicFeatures(input_dim, periods={axis: T})`      |
+| Model factory `(key, input_mean, input_std, precision)`                             | Also receives `input_periods`                         |
+| `bind_input_statistics(statistics)`                                                 | `bind_inputs(statistics, periods)`                    |
+
+Checkpoints trained with frequency-based periodic features apply a different phase and cannot be reused with the new
+features.
+
 ### Checkpoint retention
 
 From PhiJAX 0.2.0b6, `ModelCheckpoint` owns checkpoint retention, as in Lightning. `OrbaxCheckpointIO` no longer

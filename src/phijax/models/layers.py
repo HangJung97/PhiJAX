@@ -1,5 +1,5 @@
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 import jax
@@ -7,76 +7,102 @@ import jax.numpy as jnp
 from flax import nnx
 
 from phijax.models.initialization import Initializer
+from phijax.types import InputPeriods, as_input_periods
 
 
 class PeriodicFeatures(nnx.Module):
-    """Replace selected coordinate axes with fixed cosine and sine features.
+    """Replace periodic coordinate axes with cosine and sine features of the physical coordinate.
+
+    An axis with period `T` becomes `(cos(2*pi*x/T), sin(2*pi*x/T))`, so the network sees that coordinate only through
+    functions that repeat every `T`. Outputs and their derivatives then repeat exactly. Other axes pass through
+    unchanged, or as their normalized values when the model normalizes inputs.
 
     Attributes:
-        output_dim: Embedded width, equal to `input_dim + len(axes)`.
+        output_dim: Embedded width, equal to `input_dim` plus the number of periodic axes.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        axes: Sequence[int],
-        frequencies: Sequence[float],
-    ) -> None:
+    def __init__(self, input_dim: int, periods: InputPeriods) -> None:
         """Initialize deterministic periodic coordinate features.
-
-        Each configured coordinate `x_i` is replaced by `(cos(w_i*x_i), sin(w_i*x_i))`, so its physical period is
-        `2*pi/abs(w_i)`.
 
         Args:
             input_dim: Width of the physical input coordinate vector.
-            axes: Unique coordinate axes to replace.
-            frequencies: Nonzero finite angular frequencies paired with `axes`.
+            periods: Physical period of each periodic axis, keyed by axis index.
 
         Raises:
-            ValueError: If dimensions, axes, or frequencies are invalid.
+            ValueError: If `input_dim` is not positive, `periods` is empty, or an axis or period is invalid.
         """
-        resolved_axes = tuple(int(axis) for axis in axes)
-        resolved_frequencies = tuple(float(frequency) for frequency in frequencies)
         if input_dim < 1:
             raise ValueError("`input_dim` must be positive.")
-        if not resolved_axes or len(resolved_axes) != len(resolved_frequencies):
-            raise ValueError("`axes` and `frequencies` must contain the same positive number of entries.")
-        invalid_axes = len(set(resolved_axes)) != len(resolved_axes) or any(
-            axis < 0 or axis >= input_dim for axis in resolved_axes
-        )
-        if invalid_axes:
-            raise ValueError("`axes` must contain unique valid input coordinate indices.")
-        if any(not math.isfinite(frequency) or frequency == 0.0 for frequency in resolved_frequencies):
-            raise ValueError("`frequencies` must contain finite nonzero angular frequencies.")
+        resolved = as_input_periods(periods)
+        if resolved is None:
+            raise ValueError("`periods` must declare at least one periodic axis.")
+        if any(axis >= input_dim for axis, _ in resolved):
+            raise ValueError(f"Periodic axes must be valid input coordinate indices below {input_dim}.")
         self.input_dim = input_dim
-        self.axes = resolved_axes
-        self.frequencies = resolved_frequencies
-        self.output_dim = input_dim + len(resolved_axes)
+        # Sorted `(axis, period)` pairs keep this static graph attribute hashable.
+        self.periods = resolved
+        self.output_dim = input_dim + len(resolved)
 
-    def __call__(self, inputs: jax.Array) -> jax.Array:
-        """Embed configured axes while preserving leading input dimensions.
+    def __call__(self, inputs: jax.Array, normalized: jax.Array | None = None) -> jax.Array:
+        """Embed periodic axes while preserving leading input dimensions.
 
         Args:
-            inputs: Coordinate array with final width :attr:`input_dim`.
+            inputs: Physical coordinates with final width `input_dim`.
+            normalized: Optional normalized coordinates with the shape of `inputs`. They replace the non-periodic axes,
+                while periodic axes always use the physical coordinates.
 
         Returns:
             Embedded array with final width :attr:`output_dim`.
 
         Raises:
-            ValueError: If the final input width does not match :attr:`input_dim`.
+            ValueError: If `inputs` or `normalized` have the wrong shape.
         """
         if inputs.shape[-1] != self.input_dim:
             raise ValueError(f"Expected final input width {self.input_dim}, got {inputs.shape[-1]}.")
-        frequency_by_axis = dict(zip(self.axes, self.frequencies, strict=True))
+        if normalized is not None and normalized.shape != inputs.shape:
+            raise ValueError("`normalized` must have the same shape as `inputs`.")
+        passthrough = inputs if normalized is None else normalized
+        period_by_axis = dict(self.periods)
         features: list[jax.Array] = []
         for axis in range(self.input_dim):
-            coordinate = inputs[..., axis : axis + 1]
-            if axis in frequency_by_axis:
-                phase = frequency_by_axis[axis] * coordinate
+            if axis in period_by_axis:
+                phase = (2.0 * math.pi / period_by_axis[axis]) * inputs[..., axis : axis + 1]
                 features.extend((jnp.cos(phase), jnp.sin(phase)))
             else:
-                features.append(coordinate)
+                features.append(passthrough[..., axis : axis + 1])
         return jnp.concatenate(features, axis=-1)
+
+
+def _resolve_periodic_kwargs(
+    periodic_features: bool,
+    periodic_features_kwargs: Mapping[str, Any] | None,
+    input_periods: InputPeriods | None,
+) -> dict[str, Any]:
+    """Merge declared input periods with the model configuration's period overrides.
+
+    Args:
+        periodic_features: Whether the model embeds periodic axes.
+        periodic_features_kwargs: Model options for :class:`PeriodicFeatures`; `periods` overrides or adds axes.
+        input_periods: Periods supplied by the Trainer from the DataModule or a restored checkpoint.
+
+    Returns:
+        Options for :class:`PeriodicFeatures` whose `periods` are the declared periods updated by the overrides.
+
+    Raises:
+        ValueError: If periodic features are enabled but no periods are declared or configured.
+    """
+    options = dict(periodic_features_kwargs or {})
+    if not periodic_features:
+        return options
+    declared = dict(as_input_periods(input_periods) or ())
+    overrides = dict(as_input_periods(options.get("periods")) or ())
+    if not declared and not overrides:
+        raise ValueError(
+            "`periodic_features=True` requires periods from the DataModule's `input_periods()` or from "
+            "`periodic_features_kwargs['periods']`."
+        )
+    options["periods"] = declared | overrides
+    return options
 
 
 class RandomFourierFeatures(nnx.Module):

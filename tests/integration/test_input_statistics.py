@@ -293,7 +293,7 @@ def test_fit_state_rejects_statistics_that_differ_from_the_compiled_module(
     template = trainer.initialize_state(model_state, optimizer, balancer.initialize(), jax.random.key(4))
     data_module = MagicMock()
 
-    with pytest.raises(ValueError, match="restored input statistics differ"):
+    with pytest.raises(ValueError, match="restored input statistics or periods differ"):
         trainer.fit_state(module, plan, template, ckpt_path=checkpoints, datamodule=data_module)
 
     data_module.teardown_stage.assert_called_once_with("fit")
@@ -319,3 +319,112 @@ def test_fit_tears_down_when_checkpoint_restore_fails(tmp_path: Path) -> None:
         )
 
     assert teardown_stages == ["fit"]
+
+
+class _PeriodicDataModule(_ShiftedDataModule):
+    """Declare the only input axis periodic with a configurable physical period."""
+
+    def __init__(self, offset: float, period: float) -> None:
+        """Store the coordinate offset and the declared period.
+
+        Args:
+            offset: Shift applied to every coordinate.
+            period: Physical period declared for axis 0.
+        """
+        super().__init__(offset)
+        self.period = period
+
+    def input_periods(self) -> dict[int, float]:
+        """Declare the physical period of axis 0.
+
+        Returns:
+            Period keyed by input axis.
+        """
+        return {0: self.period}
+
+
+def _periodic_module(override: float | None = None) -> PhiModule:
+    """Create a normalized MLP module with periodic features on its only axis.
+
+    Args:
+        override: Optional configured period that overrides the declared one.
+
+    Returns:
+        Unbound module blueprint.
+    """
+    options = None if override is None else {"periods": {0: override}}
+    model = partial(
+        build_mlp,
+        input_dim=1,
+        output_dim=1,
+        hidden=(8,),
+        input_norm=True,
+        periodic_features=True,
+        periodic_features_kwargs=options,
+    )
+    return PhiModule(model, CompositeObjective.from_equations({"data": base_data_fidelity}))
+
+
+def test_resume_and_prediction_use_checkpoint_periods(tmp_path: Path) -> None:
+    """Verify resumed fits and checkpoint predictions apply the trained periods, not the current DataModule's.
+
+    Args:
+        tmp_path: Temporary directory for outputs and checkpoints.
+    """
+    checkpoints = tmp_path / "source"
+    trainer = _trainer(tmp_path, checkpoints)
+    fit = partial(trainer.fit, optimizer=optax.adam(1e-2), seed=0)
+    source = fit(_periodic_module(), datamodule=_PeriodicDataModule(0.0, 0.6))
+    in_memory = trainer.predict(source, datamodule=_PeriodicDataModule(0.0, 0.6))
+
+    with pytest.warns(UserWarning, match="callbacks this Trainer does not have"):
+        resumed = _trainer(tmp_path).fit(
+            _periodic_module(),
+            datamodule=_PeriodicDataModule(0.0, 0.9),
+            optimizer=optax.adam(1e-2),
+            seed=1,
+            ckpt_path=checkpoints,
+        )
+    module, model_state = _periodic_module().prepare_model(
+        key=jax.random.key(3),
+        input_mean=None,
+        input_std=None,
+        precision=trainer.precision,
+        input_periods={0: 0.9},
+    )
+    template = trainer.initialize_state(
+        model_state, optax.adam(1e-2), StaticLossBalancer(module.loss_names).initialize(), jax.random.key(4)
+    )
+    from_checkpoint = trainer.predict_state(
+        module, template, ckpt_path=checkpoints, datamodule=_PeriodicDataModule(0.0, 0.6)
+    )
+
+    assert source.state.input_periods == ((0, 0.6),)
+    assert source.module.input_periods == ((0, 0.6),)
+    assert resumed.state.input_periods == ((0, 0.6),)
+    assert resumed.module.input_periods == ((0, 0.6),)
+    assert from_checkpoint is not None
+    assert in_memory is not None
+    np.testing.assert_allclose(from_checkpoint, in_memory, rtol=1e-6)
+
+
+def test_transfer_uses_target_periods_and_configured_periods_win(tmp_path: Path) -> None:
+    """Verify transfer learning uses the target DataModule's period and a configured override beats every source.
+
+    Args:
+        tmp_path: Temporary directory for outputs and checkpoints.
+    """
+    checkpoints = tmp_path / "source"
+    _trainer(tmp_path, checkpoints).fit(
+        _periodic_module(), datamodule=_PeriodicDataModule(0.0, 0.6), optimizer=optax.adam(1e-2), seed=0
+    )
+    fit = partial(_trainer(tmp_path).fit, optimizer=optax.adam(1e-2), seed=1, ckpt_path=checkpoints)
+
+    transferred = fit(_periodic_module(), datamodule=_PeriodicDataModule(5.0, 0.9), weights_only=True)
+    with pytest.warns(UserWarning, match="callbacks this Trainer does not have"):
+        overridden = fit(_periodic_module(override=0.4), datamodule=_PeriodicDataModule(0.0, 0.9))
+
+    assert transferred.state.input_periods == ((0, 0.9),)
+    assert transferred.module.input_periods == ((0, 0.9),)
+    assert overridden.state.input_periods == ((0, 0.4),)
+    assert overridden.module.input_periods == ((0, 0.4),)

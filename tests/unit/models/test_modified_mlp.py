@@ -54,7 +54,7 @@ def test_modified_mlp_composes_periodic_fourier_and_factorized_layers() -> None:
         hidden_dim=8,
         num_layers=2,
         periodic_features=True,
-        periodic_features_kwargs={"axes": (1,), "frequencies": (jnp.pi,)},
+        periodic_features_kwargs={"periods": {1: 2.0}},
         fourier_features=True,
         fourier_features_kwargs={"embed_dim": 4, "scale": 1.0},
         weight_factorization=True,

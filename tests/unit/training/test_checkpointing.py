@@ -167,6 +167,35 @@ def test_checkpoint_state_identifier_tracks_structure_not_values() -> None:
             },
             "input-statistics layout",
         ),
+        (
+            {
+                "schema_version": 3,
+                "phijax_version": phijax_version,
+                "step": 4,
+                "input_statistics": None,
+            },
+            "input-periods",
+        ),
+        (
+            {
+                "schema_version": 3,
+                "phijax_version": phijax_version,
+                "step": 4,
+                "input_statistics": None,
+                "input_periods": {"time": 1.0},
+            },
+            "input-periods",
+        ),
+        (
+            {
+                "schema_version": 3,
+                "phijax_version": phijax_version,
+                "step": 4,
+                "input_statistics": None,
+                "input_periods": {"1": -1.0},
+            },
+            "input-periods",
+        ),
     ],
 )
 def test_checkpoint_manifest_rejects_incompatible_producers(metadata: dict[str, object], message: str) -> None:
@@ -281,7 +310,7 @@ def _write_schema_2_checkpoint(directory: Path, state: TrainState, step: int) ->
     legacy_state = {
         field.name: getattr(state, field.name)
         for field in dataclasses.fields(TrainState)
-        if field.name != "input_statistics"
+        if field.name not in {"input_statistics", "input_periods"}
     }
     manifest = {
         "schema_version": 2,
@@ -342,3 +371,27 @@ def test_checkpoint_metadata_reads_do_not_log_restore_warnings(
     assert callback_states == {"phijax.callbacks.Example:0": {"count": 1}}
     assert statistics is not None
     assert not [record.getMessage() for record in caplog.records if "could not be restored" in record.getMessage()]
+
+
+@pytest.mark.parametrize("template_periods", [None, ((1, 0.3),)], ids=["template-without", "template-with-other"])
+def test_full_restore_uses_checkpoint_input_periods(tmp_path: Path, template_periods: tuple | None) -> None:
+    """Verify full restoration takes stored periods from the manifest, and weights-only keeps the target's.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+        template_periods: Periods of the restore template, or `None`.
+    """
+    source = dataclasses.replace(_state(weight=2.0, slot=3.0, step=4), input_periods=((1, 0.84),))
+    target = dataclasses.replace(_state(weight=9.0, slot=8.0, step=0), input_periods=template_periods)
+    with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
+        checkpoint_io.save(source, 4)
+        manifest = checkpoint_io._active_manager().metadata(4).custom_metadata["phijax"]
+        resumed = checkpoint_io.restore(target)
+        weights_only = checkpoint_io.restore_weights(target)
+
+    assert manifest["input_periods"] == {"1": 0.84}
+    assert resumed.input_periods == ((1, 0.84),)
+    assert float(resumed.model_state["weight"]) == 2.0
+    assert weights_only.input_periods == template_periods
+    # Periods are static metadata, so they do not change the stored array structure.
+    assert checkpointing_module._state_identifier(source) == checkpointing_module._state_identifier(target)

@@ -5,9 +5,41 @@ They can also be composed into custom Flax NNX models.
 
 ## Periodic features
 
-`PeriodicFeatures` replaces each selected scalar coordinate with cosine and sine features, increasing the width by one
-per selected axis. Configured frequencies are angular frequencies, so the physical period is
-`2*pi/abs(frequency)`.
+`PeriodicFeatures` replaces each periodic coordinate with `cos(2*pi*x/T)` and `sin(2*pi*x/T)` of the physical
+coordinate `x`, where `T` is the period in physical units. The network then sees that coordinate only through
+functions that repeat every `T`, so its outputs and derivatives repeat exactly. Input normalization does not affect
+periodic axes; `input_norm` normalizes only the other axes.
+
+Declare periods in the DataModule, whether they are fixed or measured from the data:
+
+```python
+class CardiacDataModule(ApplicationDataModule):
+    def input_periods(self):
+        return {3: self.cardiac_period}  # time is input axis 3
+```
+
+Then enable periodic features in the model:
+
+```python
+model = partial(build_mlp, input_dim=4, output_dim=4, input_norm=True, periodic_features=True)
+```
+
+`periodic_features_kwargs={"periods": {axis: T}}` overrides a declared period or adds a periodic axis, for example
+`{"periods": {1: 2.0}}` for a spatial axis `x` in `[-1, 1]`. Enabling periodic features without any declared or
+configured period raises `ValueError`.
+
+The Trainer stores the periods the model applies with the checkpoint, following the
+[input normalization statistics](../checkpointing.md#input-normalization-statistics) rules:
+
+| Task                                               | Periods used                        |
+| -------------------------------------------------- | ----------------------------------- |
+| Fresh fit                                          | DataModule `input_periods()`        |
+| Full resume, prediction from a checkpoint          | Checkpoint                          |
+| Transfer learning with `weights_only=True`         | Target DataModule `input_periods()` |
+| Any run with `periodic_features_kwargs["periods"]` | Configured value, for those axes    |
+
+Transfer learning therefore aligns recordings by phase. For example, cardiac cycles with different heart rates map to
+the same features. Changing which axes are periodic changes the model width, so such a checkpoint cannot be restored.
 
 ::: phijax.models.PeriodicFeatures
 

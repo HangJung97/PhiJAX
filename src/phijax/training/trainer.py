@@ -34,7 +34,7 @@ from phijax.training.results import FitResult
 from phijax.training.state import TrainState, as_input_statistics, initialize_train_state
 from phijax.training.steps import TrainStep, make_train_step
 from phijax.training.strategies import Accelerator, DeviceSelection, Strategy, create_strategy
-from phijax.types import InputStatistics, JaxDevice
+from phijax.types import InputPeriods, InputStatistics, JaxDevice
 
 type BatchSource = Iterable[Any] | Callable[[int], Any]
 
@@ -335,6 +335,7 @@ class Trainer:
         sampling_key: jax.Array | None = None,
         balancer_key: jax.Array | None = None,
         input_statistics: InputStatistics | None = None,
+        input_periods: InputPeriods | None = None,
     ) -> TrainState:
         """Initialize functional state with this trainer's precision policy.
 
@@ -347,6 +348,8 @@ class Trainer:
             balancer_key: Optional explicit adaptive-balancer diagnostic key.
             input_statistics: Optional normalization statistics the model was built with. When omitted,
                 :meth:`fit_state` and :meth:`predict_state` take them from the module.
+            input_periods: Optional physical input periods the model applies. When omitted, :meth:`fit_state` and
+                :meth:`predict_state` take them from the module.
 
         Returns:
             Complete precision-aware training state.
@@ -360,6 +363,7 @@ class Trainer:
             sampling_key=sampling_key,
             balancer_key=balancer_key,
             input_statistics=input_statistics,
+            input_periods=input_periods,
         )
 
     def compile_train_step(
@@ -458,6 +462,7 @@ class Trainer:
                     input_mean=input_mean,
                     input_std=input_std,
                     precision=self.precision,
+                    input_periods=datamodule.input_periods(),
                 )
                 resolved_balancer = StaticLossBalancer(bound_module.loss_names) if balancer is None else balancer
                 state = self.initialize_state(
@@ -468,6 +473,7 @@ class Trainer:
                     sampling_key=sampling_key,
                     balancer_key=balancer_key,
                     input_statistics=bound_module.input_statistics,
+                    input_periods=bound_module.input_periods,
                 )
             self._pending_callback_states = None
             state = self._restore_state(
@@ -478,10 +484,12 @@ class Trainer:
                 restore_callbacks=not weights_only and ckpt_path is not None,
             )
             with jax.default_device(self.strategy.root_device):
-                # A full resume restores the checkpoint's statistics. Rebind before the training plan captures the
-                # module, because compiled steps and balancer updates close over its model application.
-                bound_module = bound_module.bind_input_statistics(state.input_statistics)
+                # A full resume restores the checkpoint's statistics and periods. Rebind before the training plan
+                # captures the module, because compiled steps and balancer updates close over its model application.
+                bound_module = bound_module.bind_inputs(state.input_statistics, state.input_periods)
                 plan = build_training_plan(self, bound_module, resolved_balancer, optimizer)
+            # Record what the model applies, so configured period overrides win over restored periods.
+            state = replace(state, input_periods=bound_module.input_periods)
             return self._run_fit(
                 bound_module, plan, state, None, hyperparameters=hyperparameters, datamodule=datamodule
             )
@@ -527,18 +535,19 @@ class Trainer:
             plan = training if isinstance(training, TrainingPlan) else TrainingPlan(training)
             self._pending_callback_states = None
             state = self._restore_state(
-                _with_module_statistics(state, module),
+                _with_module_inputs(state, module),
                 ckpt_path,
                 ckpt_step,
                 weights_only=weights_only,
                 restore_callbacks=not weights_only and ckpt_path is not None,
             )
             # The plan was compiled for the module's statistics, so it cannot be rebound here.
-            if module.bind_input_statistics(state.input_statistics) is not module:
+            if module.bind_inputs(state.input_statistics, state.input_periods) is not module:
                 raise ValueError(
-                    "The restored input statistics differ from the statistics the module's model was built with. "
-                    "Rebuild the module and training plan with the checkpoint statistics, or use `Trainer.fit()`."
+                    "The restored input statistics or periods differ from those the module's model was built with. "
+                    "Rebuild the module and training plan with the checkpoint values, or use `Trainer.fit()`."
                 )
+            state = replace(state, input_periods=module.input_periods)
             return self._run_fit(module, plan, state, batches, hyperparameters=hyperparameters, datamodule=datamodule)
         finally:
             if datamodule is not None:
@@ -740,10 +749,10 @@ class Trainer:
                     return None
             # Prediction is not transfer learning: use the statistics the checkpointed model was trained with.
             restored_state = self._restore_state(
-                _with_module_statistics(state, module), ckpt_path, ckpt_step, weights_only=False
+                _with_module_inputs(state, module), ckpt_path, ckpt_step, weights_only=False
             )
             with jax.default_device(self.strategy.root_device):
-                module = module.bind_input_statistics(restored_state.input_statistics)
+                module = module.bind_inputs(restored_state.input_statistics, restored_state.input_periods)
             precision_context = (
                 nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
             )
@@ -968,22 +977,24 @@ def _callback_identifiers(callbacks: Sequence[Callback]) -> tuple[str, ...]:
     return tuple(identifiers)
 
 
-def _with_module_statistics(state: TrainState, module: BasePhiModule) -> TrainState:
-    """Fill a state without input statistics from the statistics the module's model was built with.
+def _with_module_inputs(state: TrainState, module: BasePhiModule) -> TrainState:
+    """Fill a state's missing input statistics and periods from what the module's model applies.
 
-    Restore templates built without statistics, such as downstream prediction scripts, then still describe the
-    module's normalization instead of "no normalization".
+    Restore templates built without them, such as downstream prediction scripts, then still describe the module's
+    inputs instead of "no normalization" and "no periods".
 
     Args:
         state: Fresh state or restore template.
         module: Bound module.
 
     Returns:
-        `state`, with input statistics taken from `module` when it had none.
+        `state`, with input statistics and periods taken from `module` where it had none.
     """
-    if state.input_statistics is not None or module.input_statistics is None:
-        return state
-    return replace(state, input_statistics=as_input_statistics(module.input_statistics))
+    if state.input_statistics is None and module.input_statistics is not None:
+        state = replace(state, input_statistics=as_input_statistics(module.input_statistics))
+    if state.input_periods is None and module.input_periods is not None:
+        state = replace(state, input_periods=module.input_periods)
+    return state
 
 
 __all__ = ["BatchSource", "FitResult", "TrainStep", "Trainer"]

@@ -7,7 +7,7 @@ import optax
 from flax import struct
 
 from phijax.training.precision import PrecisionName, PrecisionPolicy
-from phijax.types import InputStatistics
+from phijax.types import InputPeriods, InputStatistics, ResolvedInputPeriods, as_input_periods
 
 
 @struct.dataclass
@@ -26,6 +26,8 @@ class TrainState:
         finite_steps: Consecutive finite-gradient update count used to grow `loss_scale`.
         input_statistics: Model-input normalization statistics the model was built with, or `None`. Checkpoints store
             them with the weights. They are never differentiated or updated by the optimizer.
+        input_periods: Physical input periods the model applies, as sorted `(axis, period)` pairs, or `None`. This is
+            static metadata rather than array state; checkpoints store it in their manifest.
     """
 
     model_state: Any
@@ -38,6 +40,8 @@ class TrainState:
     loss_scale: jax.Array
     finite_steps: jax.Array
     input_statistics: InputStatistics | None = None
+    # Static Python metadata: hashable, adds no leaves, and stays constant during compiled training.
+    input_periods: ResolvedInputPeriods | None = struct.field(pytree_node=False, default=None)
 
 
 def as_input_statistics(statistics: Sequence[Any] | None) -> InputStatistics | None:
@@ -72,6 +76,7 @@ def initialize_train_state(
     sampling_key: jax.Array | None = None,
     balancer_key: jax.Array | None = None,
     input_statistics: Sequence[Any] | None = None,
+    input_periods: InputPeriods | None = None,
 ) -> TrainState:
     """Initialize the complete functional training state.
 
@@ -84,12 +89,13 @@ def initialize_train_state(
         sampling_key: Optional explicit DataModule sampling key.
         balancer_key: Optional explicit adaptive-balancer diagnostic key.
         input_statistics: Optional `(mean, std)` normalization statistics the model was built with.
+        input_periods: Optional physical period per input axis that the model applies.
 
     Returns:
         Training state with initialized optimizer slots and device step `0`.
 
     Raises:
-        ValueError: If only one explicit persistent key is supplied, or the statistics are malformed.
+        ValueError: If only one explicit persistent key is supplied, or the statistics or periods are malformed.
     """
     policy = PrecisionPolicy.from_name(precision)
     model_state = policy.cast_model_state(model_state)
@@ -114,4 +120,5 @@ def initialize_train_state(
         loss_scale=jax.numpy.asarray(policy.initial_loss_scale, dtype=jax.numpy.float32),
         finite_steps=jax.numpy.asarray(0, dtype=jax.numpy.int32),
         input_statistics=as_input_statistics(input_statistics),
+        input_periods=as_input_periods(input_periods),
     )

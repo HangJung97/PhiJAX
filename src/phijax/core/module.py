@@ -11,7 +11,16 @@ import numpy as np
 from phijax.core.hooks import PhiModuleContext, _ModuleHooks
 from phijax.metrics import _ACTIVE_MODULE_METRICS, TrainingOutput, _metric_is_scalar
 from phijax.objectives import Objective, ResidualObjective
-from phijax.types import ArrayMapping, InputStatistics, ModelApply, ModelSummaryFunction, NamedBatches
+from phijax.types import (
+    ArrayMapping,
+    InputPeriods,
+    InputStatistics,
+    ModelApply,
+    ModelSummaryFunction,
+    NamedBatches,
+    ResolvedInputPeriods,
+    as_input_periods,
+)
 
 if TYPE_CHECKING:
     from phijax.models.contracts import InitializedModel, ModelFactory
@@ -74,19 +83,32 @@ class BasePhiModule(_ModuleHooks, ABC):
         """
         return None
 
-    def bind_input_statistics(self, statistics: InputStatistics | None) -> Self:
-        """Return a module whose model applies `statistics`.
+    @property
+    def input_periods(self) -> ResolvedInputPeriods | None:
+        """Return the physical input periods applied by the bound model.
 
-        The Trainer calls this after restoring a checkpoint so the module uses the restored statistics. Custom modules
-        own their normalization, so the default returns this module unchanged.
-
-        Args:
-            statistics: Statistics to apply, or `None` for no normalization statistics.
+        Custom modules own their input handling, so the default reports none. The Trainer stores the reported periods
+        in :class:`phijax.training.TrainState`.
 
         Returns:
-            This module, or a rebound copy when the statistics differ.
+            Sorted `(axis, period)` pairs, or `None`.
         """
-        del statistics
+        return None
+
+    def bind_inputs(self, statistics: InputStatistics | None, periods: InputPeriods | None) -> Self:
+        """Return a module whose model applies `statistics` and `periods`.
+
+        The Trainer calls this after restoring a checkpoint so the module uses the restored inputs. Custom modules own
+        their input handling, so the default returns this module unchanged.
+
+        Args:
+            statistics: Normalization statistics to apply, or `None`.
+            periods: Physical input periods to apply, or `None`.
+
+        Returns:
+            This module, or a rebound copy when its model would apply different inputs.
+        """
+        del statistics, periods
         return self
 
     def __call__(self, model_state: Any, inputs: jax.Array) -> jax.Array:
@@ -294,10 +316,11 @@ class PhiModule(BasePhiModule):
         self._batch_keys = resolved_batch_keys
         self._model_apply: ModelApply | None = None
         self._model_summary: ModelSummaryFunction | None = None
-        # Build inputs recorded by `prepare_model` so `bind_input_statistics` can rebuild the apply closure.
+        # Build inputs recorded by `prepare_model` so `bind_inputs` can rebuild the apply closure.
         self._model_key: jax.Array | None = None
         self._precision: PrecisionPolicy | None = None
         self._input_statistics: InputStatistics | None = None
+        self._input_periods: ResolvedInputPeriods | None = None
 
     @property
     def loss_names(self) -> tuple[str, ...]:
@@ -324,6 +347,7 @@ class PhiModule(BasePhiModule):
         input_mean: jax.typing.ArrayLike | None,
         input_std: jax.typing.ArrayLike | None,
         precision: PrecisionPolicy,
+        input_periods: InputPeriods | None = None,
     ) -> tuple[Self, Any]:
         """Initialize and bind the model without mutating this blueprint.
 
@@ -332,6 +356,7 @@ class PhiModule(BasePhiModule):
             input_mean: Optional per-coordinate normalization mean supplied by the DataModule.
             input_std: Optional per-coordinate normalization standard deviation supplied by the DataModule.
             precision: Trainer precision policy.
+            input_periods: Optional physical period per input axis, from the DataModule or a restored checkpoint.
 
         Returns:
             Bound shallow module copy and its explicit initialized model state.
@@ -347,6 +372,7 @@ class PhiModule(BasePhiModule):
                 key=key,
                 input_mean=input_mean,
                 input_std=input_std,
+                input_periods=input_periods,
                 precision=precision,
             )
         if not isinstance(initialized, InitializedModel):
@@ -361,6 +387,8 @@ class PhiModule(BasePhiModule):
             bound._input_statistics = None
         else:
             bound._input_statistics = _host_statistics(input_mean, input_std)
+        # The model reports the periods it applies, after its own configuration overrides.
+        bound._input_periods = initialized.input_periods
         return bound, initialized.state
 
     @property
@@ -373,16 +401,28 @@ class PhiModule(BasePhiModule):
         """
         return self._input_statistics
 
-    def bind_input_statistics(self, statistics: InputStatistics | None) -> Self:
-        """Return a module whose model applies `statistics`.
-
-        The model factory runs again with the original key and precision; its new parameter state is discarded.
-
-        Args:
-            statistics: Statistics to apply, or `None` for no normalization statistics.
+    @property
+    def input_periods(self) -> ResolvedInputPeriods | None:
+        """Return the physical input periods the model applies.
 
         Returns:
-            This module when the statistics already match or the model is a prebuilt
+            Sorted `(axis, period)` pairs reported by the model factory, or `None` without periodic features.
+        """
+        return self._input_periods
+
+    def bind_inputs(self, statistics: InputStatistics | None, periods: InputPeriods | None) -> Self:
+        """Return a module whose model applies `statistics` and `periods`.
+
+        The model factory runs again with the original key and precision; its new parameter state is discarded. The
+        factory reapplies its own period overrides, so the rebuilt model can match this module even when `periods`
+        differ.
+
+        Args:
+            statistics: Normalization statistics to apply, or `None`.
+            periods: Physical input periods to apply, or `None`.
+
+        Returns:
+            This module when its model already applies the same inputs or is a prebuilt
             :class:`phijax.InitializedModel`, otherwise a rebound copy. This module is never mutated.
 
         Raises:
@@ -393,22 +433,24 @@ class PhiModule(BasePhiModule):
         if isinstance(self.model, InitializedModel):
             return self
         if self._model_apply is None or self._model_key is None or self._precision is None:
-            raise RuntimeError("`bind_input_statistics()` requires a module bound by `prepare_model()`.")
-        requested = None if statistics is None else _host_statistics(*statistics)
-        current = self._input_statistics
-        if current is None or requested is None:
-            unchanged = current is requested
-        else:
-            unchanged = all(np.array_equal(a, b) for a, b in zip(current, requested, strict=True))
-        if unchanged:
+            raise RuntimeError("`bind_inputs()` requires a module bound by `prepare_model()`.")
+        requested_statistics = None if statistics is None else _host_statistics(*statistics)
+        requested_periods = as_input_periods(periods)
+        if _same_statistics(self._input_statistics, requested_statistics) and requested_periods == self._input_periods:
             return self
-        input_mean, input_std = (None, None) if requested is None else requested
+        input_mean, input_std = (None, None) if requested_statistics is None else requested_statistics
         bound, _ = self.prepare_model(
             key=self._model_key,
             input_mean=input_mean,
             input_std=input_std,
             precision=self._precision,
+            input_periods=None if requested_periods is None else dict(requested_periods),
         )
+        if (
+            _same_statistics(bound._input_statistics, self._input_statistics)
+            and bound._input_periods == self._input_periods
+        ):
+            return self
         return bound
 
     def forward(self, model_state: Any, inputs: jax.Array) -> jax.Array:
@@ -531,6 +573,21 @@ class PhiModule(BasePhiModule):
         if self._model_apply is None:
             raise RuntimeError("This `PhiModule` is uninitialized. Pass it to `Trainer.fit()` before evaluation.")
         return self._model_apply
+
+
+def _same_statistics(first: InputStatistics | None, second: InputStatistics | None) -> bool:
+    """Return whether two host statistics are both absent or exactly equal.
+
+    Args:
+        first: First statistics, or `None`.
+        second: Second statistics, or `None`.
+
+    Returns:
+        Whether the statistics are interchangeable.
+    """
+    if first is None or second is None:
+        return first is second
+    return all(np.array_equal(a, b) for a, b in zip(first, second, strict=True))
 
 
 def _host_statistics(mean: jax.typing.ArrayLike, std: jax.typing.ArrayLike) -> InputStatistics:

@@ -14,7 +14,7 @@ import numpy as np
 import orbax.checkpoint as ocp
 
 from phijax.training.state import TrainState
-from phijax.types import InputStatistics
+from phijax.types import InputStatistics, as_input_periods
 
 _CHECKPOINT_SCHEMA_VERSION = 3
 # Schema 2 (PhiJAX 0.2.0b5 and earlier) predates `TrainState.input_statistics` and is still restorable.
@@ -109,6 +109,8 @@ def _checkpoint_metadata(
             "step": step,
             "state_identifier": _state_identifier(state),
             "input_statistics": layout,
+            # Periods are static metadata rather than array state, so the manifest stores their values.
+            "input_periods": None if state.input_periods is None else {str(axis): T for axis, T in state.input_periods},
             "callbacks": dict(callback_states or {}),
         }
     }
@@ -255,15 +257,15 @@ class OrbaxCheckpointIO:
     def restore(self, target: TrainState, step: int | None = None) -> TrainState:
         """Restore a complete state for exact training resumption.
 
-        The restored `input_statistics` come from the checkpoint, whatever the template holds. Checkpoints written
-        before PhiJAX stored input statistics (schema 2) keep the template's statistics and emit a warning.
+        The restored `input_statistics` and `input_periods` come from the checkpoint, whatever the template holds.
+        Checkpoints written before PhiJAX stored them (schema 2) keep the template's values and emit a warning.
 
         Args:
             target: Abstract or concrete state defining the expected structure and sharding.
             step: Checkpoint step, or `None` for the latest committed step.
 
         Returns:
-            Restored model, optimizer, balancer, PRNG, step, precision, and input-statistics state.
+            Restored model, optimizer, balancer, PRNG, step, precision, input-statistics, and input-period state.
 
         Raises:
             FileNotFoundError: If no requested checkpoint exists.
@@ -274,7 +276,7 @@ class OrbaxCheckpointIO:
         if manifest["schema_version"] == _LEGACY_SCHEMA_VERSION:
             warnings.warn(
                 f"Checkpoint step {resolved_step} was written before PhiJAX stored input statistics. The restored "
-                "state keeps the input statistics of the restore template.",
+                "state keeps the input statistics and periods of the restore template.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -282,12 +284,18 @@ class OrbaxCheckpointIO:
             legacy_target = {
                 field.name: getattr(target, field.name)
                 for field in fields(TrainState)
-                if field.name != "input_statistics"
+                if field.name not in {"input_statistics", "input_periods"}
             }
             restored = manager.restore(resolved_step, args=ocp.args.StandardRestore(legacy_target))
-            return TrainState(**restored, input_statistics=target.input_statistics)
+            return TrainState(
+                **restored,
+                input_statistics=target.input_statistics,
+                input_periods=target.input_periods,
+            )
         restore_target = _with_statistics_layout(target, manifest["input_statistics"])
-        return cast(TrainState, manager.restore(resolved_step, args=ocp.args.StandardRestore(restore_target)))
+        restored = cast(TrainState, manager.restore(resolved_step, args=ocp.args.StandardRestore(restore_target)))
+        # Orbax copies static fields from the target, so take the stored periods from the manifest.
+        return replace(restored, input_periods=as_input_periods(manifest["input_periods"]))
 
     def _read_manifest(self, step: int) -> dict[str, Any]:
         """Read and validate the checkpoint schema, producer line, step, and statistics layout.
@@ -330,6 +338,17 @@ class OrbaxCheckpointIO:
             )
             if not valid_layout:
                 raise ValueError("Checkpoint input-statistics layout is missing or malformed.")
+            periods = metadata.get("input_periods", ...)
+            try:
+                valid_periods = periods is None or (
+                    isinstance(periods, dict)
+                    and all(isinstance(axis, str) and axis.isdigit() for axis in periods)
+                    and as_input_periods(periods) is not None
+                )
+            except (TypeError, ValueError):
+                valid_periods = False
+            if not valid_periods:
+                raise ValueError("Checkpoint input-periods metadata is missing or malformed.")
         return metadata
 
     def _validate_metadata(self, target: TrainState, step: int) -> dict[str, Any]:

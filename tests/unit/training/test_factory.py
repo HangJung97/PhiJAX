@@ -24,7 +24,7 @@ from phijax.integrations.hydra import (
 from phijax.integrations.hydra import factory as factory_module
 from phijax.models import InitializedModel
 from phijax.training import ConsoleLogger, Trainer, TrainingPlan, build_training_plan
-from phijax.types import NamedBatches
+from phijax.types import InputPeriods, NamedBatches
 
 
 class _TestObjective:
@@ -170,6 +170,7 @@ def _custom_model_factory(
     precision: str,
     input_mean: np.ndarray,
     input_std: np.ndarray,
+    input_periods: InputPeriods | None,
 ) -> InitializedModel:
     """Build a non-NNX model through the generic factory contract.
 
@@ -178,11 +179,12 @@ def _custom_model_factory(
         precision: Configured model precision name.
         input_mean: Host input-coordinate mean.
         input_std: Host input-coordinate standard deviation.
+        input_periods: Unused input periods.
 
     Returns:
         Initialized affine test model.
     """
-    del key, precision
+    del key, precision, input_periods
     mean = jax.numpy.asarray(input_mean)
     std = jax.numpy.asarray(input_std)
 
@@ -218,6 +220,7 @@ def test_instantiate_model_factory_remains_lazy_until_runtime_values_are_availab
         precision="32-true",
         input_mean=np.asarray([1.0], dtype=np.float32),
         input_std=np.asarray([2.0], dtype=np.float32),
+        input_periods=None,
     )
 
     assert isinstance(initialized, InitializedModel)

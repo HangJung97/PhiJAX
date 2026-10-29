@@ -7,6 +7,7 @@ from flax import nnx
 
 from phijax.models.contracts import InitializedModel
 from phijax.models.summary import tabulate_nnx_model
+from phijax.types import ResolvedInputPeriods
 
 
 def initialize_nnx_model(
@@ -14,6 +15,7 @@ def initialize_nnx_model(
     *,
     example_inputs: jax.Array | None = None,
     call_kwargs: Mapping[str, Any] | None = None,
+    input_periods: ResolvedInputPeriods | None = None,
 ) -> InitializedModel:
     """Adapt an initialized Flax NNX module to PhiJAX's explicit-state model contract.
 
@@ -25,6 +27,7 @@ def initialize_nnx_model(
         model: Initialized NNX module to split into a graph definition and array state.
         example_inputs: Optional representative inputs used to provide a model-summary callable.
         call_kwargs: Optional keyword arguments bound to every model call, such as normalization statistics.
+        input_periods: Physical periods the model applies, reported to the Trainer.
 
     Returns:
         Pure model application, explicit NNX state, and an optional model-summary callable.
@@ -50,7 +53,7 @@ def initialize_nnx_model(
     summary = None
     if example_inputs is not None:
         summary = partial(tabulate_nnx_model, graphdef, example_inputs=example_inputs)
-    return InitializedModel(apply_model, model_state, summary)
+    return InitializedModel(apply_model, model_state, summary, input_periods)
 
 
 __all__ = ["initialize_nnx_model"]

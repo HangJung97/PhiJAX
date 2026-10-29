@@ -115,7 +115,9 @@ managing state outside the Trainer.
 [`TrainState`](training.md#phijax.training.TrainState) stores the statistics returned by
 [`PhiDataModule.input_statistics()`](data.md#phijax.data.PhiDataModule.input_statistics) as
 [`InputStatistics`](#phijax.types.InputStatistics), so checkpoints keep the normalization the model was trained with.
-The statistics are never differentiated or updated by the optimizer.
+The statistics are never differentiated or updated by the optimizer. `TrainState.input_periods` records the
+physical periods the model applies with the same rules, except that periods configured in
+`periodic_features_kwargs` always win; see [periodic features](models/layers.md#periodic-features).
 
 | Task                                   | Statistics used                                          |
 | -------------------------------------- | -------------------------------------------------------- |
