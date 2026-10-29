@@ -71,6 +71,19 @@ def test_grad_norm_all_zero_diagnostics_preserve_previous_weights() -> None:
     np.testing.assert_allclose(state.traces, [0.0, 0.0])
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_grad_norm_non_finite_diagnostics_preserve_previous_weights(value: float) -> None:
+    """Verify one NaN or infinite gradient norm leaves every weight unchanged and stays visible as a diagnostic.
+
+    Args:
+        value: Non-finite gradient norm of the second loss.
+    """
+    balancer = GradNormBalancer(("a", "b"), update_every_n_steps=1, initial_weights={"a": 2.0, "b": 3.0})
+    state = balancer.update_from_grad_norms(jnp.asarray([1.0, value]), balancer.initialize())
+    np.testing.assert_array_equal(state.weights, [2.0, 3.0])
+    np.testing.assert_array_equal(state.traces, [1.0, value])
+
+
 def test_grad_norm_update_plan_reuses_current_training_batches() -> None:
     """Verify generic adaptive assembly receives a current-batch gradient-norm plan."""
     balancer = GradNormBalancer(("a", "b"), update_every_n_steps=10, update_start_step=5)

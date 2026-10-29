@@ -160,14 +160,16 @@ class GradNormBalancer:
             state: Previous weights and gradient-norm diagnostics.
 
         Returns:
-            New stopped-gradient state. An all-zero norm vector leaves every weight unchanged.
+            New stopped-gradient state. An all-zero norm vector, or any NaN or infinite norm, leaves every weight
+            unchanged.
         """
         nonnegative = jnp.maximum(grad_norms.astype(jnp.float32), 0.0)
         mean_grad_norm = jnp.mean(nonnegative)
         denominator = nonnegative + self.eps * mean_grad_norm
         raw_weights = mean_grad_norm / jnp.maximum(denominator, jnp.finfo(jnp.float32).tiny)
         updated = self.momentum * state.weights + (1.0 - self.momentum) * raw_weights
-        weights = jnp.where(mean_grad_norm > 0.0, updated, state.weights)
+        # A NaN or infinite norm would corrupt every weight through the mean, so skip the whole update.
+        weights = jnp.where((mean_grad_norm > 0.0) & jnp.all(jnp.isfinite(nonnegative)), updated, state.weights)
         return BalancerState(weights=jax.lax.stop_gradient(weights), traces=jax.lax.stop_gradient(nonnegative))
 
     def update(

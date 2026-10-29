@@ -98,6 +98,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A failing `on_exception`, logger finalization, or teardown hook no longer replaces the original training or
   prediction error, and no longer skips the remaining cleanup. The failure is logged and attached to the original
   error as a note.
+- `ExactNTKBalancer` and `GradNormBalancer` keep their previous weights when an update sees an infinite NTK trace or
+  gradient norm. Previously one infinite value turned the weights into `inf` or `nan` for the rest of training.
 
 ## [0.2.0b5] - 2026-09-11
 
