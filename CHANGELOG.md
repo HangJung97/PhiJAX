@@ -64,6 +64,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   statistics, instead of restoring model weights only.
 - The Trainer runs `ModelCheckpoint` after all other callbacks, as in Lightning, so each checkpoint stores the state
   every other callback reached at that step.
+- The first `Ctrl+C` or `SIGTERM` during fitting now lets the current step finish before interrupting, so the
+  returned state and the `save_on_exception` checkpoint always match a completed step. A repeated signal still stops
+  immediately.
 
 ### Fixed
 

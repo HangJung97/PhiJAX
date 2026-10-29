@@ -139,6 +139,8 @@ class _FitLoop:
             if remaining_steps == 0 and trainer.strategy.is_global_zero:
                 log.info(f"`Trainer.fit` stopped: `max_steps={trainer.max_steps}` reached at step {initial_step}.")
             for iteration in range(remaining_steps):
+                # Signals only request a stop; raising here keeps the interrupted state at a completed step.
+                signal_connector.raise_if_requested()
                 if trainer.should_stop:
                     # A fit-start hook requested stopping before the first update.
                     stopped_early = True
@@ -253,6 +255,7 @@ class _FitLoop:
                 if stopped_early:
                     break
 
+            signal_connector.raise_if_requested()
             completed_step = initial_step + iterations
             state_step = _state_step(state)
             if state_step != completed_step:
