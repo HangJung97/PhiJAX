@@ -70,7 +70,8 @@ class _FitLoop:
             train_step: Compiled function mapping state and one batch to updated state and metrics.
             state: Initial functional training state and restore template.
             batches: Step-indexed callable or finite batch iterable.
-            initial_step: Restored optimizer step copied to the host before source construction.
+            initial_step: Restored optimizer step copied to the host before source construction. Training runs until
+                the global step reaches `trainer.max_steps`.
             balancer_update: Optional adaptive update and host-side schedule.
             hyperparameters: Optional resolved configuration recorded before the first update.
 
@@ -130,7 +131,11 @@ class _FitLoop:
                 has_logger=metrics_connector.has_logger,
             )
 
-            for iteration in range(trainer.max_steps):
+            # `max_steps` is a global target, so a resumed fit only runs the remaining updates.
+            remaining_steps = max(trainer.max_steps - initial_step, 0)
+            if remaining_steps == 0 and trainer.strategy.is_global_zero:
+                log.info(f"`Trainer.fit` stopped: `max_steps={trainer.max_steps}` reached at step {initial_step}.")
+            for iteration in range(remaining_steps):
                 try:
                     global_step = initial_step + iteration
                     batch = batches(global_step) if callable(batches) else next(batch_iterator)  # type: ignore[arg-type]
@@ -176,7 +181,7 @@ class _FitLoop:
                 step = global_step + 1
                 module_context = PhiModuleContext(step=step, metrics=dict(device_metrics))
                 iterations += 1
-                should_log = iterations == 1 or iterations % trainer.log_every_n_steps == 0
+                should_log = iterations == 1 or step % trainer.log_every_n_steps == 0
                 context = TrainerContext(
                     state=state,
                     step=step,
@@ -224,7 +229,7 @@ class _FitLoop:
                 for callback in trainer.callbacks:
                     callback.on_train_metrics(context)
 
-                if stopped_early or iteration == trainer.max_steps - 1:
+                if stopped_early or step == trainer.max_steps:
                     jax.block_until_ready(device_metrics)
                     final_metrics = _scalar_metric_values(device_metrics)
                     metrics_iteration = iterations

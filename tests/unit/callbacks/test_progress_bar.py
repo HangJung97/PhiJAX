@@ -31,6 +31,28 @@ def test_tqdm_progress_bar_displays_only_selected_metrics() -> None:
     assert "metric/missing" not in rendered
 
 
+def test_tqdm_progress_bar_resumes_from_restored_global_step() -> None:
+    """Verify a resumed fit starts the bar at the restored step and refreshes metrics on its first update."""
+    stream = io.StringIO()
+    callback = TQDMProgressBar(total=8, refresh_rate=4, metric_names=("train/loss",), stream=stream)
+    callback.setup()
+    callback.on_fit_start(TrainerContext(state=None, step=5, metrics={}))
+    assert callback._bar is not None
+    bar = callback._bar
+    assert bar.n == 5
+
+    callback.on_train_metrics(TrainerContext(state=None, step=6, metrics={"train/loss": jnp.asarray(3.0)}))
+    assert "train/loss=3.000e+00" in " ".join(stream.getvalue().split())
+    for step in (7, 8):
+        callback.on_train_metrics(TrainerContext(state=None, step=step, metrics={"train/loss": jnp.asarray(1.0)}))
+    assert bar.n == 8
+    callback.on_fit_end(TrainerContext(state=None, step=8, metrics={"train/loss": jnp.asarray(1.0)}))
+
+    rendered = " ".join(stream.getvalue().split())
+    assert "8/8" in rendered
+    assert "9/8" not in rendered
+
+
 def test_progress_bar_can_be_disabled_and_enabled() -> None:
     """Verify the public display switch suppresses and restores rendering."""
     stream = io.StringIO()

@@ -32,7 +32,7 @@ class ProgressBar(Callback):
         """Initialize common progress display policy.
 
         Args:
-            total: Positive maximum optimizer updates in one fit call.
+            total: Positive global step at which fitting stops, usually `Trainer.max_steps`.
             refresh_rate: Positive number of batches between metric refreshes.
             metric_names: Optional ordered exact metric names overriding module-selected display metrics.
             description: Non-empty fit progress label.
@@ -171,6 +171,7 @@ class TQDMProgressBar(ProgressBar):
         self._stream: TextIO | None = None
         self._bar: Any | None = None
         self._completed = 0
+        self._start_step = 0
 
     def setup(self) -> None:
         """Reset task-local TQDM state and resolve rank-owned output."""
@@ -178,17 +179,20 @@ class TQDMProgressBar(ProgressBar):
         self._stream = self._configured_stream or sys.stderr if owns_output else None
         self._bar = None
         self._completed = 0
+        self._start_step = 0
 
     def on_fit_start(self, context: TrainerContext) -> None:
-        """Create the fit progress display.
+        """Create the fit progress display, starting from the restored global step.
 
         Args:
-            context: Initial Trainer context.
+            context: Initial Trainer context. Its global step may be nonzero after resume.
         """
         if self.is_disabled or self._stream is None or (self.rank_zero_only and not context.is_global_zero):
             return
+        self._completed = self._start_step = context.step
         self._bar = tqdm(
             total=self.total,
+            initial=context.step,
             desc=self.description,
             file=self._stream,
             leave=True,
@@ -206,7 +210,8 @@ class TQDMProgressBar(ProgressBar):
             return
         self._completed += 1
         self._bar.update(1)
-        if self._completed == 1 or self._completed % self.refresh_rate == 0 or self._completed == self.total:
+        first_update = self._completed == self._start_step + 1
+        if first_update or self._completed % self.refresh_rate == 0 or self._completed == self.total:
             self._bar.set_postfix(self._formatted_metrics(context), refresh=True)
 
     def on_fit_end(self, context: TrainerContext) -> None:

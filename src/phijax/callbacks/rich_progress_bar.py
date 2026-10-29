@@ -175,7 +175,7 @@ class RichProgressBar(ProgressBar):
         """Initialize the Rich training progress display.
 
         Args:
-            total: Number of batches expected in one fit call.
+            total: Positive global step at which fitting stops, usually `Trainer.max_steps`.
             refresh_rate: Positive interval between device-to-host metric transfers.
             metric_names: Optional ordered exact names to display. `None` uses module-selected progress metrics.
             description: Non-empty label displayed before the progress bar.
@@ -204,11 +204,13 @@ class RichProgressBar(ProgressBar):
         self._progress: Progress | None = None
         self._task_id: TaskID | None = None
         self._completed = 0
+        self._start_step = 0
         self._last_metrics = ""
 
     def setup(self) -> None:
         """Create fit-local Rich resources on the process responsible for display."""
         self._completed = 0
+        self._start_step = 0
         self._last_metrics = ""
         self._task_id = None
         if self.is_disabled or (self.rank_zero_only and jax.process_index() != 0):
@@ -235,11 +237,13 @@ class RichProgressBar(ProgressBar):
         Args:
             context: Initial trainer context. Its global step may be nonzero after resume.
         """
-        del context
         if self._progress is None:
             return
+        self._completed = self._start_step = context.step
         self._progress.start()
-        self._task_id = self._progress.add_task(self._step_description(0), total=self.total, metrics="")
+        self._task_id = self._progress.add_task(
+            self._step_description(context.step), total=self.total, completed=context.step, metrics=""
+        )
 
     def on_train_metrics(self, context: TrainerContext) -> None:
         """Advance the bar and periodically refresh its selected metrics.
@@ -250,7 +254,7 @@ class RichProgressBar(ProgressBar):
         if self._progress is None or self._task_id is None:
             return
         self._completed += 1
-        should_refresh_metrics = self._completed == 1 or self._completed % self.refresh_rate == 0
+        should_refresh_metrics = self._completed == self._start_step + 1 or self._completed % self.refresh_rate == 0
         if should_refresh_metrics:
             self._last_metrics = self._render_metrics(context)
         self._progress.update(
@@ -349,7 +353,7 @@ class RichProgressBar(ProgressBar):
         """Build the step-based progress description.
 
         Args:
-            completed: Number of batches completed by this fit call.
+            completed: Current global step.
 
         Returns:
             Description containing current and total fit steps.

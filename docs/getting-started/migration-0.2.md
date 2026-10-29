@@ -137,6 +137,18 @@ model_checkpoint:
     directory: ${paths.output_dir}/checkpoints
 ```
 
+### Global `max_steps`
+
+From PhiJAX 0.2.0b6, `Trainer(max_steps=...)` is the global optimizer step at which training stops, as in Lightning.
+Previously, every fit call ran `max_steps` more updates, so a resumed run trained past the configured total.
+
+| PhiJAX 0.2.0b5 and earlier                            | PhiJAX 0.2.0b6 and later                                    |
+| ----------------------------------------------------- | ----------------------------------------------------------- |
+| Resume from step `N` with `max_steps=extra`           | Resume from step `N` with `max_steps=N + extra`             |
+| Logging every `log_every_n_steps` updates of the call | Logging at global steps divisible by `log_every_n_steps`    |
+| Progress bars restart at `0` after a resume           | Progress bars start at the restored step                    |
+| Resuming a finished run trains `max_steps` more steps | Resuming a finished run runs the fit hooks without training |
+
 ## Adaptive balancing
 
 Adaptive balancers now own their update cadence and diagnostic settings:

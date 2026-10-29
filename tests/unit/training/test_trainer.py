@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 import signal
 import warnings
 from collections.abc import Mapping
@@ -885,7 +886,7 @@ def test_trainer_schedules_adaptive_balancer_updates_from_host_steps(
     )
     state = dataclasses.replace(_state(), step=jnp.asarray(initial_step, jnp.int32))
     trainer = Trainer(
-        max_steps=3,
+        max_steps=initial_step + 3,
         logger=False,
         enable_progress_bar=False,
         enable_model_summary=False,
@@ -902,6 +903,65 @@ def test_trainer_schedules_adaptive_balancer_updates_from_host_steps(
     assert update_steps == expected_updates
     assert int(result.state.step) == initial_step + 3
     np.testing.assert_array_equal(result.state.balancer_state.weights, [1.0 + len(expected_updates)])
+
+
+@pytest.mark.parametrize(
+    ("initial_step", "expected_steps", "expected_logged"),
+    [(0, [0, 1, 2, 3, 4, 5, 6, 7], [1, 2, 4, 6, 8]), (5, [5, 6, 7], [6, 8]), (8, [], []), (10, [], [])],
+    ids=["fresh", "resumed", "at-max-steps", "past-max-steps"],
+)
+def test_fit_trains_until_global_max_steps(
+    initial_step: int,
+    expected_steps: list[int],
+    expected_logged: list[int],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Verify `max_steps` is a global target and logging follows the global step after resume.
+
+    Args:
+        initial_step: Restored optimizer step before fitting.
+        expected_steps: Global steps whose batches must be requested.
+        expected_logged: Global steps at which metrics must be logged.
+        caplog: Pytest log capture fixture.
+    """
+    requested_steps: list[int] = []
+
+    def batches(step: int) -> dict[str, jax.Array]:
+        """Record the requested global step.
+
+        Args:
+            step: Requested global optimizer step.
+
+        Returns:
+            Synthetic scalar batch.
+        """
+        requested_steps.append(step)
+        return {"increment": jnp.asarray(1.0)}
+
+    callback = _RecordingCallback()
+    experiment_logger = _RecordingLogger()
+    trainer = Trainer(
+        max_steps=8,
+        callbacks=(callback,),
+        loggers=(experiment_logger,),
+        log_every_n_steps=2,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+    )
+    state = dataclasses.replace(_state(), step=jnp.asarray(initial_step, jnp.int32))
+
+    with caplog.at_level(logging.INFO, logger="phijax.training.loops.fit_loop"):
+        result = trainer.fit_state(_RecordingModule(), _train_step, state, batches)
+
+    final_step = max(initial_step, 8)
+    assert requested_steps == expected_steps
+    assert experiment_logger.steps == expected_logged
+    assert result.iterations == len(expected_steps)
+    assert int(result.state.step) == final_step
+    assert callback.events[1] == f"fit_start:{initial_step}"
+    assert f"fit_end:{final_step}" in callback.events
+    assert ("`max_steps=8` reached" in caplog.text) == (initial_step >= 8)
 
 
 def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -> None:
@@ -971,7 +1031,7 @@ def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state() -
         batch_sizes={"train": 2},
     )
     trainer = Trainer(
-        max_steps=2,
+        max_steps=5,
         logger=False,
         enable_progress_bar=False,
         enable_model_summary=False,
@@ -1869,7 +1929,7 @@ def test_trainer_restores_sampling_state_before_building_data_module_source(
     source = _PreparableSource()
     data_module = MagicMock(spec=PhiDataModule)
     data_module.train_batch_source.return_value = source
-    trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
+    trainer = Trainer(max_steps=6, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
     monkeypatch.setattr(trainer, "_restore_state", lambda *args, **kwargs: restored_state)
 
     result = trainer.fit_state(
@@ -2210,7 +2270,7 @@ def test_trainer_routes_restore_and_close_through_model_checkpoint() -> None:
     checkpoint_io = _MemoryCheckpointIO(restored_state)
     checkpoint = ModelCheckpoint(checkpoint_io, save_last=False)
     trainer = Trainer(
-        max_steps=1,
+        max_steps=5,
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
         callbacks=(checkpoint,),
     )
@@ -2267,7 +2327,7 @@ def test_trainer_automatically_closes_and_reopens_checkpoint_resources() -> None
     """Verify repeated fit stages require no explicit Trainer cleanup."""
     checkpoint_io = _MemoryCheckpointIO(_state())
     trainer = Trainer(
-        max_steps=1,
+        max_steps=2,
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
         callbacks=(ModelCheckpoint(checkpoint_io, save_last=False),),
     )
@@ -2369,7 +2429,7 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         return restored if weights_only else dataclasses.replace(restored, step=jnp.asarray(4, jnp.int32))
 
     monkeypatch.setattr(trainer_module, "restore_checkpoint", restore)
-    trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
+    trainer = Trainer(max_steps=5, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
 
     def restore_state(
         target: TrainState,

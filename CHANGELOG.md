@@ -34,6 +34,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     - To keep the latest `k` checkpoints, replace `max_to_keep=k` with
       `ModelCheckpoint(..., monitor="step", mode="max", save_top_k=k)`. See the
       [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#checkpoint-retention).
+- `Trainer(max_steps=...)` is now the global optimizer step at which training stops, as in Lightning. A fit resumed
+  from step `N` runs `max_steps - N` updates instead of `max_steps` more, and logs and progress bars follow the global
+  step. Resume with `max_steps = N + extra` to train `extra` more steps. See the
+  [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#global-max_steps).
 - Periodic features use physical periods of the physical coordinate, so input normalization no longer affects periodic
   axes. `PeriodicFeatures` takes `periods={axis: T}` instead of `axes` and `frequencies`, model factories receive
   `input_periods`, and `bind_input_statistics()` is now `bind_inputs()`. See the
