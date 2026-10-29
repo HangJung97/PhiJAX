@@ -75,7 +75,8 @@ class Trainer:
         """Initialize host-side training orchestration.
 
         Args:
-            max_steps: Maximum number of batches processed by one fit call.
+            max_steps: Global optimizer step at which training stops. A fit resumed from a checkpoint runs only the
+                remaining `max_steps - step` updates.
             accelerator: Device backend selected when `strategy` is absent. Choose `auto`, `cpu`, `gpu`, or `tpu`.
             devices: Positive device count, explicit device indices, or `auto` for all matching visible devices.
             precision: Precision name or resolved policy. Supported names are `64-true`, `32-true`, `16-true`,

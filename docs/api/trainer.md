@@ -58,8 +58,10 @@ filesystem operations remain outside it.
 | `callbacks`         | Ordered iterable of callback instances                | `()`     |
 | `compilation_cache` | Mapping with `enabled` and, when enabled, `directory` | `None`   |
 
-`max_steps` counts optimizer updates within one fit call. A custom step passed through `fit_state()` must increment
-`TrainState.step` exactly once per completed update.
+`max_steps` is the global optimizer step at which training stops, as in Lightning. A fit resumed from step `N` runs
+`max_steps - N` updates. When the restored step already reaches `max_steps`, the fit runs its start and end hooks
+without training. A custom step passed through `fit_state()` must increment `TrainState.step` exactly once per
+completed update.
 
 ### Deterministic GPU execution
 

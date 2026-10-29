@@ -94,12 +94,13 @@ def _module() -> PhiModule:
     return PhiModule(model, CompositeObjective.from_equations({"data": base_data_fidelity}))
 
 
-def _trainer(root: Path, checkpoints: Path | None = None) -> Trainer:
+def _trainer(root: Path, checkpoints: Path | None = None, *, max_steps: int = 2) -> Trainer:
     """Create a quiet CPU trainer, optionally saving a terminal checkpoint.
 
     Args:
         root: Default root directory for trainer outputs.
         checkpoints: Optional checkpoint root.
+        max_steps: Global step at which training stops. Resumed fits use a larger value so they keep training.
 
     Returns:
         Configured trainer.
@@ -108,7 +109,7 @@ def _trainer(root: Path, checkpoints: Path | None = None) -> Trainer:
     if checkpoints is not None:
         callbacks = (ModelCheckpoint(OrbaxCheckpointIO(checkpoints, enable_async_checkpointing=False)),)
     return Trainer(
-        max_steps=2,
+        max_steps=max_steps,
         accelerator="cpu",
         logger=False,
         enable_progress_bar=False,
@@ -194,7 +195,7 @@ def test_fit_stores_statistics_and_resume_keeps_them(
     monkeypatch.setattr(trainer_module, "build_training_plan", recording_build)
     # The resuming trainer has no checkpoint callback, so the stored callback state is skipped with a warning.
     with pytest.warns(UserWarning, match="callbacks this Trainer does not have"):
-        resumed = _trainer(tmp_path).fit(
+        resumed = _trainer(tmp_path, max_steps=4).fit(
             _module(),
             datamodule=_ShiftedDataModule(5.0),
             optimizer=optax.adam(1e-2),
@@ -206,6 +207,7 @@ def test_fit_stores_statistics_and_resume_keeps_them(
     _assert_statistics(source_result.module.input_statistics, source_statistics)
     _assert_statistics(resumed.state.input_statistics, source_statistics)
     _assert_statistics(resumed.module.input_statistics, source_statistics)
+    assert int(resumed.state.step) == 4
     _assert_statistics(planned_statistics[0], source_statistics)
     assert not np.allclose(target_statistics["mean"], source_statistics["mean"])
 
@@ -378,7 +380,7 @@ def test_resume_and_prediction_use_checkpoint_periods(tmp_path: Path) -> None:
     in_memory = trainer.predict(source, datamodule=_PeriodicDataModule(0.0, 0.6))
 
     with pytest.warns(UserWarning, match="callbacks this Trainer does not have"):
-        resumed = _trainer(tmp_path).fit(
+        resumed = _trainer(tmp_path, max_steps=4).fit(
             _periodic_module(),
             datamodule=_PeriodicDataModule(0.0, 0.9),
             optimizer=optax.adam(1e-2),
@@ -403,6 +405,7 @@ def test_resume_and_prediction_use_checkpoint_periods(tmp_path: Path) -> None:
     assert source.module.input_periods == ((0, 0.6),)
     assert resumed.state.input_periods == ((0, 0.6),)
     assert resumed.module.input_periods == ((0, 0.6),)
+    assert int(resumed.state.step) == 4
     assert from_checkpoint is not None
     assert in_memory is not None
     np.testing.assert_allclose(from_checkpoint, in_memory, rtol=1e-6)
@@ -418,7 +421,7 @@ def test_transfer_uses_target_periods_and_configured_periods_win(tmp_path: Path)
     _trainer(tmp_path, checkpoints).fit(
         _periodic_module(), datamodule=_PeriodicDataModule(0.0, 0.6), optimizer=optax.adam(1e-2), seed=0
     )
-    fit = partial(_trainer(tmp_path).fit, optimizer=optax.adam(1e-2), seed=1, ckpt_path=checkpoints)
+    fit = partial(_trainer(tmp_path, max_steps=4).fit, optimizer=optax.adam(1e-2), seed=1, ckpt_path=checkpoints)
 
     transferred = fit(_periodic_module(), datamodule=_PeriodicDataModule(5.0, 0.9), weights_only=True)
     with pytest.warns(UserWarning, match="callbacks this Trainer does not have"):
@@ -428,3 +431,4 @@ def test_transfer_uses_target_periods_and_configured_periods_win(tmp_path: Path)
     assert transferred.module.input_periods == ((0, 0.9),)
     assert overridden.state.input_periods == ((0, 0.4),)
     assert overridden.module.input_periods == ((0, 0.4),)
+    assert int(overridden.state.step) == 4

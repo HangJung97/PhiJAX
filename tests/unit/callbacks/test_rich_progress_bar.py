@@ -173,3 +173,26 @@ def test_rich_progress_bar_rejects_non_scalar_selected_metrics() -> None:
     with pytest.raises(ValueError, match="must be scalar"):
         callback.on_train_metrics(TrainerContext(state=None, step=1, metrics={"train/loss": jnp.asarray([1.0, 2.0])}))
     callback.teardown()
+
+
+def test_rich_progress_bar_resumes_from_restored_global_step() -> None:
+    """Verify a resumed fit starts the bar at the restored step and refreshes metrics on its first update."""
+    stream = io.StringIO()
+    callback = RichProgressBar(total=8, refresh_rate=4, metric_names=("train/loss",), console=_console(stream))
+    callback.setup()
+    callback.on_fit_start(TrainerContext(state=None, step=5, metrics={}))
+    assert callback._progress is not None
+    task = callback._progress.tasks[0]
+    assert task.completed == 5
+
+    callback.on_train_metrics(TrainerContext(state=None, step=6, metrics={"train/loss": jnp.asarray(3.0)}))
+    assert "train/loss: 3.000e+00" in callback._last_metrics
+    callback.on_train_metrics(TrainerContext(state=None, step=7, metrics={"train/loss": jnp.asarray(2.0)}))
+    final = TrainerContext(state=None, step=8, metrics={"train/loss": jnp.asarray(1.0)})
+    callback.on_train_metrics(final)
+    assert task.completed == 8
+    callback.on_fit_end(final)
+    callback.teardown()
+
+    rendered = " ".join(stream.getvalue().split())
+    assert "Training 8/8" in rendered

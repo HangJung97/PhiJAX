@@ -80,6 +80,10 @@ result = trainer.fit(
 Use `weights_only=True` when the model parameters should be restored into fresh optimizer, balancer, PRNG, and step
 state. Complete restoration resumes the deterministic sampling sequence.
 
+`max_steps` is the global step at which training stops, not a per-call budget. To continue a run that stopped at step
+`10_000` for `5_000` more updates, resume with `max_steps=15_000`. Learning-rate schedules indexed by the optimizer step,
+such as one sized with `max_steps`, then continue where they stopped. A `weights_only=True` fit starts at step `0`.
+
 Checkpoints also store the model's input normalization statistics. A complete restoration and prediction from a
 checkpoint use the stored statistics, even if the DataModule's data changed. Transfer learning with
 `weights_only=True` uses the current DataModule's statistics. To keep the source statistics instead, return
