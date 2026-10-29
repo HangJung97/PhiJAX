@@ -92,6 +92,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   vector-valued targets (`v_0`, `v_1`, ...) and for pools without targets.
 - A resumed fit now draws the same exact-NTK diagnostic batches as an uninterrupted run. Previously the batches
   depended on the step the fit resumed from.
+- A failing `on_exception`, logger finalization, or teardown hook no longer replaces the original training or
+  prediction error, and no longer skips the remaining cleanup. The failure is logged and attached to the original
+  error as a note.
 
 ## [0.2.0b5] - 2026-09-11
 
