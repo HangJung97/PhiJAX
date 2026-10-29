@@ -10,10 +10,11 @@ from jax.typing import ArrayLike
 from phijax.models.activations import Activation, ActivationName, resolve_activation
 from phijax.models.contracts import InitializedModel
 from phijax.models.initialization import InitializationName, Initializer, resolve_initializer
-from phijax.models.layers import PeriodicFeatures, RandomFourierFeatures, create_dense
+from phijax.models.layers import PeriodicFeatures, RandomFourierFeatures, _resolve_periodic_kwargs, create_dense
 from phijax.models.nnx_adapter import initialize_nnx_model
 from phijax.models.regularization import apply_dropout
 from phijax.training.precision import PrecisionName, PrecisionPolicy
+from phijax.types import InputPeriods
 
 
 class MLP(nnx.Module):
@@ -73,7 +74,8 @@ class MLP(nnx.Module):
             weight_factorization: Whether to use random weight-factorized dense layers.
             weight_factorization_kwargs: Options for :class:`FactorizedDense`, including `mean`, `std`, and `use_bias`.
             periodic_features: Whether to replace selected coordinates with fixed cosine and sine features.
-            periodic_features_kwargs: Options for :class:`PeriodicFeatures`, including `axes` and `frequencies`.
+            periodic_features_kwargs: Options for :class:`PeriodicFeatures`. `periods` maps each periodic input axis
+                to its physical period.
             fourier_features: Whether to embed inputs with random Fourier features.
             fourier_features_kwargs: Options for :class:`RandomFourierFeatures`, including `embed_dim` and `scale`.
             input_norm: Whether to apply explicit per-input mean and standard deviation arrays.
@@ -225,7 +227,8 @@ class MLP(nnx.Module):
                 raise ValueError("Input statistics must match `input_dim`.")
             values = (values - mean) / jnp.maximum(std, self.input_norm_eps)
         if self.periodic_embedding is not None:
-            values = self.periodic_embedding(values)
+            # Periodic phases use the physical inputs, which keep their precision under a low-precision compute dtype.
+            values = self.periodic_embedding(inputs, values).astype(self.compute_dtype)
         if self.embedding is not None:
             values = self.embedding(values)
 
@@ -261,6 +264,7 @@ def build_mlp(
     output_dim: int,
     input_mean: ArrayLike | None = None,
     input_std: ArrayLike | None = None,
+    input_periods: InputPeriods | None = None,
     *,
     precision: PrecisionName | PrecisionPolicy | None = None,
     **model_kwargs: Any,
@@ -273,6 +277,8 @@ def build_mlp(
         output_dim: Width of the predicted output vector.
         input_mean: Optional array-like per-coordinate input normalization mean.
         input_std: Optional array-like per-coordinate input normalization standard deviation.
+        input_periods: Optional physical period per input axis, from the DataModule or a restored checkpoint. With
+            `periodic_features=True`, `periodic_features_kwargs['periods']` overrides or adds axes.
         precision: Optional model precision policy.
         **model_kwargs: Architecture options forwarded to :class:`MLP`.
 
@@ -280,7 +286,12 @@ def build_mlp(
         Pure model application, explicit NNX state, and model-summary callable.
     """
     policy = PrecisionPolicy.from_name(precision or "32-true")
-    resolved_kwargs = policy.apply_model_dtype_defaults(model_kwargs)
+    resolved_kwargs = dict(policy.apply_model_dtype_defaults(model_kwargs))
+    resolved_kwargs["periodic_features_kwargs"] = _resolve_periodic_kwargs(
+        bool(resolved_kwargs.get("periodic_features", False)),
+        resolved_kwargs.get("periodic_features_kwargs"),
+        input_periods,
+    )
     model = MLP(input_dim, output_dim, rngs=nnx.Rngs(params=key), **resolved_kwargs)
     if (input_mean is None) != (input_std is None):
         raise ValueError("`input_mean` and `input_std` must either both be provided or both be `None`.")
@@ -291,4 +302,5 @@ def build_mlp(
         model,
         example_inputs=jnp.zeros((1, input_dim), dtype=policy.derivative_dtype),
         call_kwargs=call_kwargs,
+        input_periods=None if model.periodic_embedding is None else model.periodic_embedding.periods,
     )

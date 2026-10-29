@@ -1,4 +1,5 @@
-from collections.abc import Callable, Mapping
+import math
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal, NamedTuple, Protocol
 
 import jax
@@ -9,6 +10,10 @@ type ModelApply = Callable[[Any, jax.Array], jax.Array]
 type ResidualStream = Literal["residual", "output"]
 type ResidualGroup = tuple[jax.Array, ...]
 type ResidualGroups = tuple[ResidualGroup, ...]
+# Hashable normalized form stored in models, modules, and training state: sorted `(axis, period)` pairs.
+type ResolvedInputPeriods = tuple[tuple[int, float], ...]
+# Physical period of each periodic input axis, keyed by axis index, or already normalized pairs.
+type InputPeriods = Mapping[int, float] | ResolvedInputPeriods
 
 
 class InputStatistics(NamedTuple):
@@ -24,6 +29,36 @@ class InputStatistics(NamedTuple):
 
     mean: Any
     std: Any
+
+
+def as_input_periods(
+    periods: Mapping[Any, Any] | Iterable[tuple[Any, Any]] | None,
+) -> ResolvedInputPeriods | None:
+    """Normalize per-axis physical periods to sorted `(axis, period)` pairs of Python numbers.
+
+    Axis keys are converted with `int()`, so string keys from configuration overrides are accepted.
+
+    Args:
+        periods: Mapping or pairs from input axis to physical period, or `None`.
+
+    Returns:
+        Sorted hashable pairs, or `None` when no periods are supplied.
+
+    Raises:
+        ValueError: If an axis is negative or repeated, or a period is not finite and positive.
+    """
+    if periods is None:
+        return None
+    resolved: dict[int, float] = {}
+    pairs: list[tuple[Any, Any]] = list(periods.items() if isinstance(periods, Mapping) else periods)
+    for axis, period in pairs:
+        index, value = int(axis), float(period)
+        if index < 0 or index in resolved:
+            raise ValueError(f"Periodic axes must be unique nonnegative integers; got `{axis}`.")
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"Periods must be finite and positive; axis {index} has period {period}.")
+        resolved[index] = value
+    return tuple(sorted(resolved.items())) or None
 
 
 class JaxDevice(Protocol):
@@ -97,6 +132,7 @@ class ResidualFunction(Protocol):
 
 __all__ = [
     "ArrayMapping",
+    "InputPeriods",
     "InputStatistics",
     "JaxDevice",
     "ModelApply",
@@ -106,4 +142,6 @@ __all__ = [
     "ResidualGroup",
     "ResidualGroups",
     "ResidualStream",
+    "ResolvedInputPeriods",
+    "as_input_periods",
 ]

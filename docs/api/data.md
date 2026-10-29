@@ -18,7 +18,9 @@ teardown("fit" | "predict")
 prepares fitting before requesting optional model normalization statistics, then retrieves sources and handles
 teardown. The base `input_statistics()` returns `None`; override it to opt into input normalization. The Trainer stores
 the returned statistics in `TrainState`, so a full resume and prediction from a checkpoint use the statistics the model
-was trained with. See [input normalization statistics](checkpointing.md#input-normalization-statistics). Return `None` from
+was trained with. See [input normalization statistics](checkpointing.md#input-normalization-statistics). Override
+`input_periods()` to declare the physical period of periodic input axes; see
+[periodic features](models/layers.md#periodic-features). Return `None` from
 `predict_batch_source()` to skip prediction. Prediction sources must be finite and repeatable; training sources may
 sample indefinitely from the global optimizer step.
 

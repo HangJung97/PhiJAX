@@ -67,7 +67,7 @@ def test_pirate_net_supports_periodic_features_and_named_output_slices() -> None
         num_blocks=1,
         output_names=("u", "v"),
         periodic_features=True,
-        periodic_features_kwargs={"axes": (1,), "frequencies": (jnp.pi,)},
+        periodic_features_kwargs={"periods": {1: 2.0}},
         rngs=nnx.Rngs(params=jax.random.key(17)),
     )
     inputs = jnp.asarray([[0.25, -1.0], [0.25, 1.0]], dtype=jnp.float32)

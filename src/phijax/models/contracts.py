@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import jax
 
-from phijax.types import ModelApply, ModelSummaryFunction
+from phijax.types import InputPeriods, ModelApply, ModelSummaryFunction, ResolvedInputPeriods
 
 if TYPE_CHECKING:
     from phijax.training.precision import PrecisionName, PrecisionPolicy
@@ -19,18 +19,21 @@ class InitializedModel:
         apply: Pure callable accepting explicit model state and input arrays.
         state: Initialized differentiable model-state PyTree.
         summary: Optional callable rendering a summary for the explicit state.
+        input_periods: Physical periods the model applies, as sorted `(axis, period)` pairs, or `None`. Factories
+            report the periods after applying their own overrides so the Trainer can store them.
     """
 
     apply: ModelApply
     state: Any
     summary: ModelSummaryFunction | None = None
+    input_periods: ResolvedInputPeriods | None = None
 
 
 class ModelFactory(Protocol):
     """Build an explicit-state model after Trainer-owned data preparation.
 
-    Model factories receive normalization statistics and precision through keyword arguments so applications can bind
-    architecture options independently with :class:`functools.partial`.
+    Model factories receive normalization statistics, periods, and precision through keyword arguments so applications
+    can bind architecture options independently with :class:`functools.partial`.
     """
 
     def __call__(
@@ -39,6 +42,7 @@ class ModelFactory(Protocol):
         key: jax.Array,
         input_mean: jax.typing.ArrayLike | None,
         input_std: jax.typing.ArrayLike | None,
+        input_periods: InputPeriods | None,
         precision: PrecisionName | PrecisionPolicy,
     ) -> InitializedModel:
         """Initialize a pure model application and its explicit state.
@@ -47,6 +51,8 @@ class ModelFactory(Protocol):
             key: Model-parameter initialization key.
             input_mean: Optional per-coordinate normalization mean supplied by the DataModule.
             input_std: Optional per-coordinate normalization standard deviation supplied by the DataModule.
+            input_periods: Optional physical period per input axis, from the DataModule or a restored checkpoint.
+                Factories without periodic features may ignore it.
             precision: Trainer precision policy.
 
         Returns:

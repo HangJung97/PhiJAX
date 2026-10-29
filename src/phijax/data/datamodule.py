@@ -149,6 +149,22 @@ class PhiDataModule(ABC):
         """
         return None
 
+    def input_periods(self) -> Mapping[int, float] | None:
+        """Return optional physical periods of periodic input axes.
+
+        Models with periodic features embed each declared axis as `cos(2*pi*x/T)` and `sin(2*pi*x/T)` of the physical
+        coordinate, independently of input normalization. Return a period computed from the data, such as a measured
+        cardiac cycle, or a fixed one, such as `2*pi` for an angle. A model's `periodic_features_kwargs['periods']`
+        overrides or adds axes.
+
+        The Trainer stores the periods the model applies in the training state. A full resume and prediction from a
+        checkpoint use the stored periods; fresh and weights-only runs use this method.
+
+        Returns:
+            Physical period keyed by input axis index, or `None` when no axis is periodic.
+        """
+        return None
+
     def teardown(self, stage: DataStage) -> None:
         """Release application resources after one lifecycle stage.
 

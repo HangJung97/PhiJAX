@@ -182,7 +182,7 @@ def instantiate_model_factory(config: DictConfig) -> ModelFactory:
         config: Hydra-instantiable model-builder configuration.
 
     Returns:
-        Callable retaining architecture options while leaving key, normalization, and precision unbound.
+        Callable retaining architecture options while leaving key, normalization, periods, and precision unbound.
 
     Raises:
         TypeError: If the configured target cannot produce a callable factory.

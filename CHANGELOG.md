@@ -18,7 +18,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   keep the normalization a model was trained with.
 - `load_input_statistics()` reads the statistics stored in a checkpoint. Return it from a DataModule's
   `input_statistics()` to start transfer learning from the source statistics.
-- `BasePhiModule.input_statistics` and `bind_input_statistics()` let the Trainer rebind a module to restored statistics.
+- `BasePhiModule.input_statistics`, `input_periods`, and `bind_inputs()` let the Trainer rebind a module to restored
+  statistics and periods.
+- `PhiDataModule.input_periods()` declares physical periods of periodic input axes, and `TrainState.input_periods`
+  stores them with checkpoints. Resume and prediction use the stored periods; transfer learning uses the target
+  DataModule's; `periodic_features_kwargs['periods']` overrides both.
 
 ### Breaking changes
 
@@ -30,6 +34,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     - To keep the latest `k` checkpoints, replace `max_to_keep=k` with
       `ModelCheckpoint(..., monitor="step", mode="max", save_top_k=k)`. See the
       [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#checkpoint-retention).
+- Periodic features use physical periods of the physical coordinate, so input normalization no longer affects periodic
+  axes. `PeriodicFeatures` takes `periods={axis: T}` instead of `axes` and `frequencies`, model factories receive
+  `input_periods`, and `bind_input_statistics()` is now `bind_inputs()`. See the
+  [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#periodic-features-in-physical-units).
 
 ### Changed
 
