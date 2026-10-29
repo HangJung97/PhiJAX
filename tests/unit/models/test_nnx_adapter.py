@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -64,7 +66,7 @@ def test_initialize_nnx_model_allows_per_call_keyword_overrides() -> None:
     inputs = jnp.ones((2, 1), dtype=jnp.float32)
 
     bound_outputs = initialized.apply(initialized.state, inputs)
-    overridden_outputs = initialized.apply(initialized.state, inputs, scale=3.0)
+    overridden_outputs = cast(Any, initialized.apply)(initialized.state, inputs, scale=3.0)
 
     np.testing.assert_allclose(overridden_outputs, 1.5 * bound_outputs, rtol=1.0e-6)
     assert initialized.summary is None

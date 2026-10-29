@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -23,7 +24,14 @@ from phijax.integrations.hydra import (
 )
 from phijax.integrations.hydra import factory as factory_module
 from phijax.models import InitializedModel
-from phijax.training import ConsoleLogger, Trainer, TrainingPlan, build_training_plan
+from phijax.training import (
+    ConsoleLogger,
+    PrecisionName,
+    PrecisionPolicy,
+    Trainer,
+    TrainingPlan,
+    build_training_plan,
+)
 from phijax.types import InputPeriods, NamedBatches
 
 
@@ -78,7 +86,7 @@ class _AdaptiveBalancer:
     def __init__(self) -> None:
         """Initialize an empty build-call record."""
         self.build_call: tuple[object, tuple[str, ...]] | None = None
-        self.loss_names = ("loss",)
+        self.loss_names: tuple[str, ...] = ("loss",)
 
     def initialize(self) -> jax.Array:
         """Create one scalar synthetic balancer state.
@@ -88,7 +96,7 @@ class _AdaptiveBalancer:
         """
         return jax.numpy.ones(1)
 
-    def combine(self, losses: dict[str, jax.Array], state: jax.Array) -> jax.Array:
+    def combine(self, losses: Mapping[str, jax.Array], state: Any) -> jax.Array:
         """Return the fixture's single scalar loss.
 
         Args:
@@ -166,25 +174,26 @@ def _model_apply(model_state: Any, inputs: jax.Array) -> jax.Array:
 
 
 def _custom_model_factory(
+    *,
     key: jax.Array,
-    precision: str,
-    input_mean: np.ndarray,
-    input_std: np.ndarray,
+    input_mean: jax.typing.ArrayLike | None,
+    input_std: jax.typing.ArrayLike | None,
     input_periods: InputPeriods | None,
+    precision: PrecisionName | PrecisionPolicy,
 ) -> InitializedModel:
     """Build a non-NNX model through the generic factory contract.
 
     Args:
         key: Explicit initialization key.
-        precision: Configured model precision name.
         input_mean: Host input-coordinate mean.
         input_std: Host input-coordinate standard deviation.
         input_periods: Unused input periods.
+        precision: Configured model precision name.
 
     Returns:
         Initialized affine test model.
     """
-    del key, precision, input_periods
+    del key, input_periods, precision
     mean = jax.numpy.asarray(input_mean)
     std = jax.numpy.asarray(input_std)
 

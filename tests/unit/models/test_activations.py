@@ -1,9 +1,11 @@
+from typing import cast
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phijax.models.activations import resolve_activation
+from phijax.models.activations import Activation, resolve_activation
 
 
 @pytest.mark.parametrize("name", ["relu", "leakyrelu", "gelu", "tanh", "sigmoid", "silu"])
@@ -45,7 +47,7 @@ def test_resolve_activation_binds_kwargs_to_a_callable() -> None:
         """
         return factor * inputs
 
-    activation = resolve_activation(scale, {"factor": 2.0})
+    activation = resolve_activation(cast(Activation, scale), {"factor": 2.0})
 
     assert activation is not None
     np.testing.assert_array_equal(activation(jnp.ones(2)), np.full(2, 2.0))

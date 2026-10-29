@@ -146,6 +146,7 @@ def test_default_logger_uses_versioned_csv_fallback(monkeypatch: pytest.MonkeyPa
     assert first.version == 0
     assert first.log_dir == tmp_path / "phijax_logs" / "version_0"
     assert second.version == 1
+    assert first.log_dir is not None
     assert (first.log_dir / "hparams.yaml").read_text(encoding="utf-8") == "seed: 3\n"
 
 

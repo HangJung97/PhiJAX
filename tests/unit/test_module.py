@@ -1,6 +1,6 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -11,7 +11,7 @@ from phijax import BasePhiModule, InputStatistics, PhiModule, PhiModuleContext
 from phijax.balancers import ExactNTKBalancer
 from phijax.callbacks import PredictionContext
 from phijax.metrics import _collect_module_metrics
-from phijax.models import InitializedModel, build_mlp
+from phijax.models import InitializedModel, ModelFactory, build_mlp
 from phijax.training import PrecisionPolicy
 from phijax.types import ModelApply, NamedBatches
 
@@ -154,7 +154,9 @@ def test_phi_module_delegates_forward_losses_prediction_and_residuals() -> None:
     with pytest.raises(RuntimeError, match="uninitialized"):
         blueprint(model_state, jnp.asarray([2.0]))
     assert jnp.array_equal(module(model_state, jnp.asarray([2.0])), jnp.asarray([4.0]))
-    assert float(module.training_step(model_state, batches)["data"]) == 20.0
+    losses = module.training_step(model_state, batches)
+    assert isinstance(losses, Mapping)
+    assert float(losses["data"]) == 20.0
     metrics = module.format_training_metrics(
         jnp.asarray(4.0),
         {"data": jnp.asarray(3.0)},
@@ -278,6 +280,7 @@ def test_phi_module_subclass_forward_is_used_by_objective_and_external_balancer(
     losses = module.training_step(model_state, batches)
     balancer_state = balancer.make_update(module)(model_state, batches, balancer.initialize())
 
+    assert isinstance(losses, Mapping)
     assert float(losses["data"]) == 29.0
     assert float(balancer_state.traces[0]) == 5.0
     assert float(balancer_state.weights[0]) == 1.0
@@ -308,7 +311,7 @@ def test_phi_module_rejects_unsupported_residuals_and_invalid_configuration() ->
         del kwargs
         return object()
 
-    invalid_module = PhiModule(invalid_factory, _ConfiguredObjective())
+    invalid_module = PhiModule(cast(ModelFactory, invalid_factory), _ConfiguredObjective())
     with pytest.raises(TypeError, match="InitializedModel"):
         _bind(invalid_module)
 
@@ -347,13 +350,15 @@ def test_phi_module_records_and_rebinds_input_statistics() -> None:
         jax.random.key(0),
         2,
         1,
-        input_mean=[3.0, -1.0],
-        input_std=[0.5, 0.25],
+        input_mean=np.asarray([3.0, -1.0]),
+        input_std=np.asarray([0.5, 0.25]),
         hidden=(8,),
         input_norm=True,
     )
 
     assert rebound is not module
+    assert rebound.input_statistics is not None
+    assert module.input_statistics is not None
     np.testing.assert_array_equal(rebound.input_statistics.mean, [3.0, -1.0])
     np.testing.assert_allclose(rebound(model_state, inputs), reference.apply(model_state, inputs), rtol=1e-6)
     np.testing.assert_array_equal(module.input_statistics.mean, [0.5, 1.0])

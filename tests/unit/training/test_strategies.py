@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +28,7 @@ def test_create_strategy_places_state_and_batch_on_cpu() -> None:
 def test_strategy_rejects_invalid_device_requests() -> None:
     """Verify device errors are raised during setup instead of a compiled update."""
     with pytest.raises(ValueError, match="accelerator"):
-        create_strategy("quantum", 1)
+        create_strategy(cast(Any, "quantum"), 1)
     with pytest.raises(ValueError, match="Requested"):
         create_strategy("cpu", len(jax.devices("cpu")) + 1)
     with pytest.raises(ValueError, match="at least two"):
@@ -54,7 +55,7 @@ def test_create_strategy_supports_auto_and_explicit_indices() -> None:
     assert isinstance(create_strategy("cpu", "auto"), SingleDeviceStrategy)
     assert isinstance(create_strategy("cpu", [0]), SingleDeviceStrategy)
     with pytest.raises(ValueError, match="positive count"):
-        create_strategy("cpu", "one")
+        create_strategy("cpu", cast(Any, "one"))
     with pytest.raises(ValueError, match="Device indices"):
         create_strategy("cpu", [])
     with pytest.raises(ValueError, match="Device indices"):

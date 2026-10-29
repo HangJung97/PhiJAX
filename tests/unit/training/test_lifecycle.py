@@ -3,7 +3,7 @@ from typing import Any
 
 import jax
 
-from phijax.callbacks import Callback, PredictionContext
+from phijax.callbacks import Callback, CallbackContext, PredictionContext
 from phijax.core import BasePhiModule, PhiModuleContext
 from phijax.training.lifecycle import TaskLifecycle
 from phijax.training.loggers import ExperimentLogger
@@ -25,7 +25,7 @@ class _LifecycleCallback(Callback):
         """Record callback setup."""
         self.timeline.append("callback:setup")
 
-    def on_exception(self, exception: BaseException, context: PredictionContext) -> None:
+    def on_exception(self, exception: BaseException, context: CallbackContext) -> None:
         """Record callback exception dispatch.
 
         Args:

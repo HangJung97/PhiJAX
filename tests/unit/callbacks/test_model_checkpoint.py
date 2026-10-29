@@ -313,6 +313,7 @@ def test_model_checkpoint_top_k_matches_orbax_storage(tmp_path: Path, asynchrono
     assert checkpoint_io.steps == (4, 5, 6, 7, 8)
     assert sorted(callback.state_dict()["scores"], key=int) == ["4", "5", "6", "7", "8"]
     assert callback.best_model_path == checkpoint_io.checkpoint_path(8)
+    assert callback.best_model_path is not None
     assert callback.best_model_path.exists()
 
 
@@ -359,7 +360,7 @@ def test_model_checkpoint_step_monitor_keeps_latest_k_checkpoints(tmp_path: Path
         ({"save_top_k": True}, "nonnegative"),
     ],
 )
-def test_model_checkpoint_validates_save_top_k(kwargs: dict[str, object], match: str) -> None:
+def test_model_checkpoint_validates_save_top_k(kwargs: dict[str, Any], match: str) -> None:
     """Verify `save_top_k` follows Lightning's rules with and without `monitor`.
 
     Args:

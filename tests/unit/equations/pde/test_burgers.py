@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -90,7 +91,7 @@ def test_inviscid_burgers_path_omits_diffusion() -> None:
 )
 def test_burgers_residuals_reject_invalid_settings(
     inputs: jax.Array,
-    kwargs: dict[str, float | int],
+    kwargs: dict[str, Any],
     match: str,
 ) -> None:
     """Verify invalid coordinate and equation policies fail before differentiation.

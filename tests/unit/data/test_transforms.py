@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -55,7 +57,7 @@ def test_minmax_scale_supports_reused_broadcast_statistics_and_constant_values()
         ({"minimum": 2.0, "maximum": 1.0}, "maximum"),
     ],
 )
-def test_minmax_scale_rejects_invalid_statistics(kwargs: dict[str, object], message: str) -> None:
+def test_minmax_scale_rejects_invalid_statistics(kwargs: dict[str, Any], message: str) -> None:
     """Verify invalid source and destination intervals raise clear errors.
 
     Args:
@@ -87,7 +89,7 @@ def test_standardize_uses_finite_statistics_and_supports_reuse() -> None:
     ("kwargs", "message"),
     [({"eps": -1.0}, "eps"), ({"mean": np.nan, "std": 1.0}, "mean"), ({"mean": 0.0, "std": -1.0}, "std")],
 )
-def test_standardize_rejects_invalid_statistics(kwargs: dict[str, object], message: str) -> None:
+def test_standardize_rejects_invalid_statistics(kwargs: dict[str, Any], message: str) -> None:
     """Verify invalid standardization statistics fail explicitly.
 
     Args:

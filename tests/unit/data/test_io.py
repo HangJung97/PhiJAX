@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, cast
 
 import h5py
 import numpy as np
@@ -16,7 +17,7 @@ def test_load_arrays_reads_npz_without_pickled_objects(tmp_path: Path) -> None:
     """
     path = tmp_path / "fields.npz"
     expected = np.arange(6, dtype=np.float32).reshape(2, 3)
-    np.savez(path, inputs=expected, **{"group/direct": expected + 1.0})
+    np.savez(path, inputs=expected, **cast(Any, {"group/direct": expected + 1.0}))
 
     arrays = load_arrays(path)
 

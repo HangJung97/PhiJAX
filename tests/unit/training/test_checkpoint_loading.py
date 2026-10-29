@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -58,7 +59,7 @@ def test_restore_checkpoint_selects_full_resume_or_weights_only_transfer(
     """
     target = _state(0)
     resumed = _state(4)
-    transferred = _state(0).replace(model_state={"weight": jnp.asarray(4.0)})
+    transferred = dataclasses.replace(_state(0), model_state={"weight": jnp.asarray(4.0)})
     manager = MagicMock()
     manager.__enter__.return_value = manager
     manager.restore.return_value = resumed
