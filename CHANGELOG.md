@@ -69,6 +69,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   give correct residuals.
 - Fidelity and boundary equations now raise `ValueError` for out-of-range `output_indices` or `target_indices`
   instead of producing NaN residuals.
+- Pools built by `build_array_pools` now name every output channel, so prediction artifacts can be saved for
+  vector-valued targets (`v_0`, `v_1`, ...) and for pools without targets.
 
 ## [0.2.0b5] - 2026-09-11
 

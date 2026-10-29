@@ -5,7 +5,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-from phijax.data import build_array_pools, reconstruct_predictions
+from phijax.data import build_array_pools, load_prediction_artifact, reconstruct_predictions, save_prediction_artifact
 
 
 def _schema(path: Path, *, initial_index: int | list[int] = 0) -> dict[str, Any]:
@@ -358,3 +358,32 @@ def test_build_array_pools_rejects_invalid_schema(
 
     with pytest.raises((KeyError, ValueError), match=match):
         build_array_pools(**schema)
+
+
+def test_build_array_pools_names_output_channels_for_prediction_artifacts(tmp_path: Path) -> None:
+    """Verify built pools save artifacts for vector targets and for pools without targets.
+
+    Args:
+        tmp_path: Temporary directory used for source and artifact files.
+    """
+    path = tmp_path / "vector.npz"
+    velocity = np.arange(12, dtype=np.float32).reshape(2, 3, 2)
+    np.savez(path, t=np.asarray([0.0, 1.0]), x=np.asarray([0.0, 0.5, 1.0]), v=velocity, p=velocity[..., 0])
+
+    pools = build_array_pools(
+        source={"path": path},
+        coordinates={"t": "t", "x": "x"},
+        fields={"v": {"key": "v", "axes": ["t", "x"]}, "p": {"key": "p", "axes": ["t", "x"]}},
+        pools={
+            "vector": {"inputs": ["t", "x"], "targets": ["v", "p"]},
+            "inputs_only": {"inputs": ["t", "x"]},
+        },
+    )
+    vector, inputs_only = pools["vector"], pools["inputs_only"]
+    vector_path = save_prediction_artifact(tmp_path / "vector_prediction.npz", vector.targets, vector)
+    inputs_only_path = save_prediction_artifact(tmp_path / "inputs_prediction.npz", np.zeros((6, 2)), inputs_only)
+
+    assert vector.metadata["output_names"] == ("v_0", "v_1", "p")
+    assert "output_names" not in inputs_only.metadata
+    assert load_prediction_artifact(vector_path).output_names == ("v_0", "v_1", "p")
+    assert load_prediction_artifact(inputs_only_path).output_names == ("output_0", "output_1")
