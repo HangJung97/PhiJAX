@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+import os
 import signal
 import warnings
 from collections.abc import Mapping
@@ -1915,13 +1916,120 @@ def test_fit_signal_handler_converts_sigterm_and_restores_previous_handlers(
     handler = _SignalConnector()
 
     handler.install()
-    with pytest.raises(SystemExit) as exception:
+    # The first signal only records a stop request; the fit loop raises it at the next step boundary.
+    installed[signal.SIGTERM](signal.SIGTERM, None)
+    assert handler.received_sigterm is True
+    with pytest.raises(SystemExit) as requested:
+        handler.raise_if_requested()
+    # A repeated signal escalates immediately; this previous handler is not callable, so it exits.
+    with pytest.raises(SystemExit) as repeated:
         installed[signal.SIGTERM](signal.SIGTERM, None)
     handler.restore()
 
-    assert exception.value.code == 128 + signal.SIGTERM
-    assert handler.received_sigterm is True
+    assert requested.value.code == repeated.value.code == 128 + signal.SIGTERM
     assert installed == previous
+
+
+class _SignalCallback(Callback):
+    """Send real process signals in the middle of a training step."""
+
+    def __init__(self, signum: int, *, step: int, count: int = 1) -> None:
+        """Store which signal to send, when, and how often.
+
+        Args:
+            signum: Signal sent to this process.
+            step: Global step whose `on_train_batch_start` sends the signal.
+            count: Number of signals sent.
+        """
+        self.signum = signum
+        self.step = step
+        self.count = count
+
+    def on_train_batch_start(self, context: TrainerContext) -> None:
+        """Send the signals before the compiled update of the selected step.
+
+        Args:
+            context: Trainer context before the update.
+        """
+        if context.step == self.step:
+            for _ in range(self.count):
+                os.kill(os.getpid(), self.signum)
+
+
+def _signal_trainer(callback: _SignalCallback, checkpoint_root: Path) -> Trainer:
+    """Create a quiet Trainer that saves a checkpoint when interrupted.
+
+    Args:
+        callback: Callback sending signals.
+        checkpoint_root: Directory for the interruption checkpoint.
+
+    Returns:
+        Configured Trainer.
+    """
+    checkpoint = ModelCheckpoint(
+        OrbaxCheckpointIO(checkpoint_root, enable_async_checkpointing=False),
+        every_n_steps=100,
+        save_last=False,
+        save_on_exception=True,
+    )
+    return Trainer(
+        max_steps=6,
+        callbacks=(callback, checkpoint),
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+    )
+
+
+def test_sigint_mid_step_stops_after_that_step_with_a_matching_checkpoint(tmp_path: Path) -> None:
+    """Verify a first `SIGINT` finishes the current step, then interrupts with state and checkpoint at that step.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+    trainer = _signal_trainer(_SignalCallback(signal.SIGINT, step=2), tmp_path)
+
+    result = trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+
+    assert result.interrupted is True
+    assert result.iterations == 3
+    assert int(result.state.step) == 3
+    assert float(result.state.model_state["weight"]) == 3.0
+    with OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False) as checkpoint_io:
+        assert checkpoint_io.latest_step == 3
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+
+
+def test_sigterm_mid_step_exits_after_that_step_with_a_matching_checkpoint(tmp_path: Path) -> None:
+    """Verify a first `SIGTERM` finishes the current step, checkpoints it, and exits with status 143.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+    trainer = _signal_trainer(_SignalCallback(signal.SIGTERM, step=2), tmp_path)
+
+    with pytest.raises(SystemExit) as exception:
+        trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+
+    assert exception.value.code == 128 + signal.SIGTERM
+    assert trainer.interrupted is True
+    with OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False) as checkpoint_io:
+        assert checkpoint_io.latest_step == 3
+
+
+def test_repeated_sigint_interrupts_immediately_with_the_last_completed_state(tmp_path: Path) -> None:
+    """Verify a second `SIGINT` does not wait for the current step to finish.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+    trainer = _signal_trainer(_SignalCallback(signal.SIGINT, step=2, count=2), tmp_path)
+
+    result = trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+
+    assert result.interrupted is True
+    assert int(result.state.step) == 2
 
 
 def test_trainer_prints_bfloat16_amp_and_selected_cuda_environment(

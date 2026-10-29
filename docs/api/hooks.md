@@ -115,9 +115,10 @@ Cleanup never hides the original error. Every exception hook, logger finalizatio
 earlier one raises. A failing cleanup hook is logged and attached to the original error as a note, and the original
 error is re-raised. After a successful task, teardown still runs every hook and then raises the first teardown failure.
 
-During fitting, the first `Ctrl+C` preserves the last completed state and returns `FitResult(interrupted=True)`.
-Exception hooks, logger finalization, and teardown still run. `SIGTERM` performs the same cleanup but exits instead of
-returning. A repeated signal exits immediately.
+During fitting, the first `Ctrl+C` lets the current step finish, including its callbacks and checkpoint writes, and
+then returns `FitResult(interrupted=True)` with that step's state. Exception hooks, logger finalization, and teardown
+still run, so `ModelCheckpoint(save_on_exception=True)` saves the completed step. `SIGTERM` performs the same cleanup
+but exits with status `143` instead of returning. A repeated signal stops immediately without waiting for the step.
 
 ## Choosing an extension point
 
