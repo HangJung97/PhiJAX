@@ -111,6 +111,10 @@ If a task fails after setup, PhiJAX calls each initialized callback's `on_except
 `BasePhiModule.on_exception()`. It finalizes the logger with `"failed"` and then runs teardown. A resource is only torn
 down if its setup completed.
 
+Cleanup never hides the original error. Every exception hook, logger finalization, and teardown hook runs even if an
+earlier one raises. A failing cleanup hook is logged and attached to the original error as a note, and the original
+error is re-raised. After a successful task, teardown still runs every hook and then raises the first teardown failure.
+
 During fitting, the first `Ctrl+C` preserves the last completed state and returns `FitResult(interrupted=True)`.
 Exception hooks, logger finalization, and teardown still run. `SIGTERM` performs the same cleanup but exits instead of
 returning. A repeated signal exits immediately.

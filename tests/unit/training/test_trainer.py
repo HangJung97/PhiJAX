@@ -1721,6 +1721,61 @@ def test_callbacks_observe_incoming_values_before_module_replacements() -> None:
     assert result.metrics["train/loss"] == 2.0
 
 
+class _BrokenCleanupCallback(Callback):
+    """Raise from every cleanup hook."""
+
+    def on_exception(self, exception: BaseException, context: CallbackContext) -> None:
+        """Fail while handling the task error.
+
+        Args:
+            exception: Task failure.
+            context: Most recent context.
+
+        Raises:
+            ValueError: Always.
+        """
+        raise ValueError("broken on_exception")
+
+    def teardown(self) -> None:
+        """Fail during teardown.
+
+        Raises:
+            OSError: Always.
+        """
+        raise OSError("broken teardown")
+
+
+def test_fit_keeps_the_step_error_when_cleanup_hooks_fail() -> None:
+    """Verify failing cleanup hooks neither replace the step error nor skip later callbacks or the logger."""
+    timeline: list[str] = []
+    experiment_logger = _RecordingLogger()
+    trainer = Trainer(
+        max_steps=1,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+        callbacks=(_BrokenCleanupCallback(), _RecordingCallback(timeline)),
+        loggers=(experiment_logger,),
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic step failure") as raised:
+        trainer.fit_state(
+            _RecordingModule(timeline), _failing_train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)}
+        )
+
+    assert experiment_logger.statuses == ["failed"]
+    assert timeline[-4:] == [
+        "callback:exception:RuntimeError:0",
+        "module:exception:RuntimeError:0",
+        "callback:teardown",
+        "module:teardown",
+    ]
+    assert [note.split(" also failed")[0] for note in raised.value.__notes__] == [
+        "_BrokenCleanupCallback.on_exception",
+        "_BrokenCleanupCallback.teardown",
+    ]
+
+
 def test_callback_exception_and_teardown_hooks_run_before_module_hooks() -> None:
     """Verify callback-first Lightning ordering also applies to exceptional cleanup."""
     timeline: list[str] = []
