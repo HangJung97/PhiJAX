@@ -776,14 +776,9 @@ class Trainer:
             Concatenated host predictions, or `None` when collection is disabled or no prediction data is available.
 
         Raises:
-            NotImplementedError: If the run has several JAX processes.
             ValueError: If checkpoint options are invalid or a provided batch source is empty.
             BaseException: Re-raises prediction lifecycle errors after cleanup.
         """
-        if jax.process_count() > 1:
-            raise NotImplementedError(
-                "Prediction does not support multi-process runs yet. Predict from a checkpoint in a single process."
-            )
         try:
             if batches is None:
                 if datamodule is None:
