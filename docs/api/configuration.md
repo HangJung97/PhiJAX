@@ -93,7 +93,7 @@ register_omegaconf_resolvers()
 | ------------- | -------------------------------------------- | --------------------------- |
 | `math`        | `${math:pi}`                                 | Public Python `math` member |
 | `op`          | `${op:truediv,0.01,${math:pi}}`              | Public `operator` function  |
-| `op.ternary`  | `${op.ternary,true,a,b}`                     | Conditional value           |
+| `op.ternary`  | `${op.ternary:true,a,b}`                     | Conditional value           |
 | `tuple`       | `${tuple:1,2,3}`                             | Tuple rather than list      |
 | `call`        | `${call:module.function,arg}`                | Trusted imported callable   |
 | `target.name` | `${target.name:${model.optimizer._target_}}` | Final Hydra target name     |
@@ -117,8 +117,14 @@ callbacks:
 This configuration logs `optimizer/lr-adamw`. The resolver preserves the target's spelling rather than guessing how
 custom names or acronyms should be capitalized.
 
-Configuration can execute imported callables through Hydra targets and the `call` resolver. Compose only trusted
-configuration files.
+### Configurations are code
+
+Hydra `_target_` entries and the `call` resolver import and run arbitrary Python callables. For example,
+`${call:os.system,...}` runs a shell command. Treat configuration files and command-line overrides like Python
+scripts, and use only those from trusted sources.
+
+Resolving a configuration already runs its `call` interpolations, even without instantiation. This includes
+`print_config_tree(resolve=True)`, `to_hyperparameters(resolve=True)`, and reloading a saved run configuration.
 
 ::: phijax.integrations.omegaconf.register_omegaconf_resolvers
 
