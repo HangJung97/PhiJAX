@@ -3,6 +3,7 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any, Self, cast
 
@@ -20,7 +21,7 @@ from phijax.callbacks import (
     TQDMProgressBar,
 )
 from phijax.core import BasePhiModule, PhiModule
-from phijax.data import PhiDataModule
+from phijax.data import DataStage, PhiDataModule
 from phijax.training.assembly import build_training_plan
 from phijax.training.checkpointing import OrbaxCheckpointIO, restore_checkpoint
 from phijax.training.connectors.logger_connector import _LoggerConnector
@@ -458,7 +459,7 @@ class Trainer:
             TypeError: If `seed` is not an integer or JAX key.
             ValueError: If model, balancing, checkpoint, or DataModule options are inconsistent.
         """
-        datamodule.prepare_stage("fit")
+        self._prepare_datamodule(datamodule, "fit")
         try:
             root_key = _normalize_seed(seed)
             model_key, runtime_key, sampling_key, balancer_key = jax.random.split(root_key, 4)
@@ -633,8 +634,21 @@ class Trainer:
             raise ValueError("A DataModule-owned training source requires non-empty `TrainingPlan.batch_keys`.")
         if sampling_key is None:
             raise ValueError("A DataModule-owned training source requires an explicit `sampling_key`.")
-        datamodule.prepare_stage("fit")
+        self._prepare_datamodule(datamodule, "fit")
         return self.prepare_batch_source(datamodule.train_batch_source(plan.batch_keys, sampling_key))
+
+    def _prepare_datamodule(self, datamodule: PhiDataModule, stage: DataStage) -> None:
+        """Prepare a DataModule stage, running `prepare_data()` only on global process zero.
+
+        Args:
+            datamodule: DataModule to prepare.
+            stage: Requested `fit` or `predict` stage.
+        """
+        datamodule.prepare_stage(
+            stage,
+            run_prepare_data=self.strategy.is_global_zero,
+            wait_for_prepare_data=partial(self.strategy.barrier, f"phijax_prepare_data_{stage}"),
+        )
 
     def _balancer_update_runtime(
         self,
@@ -767,7 +781,7 @@ class Trainer:
             if batches is None:
                 if datamodule is None:
                     return None
-                datamodule.prepare_stage("predict")
+                self._prepare_datamodule(datamodule, "predict")
                 batches = datamodule.predict_batch_source()
                 if batches is None:
                     return None

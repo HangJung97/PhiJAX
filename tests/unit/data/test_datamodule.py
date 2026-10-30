@@ -187,3 +187,44 @@ def test_phi_data_module_tears_down_after_stage_setup_failure() -> None:
 
     assert data_module.torn_down_stage == "fit"
     assert data_module.prepared_stage is None
+
+
+class _RecordingDataModule(_MinimalDataModule):
+    """Record the order of data preparation, synchronization, and setup."""
+
+    def __init__(self) -> None:
+        """Initialize an empty event list."""
+        super().__init__()
+        self.events: list[str] = []
+
+    def prepare_data(self) -> None:
+        """Record data preparation."""
+        self.events.append("prepare_data")
+
+    def setup(self, stage: DataStage) -> None:
+        """Record setup and build the fixture pools.
+
+        Args:
+            stage: Requested lifecycle stage.
+        """
+        self.events.append(f"setup:{stage}")
+        super().setup(stage)
+
+
+@pytest.mark.parametrize("run_prepare_data", [True, False], ids=["process-zero", "other-process"])
+def test_prepare_stage_waits_for_prepared_data_before_setup(run_prepare_data: bool) -> None:
+    """Verify only the selected process prepares data and every process waits before setup.
+
+    Args:
+        run_prepare_data: Whether this process prepares data.
+    """
+    data_module = _RecordingDataModule()
+
+    data_module.prepare_stage(
+        "fit",
+        run_prepare_data=run_prepare_data,
+        wait_for_prepare_data=lambda: data_module.events.append("wait"),
+    )
+
+    expected = ["prepare_data", "wait", "setup:fit"] if run_prepare_data else ["wait", "setup:fit"]
+    assert data_module.events == expected

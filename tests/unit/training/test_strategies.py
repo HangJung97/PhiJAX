@@ -12,6 +12,7 @@ from phijax.training import (
     create_strategy,
     initialize_distributed,
 )
+from phijax.training import strategies as strategies_module
 
 
 def test_create_strategy_places_state_and_batch_on_cpu() -> None:
@@ -106,3 +107,20 @@ def test_initialize_distributed_delegates_once(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(jax.distributed, "is_initialized", lambda: True)
     with pytest.raises(RuntimeError, match="already initialized"):
         initialize_distributed()
+
+
+def test_strategy_barrier_synchronizes_only_multi_process_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify `barrier()` is free in a single-process run and synchronizes every process otherwise.
+
+    Args:
+        monkeypatch: Pytest attribute patch helper.
+    """
+    synchronized: list[str] = []
+    monkeypatch.setattr(strategies_module.multihost_utils, "sync_global_devices", synchronized.append)
+    strategy = SingleDeviceStrategy(jax.devices("cpu")[0])
+
+    strategy.barrier("single")
+    monkeypatch.setattr(strategies_module.jax, "process_count", lambda: 2)
+    strategy.barrier("multi")
+
+    assert synchronized == ["multi"]

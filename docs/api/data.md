@@ -24,6 +24,25 @@ was trained with. See [input normalization statistics](checkpointing.md#input-no
 `predict_batch_source()` to skip prediction. Prediction sources must be finite and repeatable; training sources may
 sample indefinitely from the global optimizer step.
 
+### Multi-process runs
+
+In a run with several JAX processes, the Trainer prepares data in three steps:
+
+1. Global process zero calls `prepare_data()`. No other process calls it.
+2. Every process waits at `Strategy.barrier()` until process zero has finished.
+3. Every process calls `setup()` and builds its own pools.
+
+`prepare_data()` therefore runs once per run, and no process reads a file that is still being written. A single-process
+run is unaffected: process zero prepares the data, and the barrier returns immediately.
+
+Write prepared files to storage that every host can read, such as a shared filesystem. If the files are on
+process zero's local disk, `setup()` fails on the other hosts because they cannot read them. Keep `prepare_data()` free
+of state that `setup()` needs, such as attributes, because other processes never run it.
+
+Lightning defaults to `prepare_data_per_node=True`, which runs `prepare_data()` on one process per machine. PhiJAX
+always uses global process zero instead. JAX usually runs one process per host, so a per-machine rule would make
+every process prepare the same files.
+
 ::: phijax.data.PhiDataModule
 
 ## Host pools

@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 import jax
 import numpy as np
+from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from phijax.types import JaxDevice
@@ -33,6 +34,17 @@ class Strategy:
         self.devices = tuple(devices)
         self.process_index = jax.process_index()
         self.is_global_zero = self.process_index == 0
+
+    def barrier(self, name: str) -> None:
+        """Wait until every JAX process reaches this point.
+
+        A single-process run returns immediately.
+
+        Args:
+            name: Identifier shared by every process for this synchronization point.
+        """
+        if jax.process_count() > 1:
+            multihost_utils.sync_global_devices(name)
 
     def place_state(self, state: Any) -> Any:
         """Place a functional training-state PyTree.

@@ -13,6 +13,10 @@ parity. Call `initialize_distributed()` before any JAX backend operation for mul
 the same compiled steps and collectives in the same order. Logging and checkpoint writes remain restricted to global
 rank zero.
 
+`Strategy.barrier(name)` blocks until every JAX process reaches it; a single-process run returns immediately. The
+Trainer uses it so that `PhiDataModule.prepare_data()` runs once, on global process zero, before any process runs
+`setup()`. See [multi-process runs](data.md#multi-process-runs).
+
 Ordinary CI covers single-process CPU behavior. Validate the intended multi-device or multi-host environment before a
 long run.
 
