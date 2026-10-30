@@ -146,7 +146,7 @@ def reconstruct_predictions(predictions: NDArray[Any], pool: HostPool) -> NDArra
         Dense prediction array with shape `[*reference_shape, output_features]`.
 
     Raises:
-        ValueError: If prediction rows, indices, or reference shape are inconsistent.
+        ValueError: If prediction rows, indices, or reference shape are inconsistent, or if indices repeat.
     """
     values = np.asarray(predictions)
     if values.ndim != 2 or values.shape[0] != pool.inputs.shape[0]:
@@ -154,6 +154,12 @@ def reconstruct_predictions(predictions: NDArray[Any], pool: HostPool) -> NDArra
     dense_count = int(np.prod(pool.reference_shape))
     if np.any(pool.flat_index < 0) or np.any(pool.flat_index >= dense_count):
         raise ValueError("Pool flat indices fall outside the reference grid.")
+    # A repeated index would silently keep only the last of its rows on the dense grid. Marking a Boolean grid is
+    # linear in the grid size, unlike sorting with `np.unique`.
+    represented = np.zeros(dense_count, dtype=bool)
+    represented[pool.flat_index] = True
+    if np.count_nonzero(represented) != pool.flat_index.size:
+        raise ValueError("Pool flat indices must be unique to reconstruct a dense grid.")
     dense = np.full((dense_count, values.shape[1]), np.nan, dtype=values.dtype)
     dense[pool.flat_index] = values
     return dense.reshape(*pool.reference_shape, values.shape[1])

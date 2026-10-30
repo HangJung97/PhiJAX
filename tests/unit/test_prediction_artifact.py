@@ -203,3 +203,78 @@ def test_prediction_artifact_rejects_unsafe_or_ambiguous_metadata(
     """
     with pytest.raises(exception, match=match):
         save_prediction_artifact(tmp_path / "prediction.npz", np.ones((2, 1)), _prediction_pool(artifact_metadata))
+
+
+def test_prediction_artifact_rejects_duplicate_flat_indices_before_writing(tmp_path: Path) -> None:
+    """Verify a pool whose rows share a grid index is rejected, matching the loader, and writes no file.
+
+    Args:
+        tmp_path: Temporary prediction artifact directory.
+    """
+    pool = HostPool(
+        inputs=np.asarray([[0.0], [1.0]], dtype=np.float32),
+        targets=np.asarray([[1.0], [2.0]], dtype=np.float32),
+        reference_shape=(2,),
+        flat_index=np.asarray([1, 1]),
+    )
+
+    with pytest.raises(ValueError, match="must be unique"):
+        save_prediction_artifact(tmp_path / "prediction.npz", pool.targets, pool, save_mat=True)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("save_mat", [False, True])
+def test_prediction_artifact_failed_write_keeps_the_previous_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, save_mat: bool
+) -> None:
+    """Verify an interrupted save leaves earlier artifacts intact and removes its temporary file.
+
+    Args:
+        tmp_path: Temporary prediction artifact directory.
+        monkeypatch: Fixture replacing the NumPy or MATLAB writer with a failing one.
+        save_mat: Whether the MATLAB sidecar write fails instead of the NumPy write.
+    """
+    pool = _prediction_pool({})
+    path = save_prediction_artifact(tmp_path / "prediction.npz", pool.targets, pool, save_mat=True)
+    previous = {file.name: file.read_bytes() for file in tmp_path.iterdir()}
+
+    def fail_after_partial_write(file: Any, *args: Any, **kwargs: Any) -> None:
+        """Write a few bytes, then fail as an interrupted writer would.
+
+        Args:
+            file: Open binary destination.
+            *args: Ignored writer arguments.
+            **kwargs: Ignored writer options.
+
+        Raises:
+            OSError: Always.
+        """
+        del args, kwargs
+        file.write(b"partial")
+        raise OSError("disk full")
+
+    target = "phijax.data.artifacts.savemat" if save_mat else "numpy.savez_compressed"
+    monkeypatch.setattr(target, fail_after_partial_write)
+    with pytest.raises(OSError, match="disk full"):
+        save_prediction_artifact(path, np.zeros((2, 1)), pool, save_mat=True)
+
+    current = {file.name: file.read_bytes() for file in tmp_path.iterdir()}
+    if save_mat:
+        # The NumPy artifact is replaced before the sidecar write fails; only the sidecar keeps its old contents.
+        previous["prediction.npz"] = current["prediction.npz"]
+    assert current == previous
+    load_prediction_artifact(path)
+
+
+def test_prediction_artifact_uses_ordinary_file_permissions(tmp_path: Path) -> None:
+    """Verify atomic writes keep the permissions of a normally created file.
+
+    Args:
+        tmp_path: Temporary prediction artifact directory.
+    """
+    pool = _prediction_pool({})
+    path = save_prediction_artifact(tmp_path / "prediction.npz", pool.targets, pool, save_mat=True)
+    reference = tmp_path / "reference"
+    reference.write_bytes(b"")
+
+    assert path.stat().st_mode == path.with_suffix(".mat").stat().st_mode == reference.stat().st_mode

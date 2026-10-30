@@ -1,9 +1,11 @@
+import os
 import re
-from collections.abc import Mapping
+import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -101,6 +103,9 @@ def save_prediction_artifact(
     serialization. Missing scales resolve to ones. Both formats store physical values, the applied scales, schema
     version `2`, and `value_space="physical"`.
 
+    Each file is written to a temporary sibling and renamed into place, so an interrupted save never leaves a partial
+    artifact and keeps any previous file at the destination.
+
     Args:
         output_path: Destination compressed NumPy artifact path ending in `.npz`.
         predictions: Flat normalized model predictions ordered like `pool.inputs`.
@@ -114,7 +119,8 @@ def save_prediction_artifact(
 
     Raises:
         KeyError: If `mat_field_names` refers to an array that is not exported.
-        ValueError: If the destination suffix, predictions, targets, output scales, or MATLAB names are invalid.
+        ValueError: If the destination suffix, predictions, targets, output scales, or MATLAB names are invalid, or if
+            `pool.flat_index` repeats an index.
     """
     path = Path(output_path).expanduser().resolve()
     if path.suffix.lower() != ".npz":
@@ -153,24 +159,49 @@ def save_prediction_artifact(
             field_names=mat_field_names,
         )
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    save_npz = cast(Any, np.savez_compressed)
-    save_npz(
-        path,
-        prediction=dense_predictions,
-        flat_prediction=flat_predictions,
-        target=dense_targets,
-        flat_target=flat_targets,
-        inputs=pool.inputs,
-        dense_inputs=dense_inputs,
-        mask=validity_mask,
-        flat_index=pool.flat_index,
-        reference_shape=np.asarray(pool.reference_shape, dtype=np.int64),
+    npz_arrays = {
+        "prediction": dense_predictions,
+        "flat_prediction": flat_predictions,
+        "target": dense_targets,
+        "flat_target": flat_targets,
+        "inputs": pool.inputs,
+        "dense_inputs": dense_inputs,
+        "mask": validity_mask,
+        "flat_index": pool.flat_index,
+        "reference_shape": np.asarray(pool.reference_shape, dtype=np.int64),
         **metadata,
-    )
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_atomically(path, lambda file: cast(Any, np.savez_compressed)(file, **npz_arrays))
     if matlab_arrays is not None:
-        savemat(path.with_suffix(".mat"), matlab_arrays, do_compression=True, oned_as="row")
+        _write_atomically(
+            path.with_suffix(".mat"),
+            lambda file: savemat(file, matlab_arrays, do_compression=True, oned_as="row"),
+        )
     return path
+
+
+def _write_atomically(path: Path, write: Callable[[BinaryIO], None]) -> None:
+    """Write a file through a temporary sibling so readers never see a partial file.
+
+    The temporary file is renamed over `path` only after `write` succeeds, so an interrupted save leaves any previous
+    file at `path` intact. The temporary file is removed when `write` fails.
+
+    Args:
+        path: Final destination path.
+        write: Callable writing the complete file contents to an open binary file.
+    """
+    # Unlike `tempfile.mkstemp`, `open` honors the umask, so the renamed file keeps ordinary permissions.
+    temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("xb") as file:
+            write(file)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def load_prediction_artifact(path: str | Path) -> PredictionArtifact:
