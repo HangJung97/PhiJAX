@@ -11,6 +11,7 @@ from phijax.data import (
     SpaceTimeSampler,
     UniformDomainSampler,
     create_sampler,
+    reconstruct_predictions,
 )
 from phijax.data.samplers import sample_pool
 
@@ -76,6 +77,14 @@ def test_host_pool_recursively_freezes_nested_metadata() -> None:
         nested["density"] = 1060.0
     with pytest.raises(ValueError, match="read-only"):
         nested["scales"][0] = -1.0
+
+
+def test_reconstruct_predictions_rejects_duplicate_flat_indices() -> None:
+    """Verify reconstruction refuses indices that would overwrite each other on the dense grid."""
+    pool = HostPool(inputs=np.zeros((2, 1), dtype=np.float32), reference_shape=(2,), flat_index=np.asarray([0, 0]))
+
+    with pytest.raises(ValueError, match="must be unique"):
+        reconstruct_predictions(np.ones((2, 1), dtype=np.float32), pool)
 
 
 def test_device_sampling_is_reproducible_and_fixed_shape() -> None:

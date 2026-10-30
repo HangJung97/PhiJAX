@@ -104,6 +104,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   error as a note.
 - `ExactNTKBalancer` and `GradNormBalancer` keep their previous weights when an update sees an infinite NTK trace or
   gradient norm. Previously one infinite value turned the weights into `inf` or `nan` for the rest of training.
+- `save_prediction_artifact()` and `reconstruct_predictions()` reject a pool whose `flat_index` repeats an index.
+  Previously the save kept only the last of the repeated rows and wrote an artifact that `load_prediction_artifact()`
+  rejects. Artifact files are now written to a temporary file and renamed into place, so an interrupted save keeps
+  the previous file.
 
 ## [0.2.0b5] - 2026-09-11
 
