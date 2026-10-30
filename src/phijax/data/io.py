@@ -7,6 +7,7 @@ import mat73
 import numpy as np
 from numpy.typing import NDArray
 from scipy.io import loadmat
+from scipy.io.matlab import mat_struct
 
 ArrayFormat = Literal["auto", "npz", "mat", "hdf5"]
 
@@ -68,7 +69,29 @@ def _load_mat(path: Path) -> dict[str, Any]:
                 raise ValueError(f"MATLAB v7.3 decoder returned no fields for `{path}`.") from None
             return decoded
         raise
-    return {name: value for name, value in contents.items() if not name.startswith("__")}
+    return {name: _mat_struct_to_dict(value) for name, value in contents.items() if not name.startswith("__")}
+
+
+def _mat_struct_to_dict(value: Any) -> Any:
+    """Convert SciPy MATLAB structs into nested dictionaries, as the v7.3 decoder returns them.
+
+    Cell arrays stay object arrays, so ragged cells remain loadable; only struct values inside them are converted.
+
+    Args:
+        value: Value decoded by :func:`scipy.io.loadmat` with `struct_as_record=False`.
+
+    Returns:
+        A dictionary for a struct, an object array with converted elements for a cell or struct array, or `value`.
+    """
+    if isinstance(value, mat_struct):
+        # SciPy stores each field as an instance attribute, plus a private `_fieldnames` list.
+        return {name: _mat_struct_to_dict(field) for name, field in vars(value).items() if name != "_fieldnames"}
+    if isinstance(value, np.ndarray) and value.dtype == object:
+        converted = np.empty(value.shape, dtype=object)
+        for index, item in np.ndenumerate(value):
+            converted[index] = _mat_struct_to_dict(item)
+        return converted
+    return value
 
 
 def _load_npz(path: Path) -> dict[str, Any]:
@@ -115,8 +138,9 @@ def load_arrays(path: str | Path, *, file_format: ArrayFormat = "auto") -> dict[
     """Load an NPZ, MATLAB, or HDF5 artifact into host memory.
 
     File access and decoding remain entirely NumPy-based so this function can run without initializing a JAX backend.
-    HDF5 groups are represented by nested dictionaries, while all HDF5 datasets are materialized before the file is
-    closed. Automatic mode uses the file suffix and recognizes HDF5 content when the suffix is unknown.
+    HDF5 groups and MATLAB structs are represented by nested dictionaries, while all HDF5 datasets are materialized
+    before the file is closed. Automatic mode uses the file suffix and recognizes HDF5 content when the suffix is
+    unknown.
 
     Args:
         path: Source `.npz`, `.mat`, `.h5`, `.hdf`, or `.hdf5` path.
