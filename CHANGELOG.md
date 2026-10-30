@@ -32,6 +32,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `EarlyStopping` accepts `check_finite` and `check_every_n_steps`, and stores its progress in checkpoints, so a
   resumed fit stops at the same step as an uninterrupted one. Progress stored for a different `monitor` or `mode` is
   skipped with a warning, and a changed `patience` keeps the configured value with a warning.
+- `Trainer.predict()` runs across several JAX processes. Each process predicts an equal share of every prediction
+  batch, and the outputs are gathered so every process returns the complete predictions in batch order. With several
+  devices, prediction chunks no longer need to be divisible by the device count; they are padded instead.
 
 ### Breaking changes
 
@@ -127,8 +130,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   raises `ValueError` when the starting state differs between processes. A stop requested by any process stops every
   process after the same step: `trainer.should_stop` and `SIGINT` are combined with the new
   `Strategy.reduce_boolean_decisions()`, and `SIGTERM` uses JAX's preemption sync step. A two-process CPU integration
-  test covers fitting, resuming, and each stop request. Multi-process `Trainer.predict()` raises `NotImplementedError`
-  for now.
+  test covers fitting, resuming, and each stop request.
 
 ## [0.2.0b5] - 2026-09-11
 

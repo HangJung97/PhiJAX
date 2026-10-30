@@ -25,6 +25,8 @@ trainer.fit(module, datamodule=datamodule, optimizer=optimizer, seed=0)
 ```
 
 The batch sizes requested by the DataModule are the total rows per step. They must be divisible by the device count.
+Prediction chunks can have any size: `Trainer.predict()` pads each chunk to a multiple of the device count, splits it
+over the devices, and drops the padded rows from the returned predictions.
 
 ## Run on several machines
 
@@ -56,8 +58,7 @@ Several machines change four rules:
 | Data and output | `prepare_data()` files and checkpoints must be on storage every machine can read.              |
 
 Each process samples its own rows, and logging, progress bars, and prediction writing run on global process zero
-only. `Trainer.predict()` does not support several processes yet and raises `NotImplementedError`; predict from the
-saved checkpoint in a single process.
+only. `Trainer.predict()` runs on every process and returns the complete predictions on each of them.
 
 ## How multi-process placement works
 
@@ -68,6 +69,11 @@ saved checkpoint in a single process.
 - **Sampling.** [`Strategy.process_key()`](#phijax.training.Strategy.process_key) folds the process index into the
   stored sampling and balancer keys. Processes draw different rows, while the checkpointed keys stay identical, so a
   resumed fit draws the same batches.
+- **Prediction.** Every process builds the same prediction batches. As on one machine, each batch is padded so its
+  rows divide over all devices, and each process predicts an equal share. The outputs are gathered with
+  `multihost_utils.process_allgather()` and put back in batch order, so every process receives the same complete
+  predictions, and `PredictionWriter` writes them once from global process zero. Like Lightning's distributed
+  prediction, this spreads the work over every device; unlike Lightning, no per-rank files need merging.
 - **Data preparation.** [`Strategy.barrier()`](#phijax.training.Strategy.barrier) makes every process wait until
   global process zero finishes `PhiDataModule.prepare_data()`. See [multi-process runs](data.md#multi-process-runs).
 

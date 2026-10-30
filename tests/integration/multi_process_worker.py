@@ -11,16 +11,17 @@ import jax
 from phijax.training import initialize_distributed
 
 # Distributed initialization must precede every other JAX backend operation.
-if __name__ == "__main__":
+if __name__ == "__main__" and sys.argv[1] != "single-process":
     initialize_distributed(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
 
+import jax.numpy as jnp
 import numpy as np
 import optax
 from jax.experimental import multihost_utils
 
 from phijax import PhiModule, Trainer
 from phijax.callbacks import Callback, ModelCheckpoint
-from phijax.data import HostPool, NamedBatchSource, PhiDataModule
+from phijax.data import ChunkedPredictionSource, HostPool, NamedBatchSource, PhiDataModule
 from phijax.data.datamodule import DataStage
 from phijax.equations import base_data_fidelity
 from phijax.models import build_mlp
@@ -39,7 +40,12 @@ class _LineDataModule(PhiDataModule):
         """
         del stage
         inputs = np.linspace(-1.0, 1.0, 64, dtype=np.float32)[:, None]
-        self.pools = {"data": HostPool(inputs=inputs, targets=np.sin(3.0 * inputs))}
+        # Ten prediction rows in chunks of six: the last chunk is padded, and six rows do not split over four devices.
+        predict_inputs = np.linspace(-0.9, 0.9, 10, dtype=np.float32)[:, None]
+        self.pools = {
+            "data": HostPool(inputs=inputs, targets=np.sin(3.0 * inputs)),
+            "predict": HostPool(inputs=predict_inputs),
+        }
 
     def train_batch_source(self, batch_keys: tuple[str, ...], key: jax.Array) -> NamedBatchSource:
         """Sample four rows per process and step.
@@ -51,7 +57,15 @@ class _LineDataModule(PhiDataModule):
         Returns:
             Step-indexed batch source.
         """
-        return NamedBatchSource.from_pools(self._require_setup("fit"), {"data": 4}, key, names=batch_keys)
+        return NamedBatchSource.from_pools({"data": self.pools["data"]}, {"data": 4}, key, names=batch_keys)
+
+    def predict_batch_source(self) -> ChunkedPredictionSource:
+        """Yield ordered prediction chunks of six rows.
+
+        Returns:
+            Chunked prediction source.
+        """
+        return ChunkedPredictionSource(self.pools["predict"], 6)
 
 
 class _BatchRecorder(Callback):
@@ -112,6 +126,7 @@ def _fit(
     resume: bool = False,
     seed: int = 0,
     stop_request: str | None = None,
+    predict: bool = False,
 ) -> dict[str, Any]:
     """Fit across every process and return host-readable results.
 
@@ -121,6 +136,7 @@ def _fit(
         resume: Whether to resume from the latest checkpoint in `directory`.
         seed: Initialization seed for this process.
         stop_request: Optional stop that process 1 alone requests after step 2.
+        predict: Whether to predict after fitting and compare with a direct single-device evaluation.
 
     Returns:
         Recorded batches, final step, flattened parameters, and metrics.
@@ -152,6 +168,17 @@ def _fit(
         ckpt_path=directory if resume else None,
     )
     parameters = [np.asarray(leaf).reshape(-1).tolist() for leaf in jax.tree.leaves(result.state.model_state)]
+    prediction: dict[str, Any] = {}
+    if predict:
+        data_module = _LineDataModule()
+        predictions = trainer.predict(result, datamodule=data_module)
+        # Evaluate this process's copy of the replicated state on one local device as the reference.
+        local_state = jax.tree.map(lambda leaf: leaf.addressable_data(0), result.state.model_state)
+        expected = result.module.predict_step(local_state, {"inputs": jnp.asarray(data_module.pools["predict"].inputs)})
+        prediction = {
+            "values": np.asarray(predictions).reshape(-1).tolist(),
+            "max_error": float(np.max(np.abs(np.asarray(predictions) - np.asarray(expected)))),
+        }
     return {
         "batches": recorder.batches,
         "step": int(np.asarray(result.state.step)),
@@ -160,6 +187,7 @@ def _fit(
         "mesh_size": len(trainer.strategy.devices),
         "stopped_early": result.stopped_early,
         "interrupted": result.interrupted,
+        "prediction": prediction,
     }
 
 
@@ -170,17 +198,13 @@ def main(output: Path) -> None:
         output: Directory shared by every process for checkpoints and results.
     """
     results: dict[str, Any] = {
-        "full": _fit(output / "full", 4),
+        "full": _fit(output / "full", 4, predict=True),
         "first_half": _fit(output / "split", 2),
         "resumed": _fit(output / "split", 4, resume=True),
         "single_device_mesh": [
             (device.process_index, device.id) for device in create_strategy("cpu", devices=1).devices
         ],
     }
-    try:
-        Trainer(max_steps=1, accelerator="cpu", logger=False).predict_state(None, None, [])  # type: ignore[arg-type]
-    except NotImplementedError as error:
-        results["predict_error"] = str(error)
     try:
         _fit(output / "mismatch", 1, seed=jax.process_index())
     except ValueError as error:
@@ -196,5 +220,17 @@ def main(output: Path) -> None:
     (output / f"process_{jax.process_index()}.json").write_text(json.dumps(results))
 
 
+def main_single_process(output: Path) -> None:
+    """Fit and predict in one process over all local devices and write the results as JSON.
+
+    Args:
+        output: Directory for checkpoints and results.
+    """
+    (output / "single_process.json").write_text(json.dumps(_fit(output / "single", 2, predict=True)))
+
+
 if __name__ == "__main__":
-    main(Path(sys.argv[4]))
+    if sys.argv[1] == "single-process":
+        main_single_process(Path(sys.argv[2]))
+    else:
+        main(Path(sys.argv[4]))

@@ -25,7 +25,7 @@ def _free_port() -> int:
 
 @pytest.mark.slow
 def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
-    """Verify two-process CPU fits sample per process, resume exactly, reject mismatched states, and stop together.
+    """Verify two-process CPU fits sample per process, resume, predict, reject mismatched states, and stop together.
 
     Each worker process owns two CPU devices, so the data-parallel mesh spans four devices on two processes.
 
@@ -74,7 +74,10 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
 
     # `devices=1` selects one device on each process.
     assert sorted(process for process, _ in results[0]["single_device_mesh"]) == [0, 1]
-    assert "multi-process" in results[0]["predict_error"]
+    # Prediction splits each chunk over both processes and gathers complete, ordered outputs on every process.
+    assert len(full["prediction"]["values"]) == 10
+    assert full["prediction"]["max_error"] < 1e-6
+    assert results[0]["full"]["prediction"] == results[1]["full"]["prediction"]
     # Different seeds per process are rejected on every process instead of silently diverging.
     for result in results:
         assert "differs between JAX processes" in result["mismatch_error"]
@@ -88,3 +91,28 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
     assert results[0]["sigterm"] == results[1]["sigterm"]
     assert results[0]["sigterm"]["exit_code"] == 143
     assert results[0]["sigterm"]["saved_steps"][-1] > 2
+
+
+@pytest.mark.slow
+def test_single_process_prediction_pads_chunks_over_local_devices(tmp_path: Path) -> None:
+    """Verify one process with four devices predicts six-row chunks, which do not divide evenly over the devices.
+
+    Args:
+        tmp_path: Directory for the worker's checkpoints and results.
+    """
+    worker = Path(__file__).with_name("multi_process_worker.py")
+    environment = {**os.environ, "JAX_PLATFORMS": "cpu", "XLA_FLAGS": "--xla_force_host_platform_device_count=4"}
+    completed = subprocess.run(
+        [sys.executable, str(worker), "single-process", str(tmp_path)],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    result = json.loads((tmp_path / "single_process.json").read_text())
+    assert result["mesh_size"] == 4
+    assert len(result["prediction"]["values"]) == 10
+    assert result["prediction"]["max_error"] < 1e-6
