@@ -67,6 +67,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The first `Ctrl+C` or `SIGTERM` during fitting now lets the current step finish before interrupting, so the
   returned state and the `save_on_exception` checkpoint always match a completed step. A repeated signal still stops
   immediately.
+- The Trainer calls `PhiDataModule.prepare_data()` only on global process zero. Other processes wait at the new
+  `Strategy.barrier()` and then run `setup()`, so prepared files must be on storage every host can read.
+  Single-process runs are unchanged. See
+  [multi-process runs](https://hangjung97.github.io/PhiJAX/api/data/#multi-process-runs).
 
 ### Fixed
 

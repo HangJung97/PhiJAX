@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import jax
@@ -31,8 +31,10 @@ class PhiDataModule(ABC):
     def prepare_data(self) -> None:
         """Prepare external artifacts before application pools are constructed.
 
-        The base implementation performs no work. Subclasses may generate or download files but should not assign
-        process-local runtime state here. Runtime pools belong in :meth:`setup`.
+        The base implementation performs no work. Subclasses may generate or download files. The Trainer calls this
+        method only on global process zero, and every process waits for it before :meth:`setup`. Write files to storage
+        every host can read, and do not assign attributes that :meth:`setup` needs: other processes never run this
+        method. Runtime pools belong in :meth:`setup`, which runs on every process.
         """
         return None
 
@@ -44,11 +46,22 @@ class PhiDataModule(ABC):
             stage: Requested `fit` or `predict` lifecycle stage.
         """
 
-    def prepare_stage(self, stage: DataStage) -> None:
+    def prepare_stage(
+        self,
+        stage: DataStage,
+        *,
+        run_prepare_data: bool = True,
+        wait_for_prepare_data: Callable[[], None] | None = None,
+    ) -> None:
         """Prepare data and set up one stage exactly once until teardown.
 
         Args:
             stage: Requested `fit` or `predict` lifecycle stage.
+            run_prepare_data: Whether this process calls :meth:`prepare_data`. The Trainer passes `True` only on global
+                process zero.
+            wait_for_prepare_data: Optional callable that blocks until process zero has finished
+                :meth:`prepare_data`. It runs before :meth:`setup`, so no process reads files that are still being
+                written.
 
         Raises:
             BaseException: Re-raises preparation or setup errors after best-effort application teardown.
@@ -59,7 +72,10 @@ class PhiDataModule(ABC):
             active = self.prepared_stage
             raise RuntimeError(f"DataModule stage `{active}` is still active; tear it down before `{stage}`.")
         try:
-            self.prepare_data()
+            if run_prepare_data:
+                self.prepare_data()
+            if wait_for_prepare_data is not None:
+                wait_for_prepare_data()
             self.setup(stage)
             self.prepared_stage = stage
         except BaseException:

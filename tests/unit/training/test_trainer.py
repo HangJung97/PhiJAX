@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import jax
 import jax.numpy as jnp
@@ -2286,7 +2286,7 @@ def test_trainer_builds_training_source_from_data_module() -> None:
         datamodule=data_module,
     )
 
-    data_module.prepare_stage.assert_called_once_with("fit")
+    data_module.prepare_stage.assert_called_once_with("fit", run_prepare_data=True, wait_for_prepare_data=ANY)
     requested_keys, requested_sampling_key = data_module.train_batch_source.call_args.args
     assert requested_keys == ("train",)
     np.testing.assert_array_equal(jax.random.key_data(requested_sampling_key), jax.random.key_data(state.sampling_key))
@@ -2960,7 +2960,7 @@ def test_trainer_predict_sets_up_and_uses_data_module_source() -> None:
     predictions = trainer.predict_state(_RecordingModule(), state, datamodule=data_module)
 
     np.testing.assert_array_equal(predictions, [[2.0], [4.0]])
-    data_module.prepare_stage.assert_called_once_with("predict")
+    data_module.prepare_stage.assert_called_once_with("predict", run_prepare_data=True, wait_for_prepare_data=ANY)
     data_module.predict_batch_source.assert_called_once_with()
     data_module.teardown_stage.assert_called_once_with("predict")
 
@@ -2980,8 +2980,31 @@ def test_trainer_predict_skips_missing_data_module_source() -> None:
 
     assert predictions is None
     assert callback.events == []
-    data_module.prepare_stage.assert_called_once_with("predict")
+    data_module.prepare_stage.assert_called_once_with("predict", run_prepare_data=True, wait_for_prepare_data=ANY)
     data_module.teardown_stage.assert_called_once_with("predict")
+
+
+@pytest.mark.parametrize("is_global_zero", [True, False], ids=["process-zero", "other-process"])
+def test_trainer_prepares_data_only_on_process_zero_and_always_waits(is_global_zero: bool) -> None:
+    """Verify `prepare_data()` runs only on global process zero and every process waits at the barrier.
+
+    Args:
+        is_global_zero: Whether this process is global process zero.
+    """
+    strategy = SingleDeviceStrategy(jax.devices("cpu")[0])
+    strategy.is_global_zero = is_global_zero
+    barriers: list[str] = []
+    strategy.barrier = barriers.append  # type: ignore[method-assign]
+    data_module = MagicMock(spec=PhiDataModule)
+    data_module.predict_batch_source.return_value = None
+    trainer = Trainer(max_steps=1, strategy=strategy, logger=False)
+
+    trainer.predict_state(_RecordingModule(), _state(), datamodule=data_module)
+
+    call = data_module.prepare_stage.call_args
+    assert call.kwargs["run_prepare_data"] is is_global_zero
+    call.kwargs["wait_for_prepare_data"]()
+    assert barriers == ["phijax_prepare_data_predict"]
 
 
 def test_trainer_prediction_context_exposes_source_pool_and_rank() -> None:
