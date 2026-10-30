@@ -1,10 +1,12 @@
+import hashlib
 from collections.abc import Sequence
 from typing import Any, Literal
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 from jax.experimental import multihost_utils
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.sharding import AxisType, NamedSharding, PartitionSpec
 
 from phijax.types import JaxDevice
 
@@ -17,6 +19,7 @@ class Strategy:
 
     Attributes:
         process_index: Global JAX process index.
+        process_count: Number of JAX processes in the run.
         is_global_zero: Whether this process owns rank-zero logging side effects.
     """
 
@@ -33,6 +36,7 @@ class Strategy:
             raise ValueError("A training strategy requires at least one device.")
         self.devices = tuple(devices)
         self.process_index = jax.process_index()
+        self.process_count = jax.process_count()
         self.is_global_zero = self.process_index == 0
 
     def barrier(self, name: str) -> None:
@@ -45,6 +49,44 @@ class Strategy:
         """
         if jax.process_count() > 1:
             multihost_utils.sync_global_devices(name)
+
+    def reduce_boolean_decisions(self, *decisions: bool, all: bool = True) -> tuple[bool, ...]:  # noqa: A002
+        """Combine boolean decisions across processes, like Lightning's `Strategy.reduce_boolean_decision`.
+
+        A single-process run returns the decisions unchanged. Otherwise one collective gathers every process's
+        decisions, so every process must call this method at the same point.
+
+        Args:
+            *decisions: This process's decisions.
+            all: Keep a decision only when every process made it. `False` keeps it when any process made it.
+
+        Returns:
+            Combined decisions in the input order, identical on every process.
+        """
+        if jax.process_count() == 1:
+            return tuple(bool(decision) for decision in decisions)
+        # Shape `[processes, decisions]`.
+        gathered = np.asarray(multihost_utils.process_allgather(np.asarray(decisions, dtype=bool)))
+        combined = gathered.all(axis=0) if all else gathered.any(axis=0)
+        return tuple(bool(decision) for decision in combined)
+
+    def process_key(self, key: jax.Array) -> jax.Array:
+        """Return this process's PRNG key for host-side sampling.
+
+        A single-process run returns `key` unchanged. In a multi-process run, `key` is a replicated global array; the
+        result is this process's copy folded with :attr:`process_index`, so each process draws different samples
+        while the stored key stays identical everywhere and resumes reproducibly.
+
+        Args:
+            key: Typed PRNG key from the training state.
+
+        Returns:
+            Process-local key.
+        """
+        if jax.process_count() == 1:
+            return key
+        local_key = key if key.is_fully_addressable else key.addressable_data(0)
+        return jax.random.fold_in(local_key, self.process_index)
 
     def place_state(self, state: Any) -> Any:
         """Place a functional training-state PyTree.
@@ -146,19 +188,46 @@ class DataParallelStrategy(Strategy):
             raise ValueError("Data-parallel training requires at least two devices.")
         super().__init__(devices)
         self.axis_name = axis_name
-        self.mesh = Mesh(np.asarray(self.devices), (axis_name,))
+        # `make_mesh` may order devices for faster communication. Auto axes let `jit` propagate shardings, as the
+        # compiled step does not annotate output shardings.
+        self.mesh = jax.make_mesh((len(self.devices),), (axis_name,), (AxisType.Auto,), devices=self.devices)
         self._replicated = NamedSharding(self.mesh, PartitionSpec())
 
     def place_state(self, state: Any) -> Any:
         """Replicate every training-state array over the mesh.
+
+        In a multi-process run, every process must hold an identical state, for example from the same `seed` or the
+        same checkpoint. The state is checked once before placement.
 
         Args:
             state: Training-state PyTree.
 
         Returns:
             Replicated global training state.
+
+        Raises:
+            ValueError: If the state differs between processes.
         """
-        return jax.device_put(state, self._replicated)
+        if jax.process_count() == 1:
+            return jax.device_put(state, self._replicated)
+        _check_identical_across_processes(state)
+
+        def replicate(value: Any) -> Any:
+            """Build one replicated global array from this process's identical full copy.
+
+            Args:
+                value: State leaf, which every process holds in full.
+
+            Returns:
+                Global array replicated over the mesh.
+            """
+            if jnp.issubdtype(value.dtype, jax.dtypes.prng_key):
+                data = replicate(jax.random.key_data(value))
+                return jax.random.wrap_key_data(data, impl=jax.random.key_impl(value))
+            return jax.make_array_from_process_local_data(self._replicated, np.asarray(value))
+
+        # `device_put` cannot target devices owned by other processes.
+        return jax.tree.map(replicate, state)
 
     def place_batch(self, batch: Any) -> Any:
         """Shard each non-scalar batch leaf along its leading dimension.
@@ -207,21 +276,55 @@ class DataParallelStrategy(Strategy):
         return jax.tree.map(place_leaf, batch)
 
 
+def _check_identical_across_processes(state: Any) -> None:
+    """Verify that every process holds the same state before it is treated as replicated.
+
+    `jax.make_array_from_process_local_data` trusts each process's copy, so differing copies would silently diverge.
+    Each process gathers one SHA-256 digest per leaf instead of the full state.
+
+    Args:
+        state: Process-local training-state PyTree.
+
+    Raises:
+        ValueError: If any leaf differs between processes.
+    """
+    paths, leaves = zip(*jax.tree_util.tree_flatten_with_path(state)[0], strict=True)
+    digests = []
+    for leaf in leaves:
+        values = jax.random.key_data(leaf) if jnp.issubdtype(leaf.dtype, jax.dtypes.prng_key) else leaf
+        digest = hashlib.sha256(np.ascontiguousarray(np.asarray(values)).tobytes()).digest()
+        digests.append(np.frombuffer(digest, dtype=np.uint8))
+    # Shape `[processes, leaves, 32]`.
+    gathered = np.asarray(multihost_utils.process_allgather(np.stack(digests)))
+    matches = np.all(gathered == gathered[:1], axis=(0, 2))
+    differing = [jax.tree_util.keystr(path) for path, match in zip(paths, matches, strict=True) if not match]
+    if differing:
+        raise ValueError(
+            f"The training state differs between JAX processes in {differing}. Every process must start from the same "
+            "state: use the same `seed`, model configuration, and checkpoint on every process."
+        )
+
+
 def create_strategy(
     accelerator: Accelerator = "auto",
     devices: DeviceSelection = 1,
 ) -> Strategy:
     """Create a single-device or data-parallel strategy from visible JAX devices.
 
+    `devices` counts or indexes each process's local devices, as Lightning's `devices` counts devices per node. In a
+    multi-process run every process selects the same local positions, and the strategy spans the selected devices of
+    all processes.
+
     Args:
         accelerator: One of `auto`, `cpu`, `gpu`, or `tpu`.
-        devices: Device count, explicit backend-device indices, or `auto` for every matching device.
+        devices: Device count per process, explicit local device indices, or `auto` for every matching device.
 
     Returns:
         Strategy over the selected devices.
 
     Raises:
-        ValueError: If the accelerator, count, or device indices are invalid.
+        ValueError: If the accelerator, count, or device indices are invalid, or if a process has fewer matching
+            devices than the selection needs.
         RuntimeError: If the requested accelerator has no visible devices.
     """
     if accelerator not in {"auto", "cpu", "gpu", "tpu"}:
@@ -232,19 +335,25 @@ def create_strategy(
         raise RuntimeError(f"No usable `{accelerator}` JAX backend is available.") from error
     if not available:
         raise RuntimeError(f"No `{accelerator}` devices are visible to JAX.")
+    # `jax.devices()` lists every process's devices in the same order on all processes, so grouping it by process
+    # gives each process the same view of the global mesh.
+    process_devices = [tuple(d for d in available if d.process_index == p) for p in range(jax.process_count())]
+    local_count = len(process_devices[jax.process_index()])
     if devices == "auto":
-        selected = available
+        positions = tuple(range(local_count))
     elif isinstance(devices, int):
-        if devices < 1 or devices > len(available):
-            raise ValueError(f"Requested {devices} devices, but {len(available)} are available.")
-        selected = available[:devices]
+        if devices < 1 or devices > local_count:
+            raise ValueError(f"Requested {devices} devices, but {local_count} are available.")
+        positions = tuple(range(devices))
     elif isinstance(devices, Sequence) and not isinstance(devices, str):
-        indices = tuple(devices)
-        if not indices or any(index < 0 or index >= len(available) for index in indices):
-            raise ValueError(f"Device indices must select from `0..{len(available) - 1}`.")
-        selected = tuple(available[index] for index in indices)
+        positions = tuple(devices)
+        if not positions or any(index < 0 or index >= local_count for index in positions):
+            raise ValueError(f"Device indices must select from `0..{local_count - 1}`.")
     else:
         raise ValueError("`devices` must be a positive count, an index sequence, or `auto`.")
+    if any(len(group) <= max(positions) for group in process_devices):
+        raise ValueError(f"Every JAX process needs at least {max(positions) + 1} `{accelerator}` devices.")
+    selected = tuple(group[index] for group in process_devices for index in positions)
     return SingleDeviceStrategy(selected[0]) if len(selected) == 1 else DataParallelStrategy(selected)
 
 

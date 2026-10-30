@@ -40,6 +40,7 @@ from phijax.data import (
 from phijax.models import InitializedModel
 from phijax.training import (
     ExperimentLogger,
+    FitResult,
     OrbaxCheckpointIO,
     SingleDeviceStrategy,
     Strategy,
@@ -2030,6 +2031,119 @@ def test_repeated_sigint_interrupts_immediately_with_the_last_completed_state(tm
 
     assert result.interrupted is True
     assert int(result.state.step) == 2
+
+
+class _SignalHandlerRecorder(Callback):
+    """Record the `SIGTERM` handler active during fitting."""
+
+    def __init__(self) -> None:
+        """Start without a recorded handler."""
+        self.sigterm_handler: Any = None
+
+    def on_fit_start(self, context: TrainerContext) -> None:
+        """Record the installed `SIGTERM` handler.
+
+        Args:
+            context: Fit-start context.
+        """
+        del context
+        self.sigterm_handler = signal.getsignal(signal.SIGTERM)
+
+
+@pytest.mark.parametrize("request_kind", ["should_stop", "SIGINT", "SIGTERM", "preemption"])
+def test_multi_process_fit_stops_with_a_request_from_another_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request_kind: str
+) -> None:
+    """Verify a stop requested only by another process stops this process after the same step.
+
+    The run pretends to have two processes; the combined stop decisions come from the patched strategy, and the
+    preemption sync step from the patched JAX helper.
+
+    Args:
+        monkeypatch: Pytest attribute patch helper.
+        tmp_path: Temporary checkpoint root.
+        request_kind: Stop request sent by the simulated other process after step 3.
+    """
+    monkeypatch.setattr(fit_loop_module, "_preemption_service_enabled", lambda: request_kind == "preemption")
+    monkeypatch.setattr(
+        fit_loop_module.multihost_utils,
+        "reached_preemption_sync_point",
+        lambda step: request_kind == "preemption" and step == 3,
+    )
+    strategy = SingleDeviceStrategy(jax.devices("cpu")[0])
+    strategy.process_count = 2
+    remote_index = {"should_stop": 0, "SIGINT": 1, "SIGTERM": 2}.get(request_kind)
+    completed_steps: list[int] = []
+
+    def reduce_boolean_decisions(*decisions: bool, all: bool = True) -> tuple[bool, ...]:  # noqa: A002
+        """Combine this process's decisions with the other process's request after step 3.
+
+        Args:
+            *decisions: This process's `should_stop`, `SIGINT`, and `SIGTERM` decisions.
+            all: Must be `False` for stop requests.
+
+        Returns:
+            Combined decisions.
+        """
+        assert all is False
+        completed_steps.append(len(completed_steps))
+        remote = completed_steps[-1] == 3
+        return tuple(bool(value) or (remote and index == remote_index) for index, value in enumerate(decisions))
+
+    monkeypatch.setattr(strategy, "reduce_boolean_decisions", reduce_boolean_decisions)
+    recorder = _SignalHandlerRecorder()
+    checkpoint = ModelCheckpoint(
+        OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False), every_n_steps=100, save_last=False
+    )
+    trainer = Trainer(
+        max_steps=6,
+        callbacks=(recorder, checkpoint),
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        strategy=strategy,
+    )
+
+    def fit() -> FitResult:
+        """Run the simulated multi-process fit.
+
+        Returns:
+            Fit result.
+        """
+        return trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+
+    if request_kind in {"SIGTERM", "preemption"}:
+        with pytest.raises(SystemExit) as exception:
+            fit()
+        assert exception.value.code == 128 + signal.SIGTERM
+        # `SIGTERM` saves the agreed step even without `save_on_exception`.
+        with OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False) as checkpoint_io:
+            assert checkpoint_io.latest_step == 3
+    else:
+        result = fit()
+        assert int(result.state.step) == 3
+        assert result.stopped_early is (request_kind == "should_stop")
+        assert result.interrupted is (request_kind == "SIGINT")
+    # With JAX's preemption service, `SIGTERM` is left to JAX instead of PhiJAX's handler.
+    handled_by_phijax = getattr(recorder.sigterm_handler, "__self__", None) is trainer._signal_connector
+    assert handled_by_phijax is (request_kind != "preemption")
+
+
+def test_synchronized_signal_connector_waits_for_agreement() -> None:
+    """Verify a multi-process signal stays pending until every process agrees on the request."""
+    connector = _SignalConnector()
+    connector.install(synchronized=True)
+    try:
+        os.kill(os.getpid(), signal.SIGINT)
+        connector.raise_if_requested()
+        assert connector.pending_signal == signal.SIGINT
+
+        connector.request(signal.SIGTERM)
+        assert connector.received_sigterm is True
+        with pytest.raises(SystemExit):
+            connector.raise_if_requested()
+    finally:
+        connector.restore()
 
 
 def test_trainer_prints_bfloat16_amp_and_selected_cuda_environment(

@@ -118,7 +118,9 @@ error is re-raised. After a successful task, teardown still runs every hook and 
 During fitting, the first `Ctrl+C` lets the current step finish, including its callbacks and checkpoint writes, and
 then returns `FitResult(interrupted=True)` with that step's state. Exception hooks, logger finalization, and teardown
 still run, so `ModelCheckpoint(save_on_exception=True)` saves the completed step. `SIGTERM` performs the same cleanup
-but exits with status `143` instead of returning. A repeated signal stops immediately without waiting for the step.
+but exits with status `143` instead of returning. Because `SIGTERM` usually means preemption, `ModelCheckpoint` always
+saves the completed step for it, even without `save_on_exception`. A repeated signal stops immediately without waiting
+for the step.
 
 ## Choosing an extension point
 

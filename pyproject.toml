@@ -146,6 +146,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "examples/**" = ["S101"] # Examples may use assertions for concise runtime checks.
 "tests/**" = ["S101"]    # Pytest uses assertions for test expectations.
+# The multi-process test starts its own worker script with the current interpreter.
+"tests/integration/test_multi_process.py" = ["S101", "S603"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

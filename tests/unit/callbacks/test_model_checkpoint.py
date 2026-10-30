@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import jax
@@ -185,6 +186,24 @@ def test_model_checkpoint_optionally_saves_last_valid_state_on_exception() -> No
     callback.on_exception(RuntimeError("duplicate"), context)
 
     assert checkpoint_io.saved == [("valid", 7, {"loss": 0.5}, True, {})]
+
+
+@pytest.mark.parametrize("received_sigterm", [False, True])
+def test_model_checkpoint_saves_on_sigterm_without_save_on_exception(received_sigterm: bool) -> None:
+    """Verify a `SIGTERM` stop always saves the last valid state, while other exceptions need `save_on_exception`.
+
+    Args:
+        received_sigterm: Whether the Trainer reports a `SIGTERM` stop.
+    """
+    checkpoint_io = _RecordingCheckpointIO()
+    callback = ModelCheckpoint(checkpoint_io, save_last=False)
+    callback.connect(SimpleNamespace(received_sigterm=received_sigterm, callback_state_dict=dict))
+    context = TrainerContext("valid", 7, {"loss": jnp.asarray(0.5)})
+
+    callback.setup()
+    callback.on_exception(SystemExit(143), context)
+
+    assert [saved[1] for saved in checkpoint_io.saved] == ([7] if received_sigterm else [])
 
 
 def test_model_checkpoint_retains_best_monitored_states() -> None:

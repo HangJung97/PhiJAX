@@ -81,7 +81,8 @@ class Trainer:
             max_steps: Global optimizer step at which training stops. A fit resumed from a checkpoint runs only the
                 remaining `max_steps - step` updates.
             accelerator: Device backend selected when `strategy` is absent. Choose `auto`, `cpu`, `gpu`, or `tpu`.
-            devices: Positive device count, explicit device indices, or `auto` for all matching visible devices.
+            devices: Positive device count per process, explicit local device indices, or `auto` for all matching
+                devices. A multi-process run selects the same local devices on every process.
             precision: Precision name or resolved policy. Supported names are `64-true`, `32-true`, `16-true`,
                 `bf16-true`, `16-mixed`, and `bf16-mixed`; common dtype aliases are also accepted. A resolved policy
                 cannot be combined with `derivative_dtype`, `initial_loss_scale`, or `loss_scale_growth_interval`.
@@ -589,8 +590,9 @@ class Trainer:
         """
         state = self.strategy.place_state(state)
         initial_step = _state_step(state)
-        batches = self._training_batch_source(plan, batches, datamodule, state.sampling_key)
-        balancer_update = self._balancer_update_runtime(plan, batches, state.balancer_key)
+        sampling_key = self.strategy.process_key(state.sampling_key)
+        batches = self._training_batch_source(plan, batches, datamodule, sampling_key)
+        balancer_update = self._balancer_update_runtime(plan, batches, self.strategy.process_key(state.balancer_key))
         precision_context = (
             nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
         )
@@ -774,9 +776,14 @@ class Trainer:
             Concatenated host predictions, or `None` when collection is disabled or no prediction data is available.
 
         Raises:
+            NotImplementedError: If the run has several JAX processes.
             ValueError: If checkpoint options are invalid or a provided batch source is empty.
             BaseException: Re-raises prediction lifecycle errors after cleanup.
         """
+        if jax.process_count() > 1:
+            raise NotImplementedError(
+                "Prediction does not support multi-process runs yet. Predict from a checkpoint in a single process."
+            )
         try:
             if batches is None:
                 if datamodule is None:
