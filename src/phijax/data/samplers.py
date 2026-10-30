@@ -183,13 +183,16 @@ class UniformDomainSampler(BatchSampler):
         """
         if batch_size < 1:
             raise ValueError("`batch_size` must be positive.")
-        bounds = jnp.asarray(self.bounds, dtype=self.dtype)
+        # Without `jax_enable_x64`, a float64 request (e.g. from float64 pool inputs) resolves to float32 instead of
+        # emitting truncation warnings; `precision="64-true"` keeps float64.
+        dtype = jax.dtypes.canonicalize_dtype(self.dtype)
+        bounds = jnp.asarray(self.bounds, dtype=dtype)
         inputs = jax.random.uniform(
             key,
             shape=(batch_size, bounds.shape[0]),
             minval=bounds[:, 0],
             maxval=bounds[:, 1],
-            dtype=self.dtype,
+            dtype=dtype,
         )
         batch = {
             "inputs": inputs,

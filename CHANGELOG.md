@@ -115,6 +115,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `load_arrays()` returns classic (pre-v7.3) MATLAB structs as nested dictionaries, as it already did for v7.3 files,
   so nested keys such as `get_array(arrays, "results/velocity")` work. Previously such structs loaded as SciPy
   `mat_struct` objects and nested keys raised `KeyError`.
+- `HostPool` rejects auxiliary arrays named `inputs` or `targets`, which previously replaced the pool's own arrays in
+  sampled batches, and reports 0-d auxiliary arrays with a clear `ValueError` instead of an `IndexError`. The
+  `uniform_domain` sampler generates `float32` coordinates from `float64` pool inputs without JAX truncation warnings
+  unless 64-bit mode is enabled.
 
 ## [0.2.0b5] - 2026-09-11
 

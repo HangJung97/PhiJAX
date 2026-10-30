@@ -67,14 +67,15 @@ class HostPool:
         Args:
             inputs: Rank-two coordinate array with shape `[samples, input_features]`.
             targets: Optional rank-two target array. Omission creates a zero-width array.
-            aux: Optional sample-wise auxiliary arrays.
+            aux: Optional sample-wise auxiliary arrays with one leading row per sample. Names `inputs` and `targets`
+                are reserved.
             metadata: Optional structural or reconstruction metadata.
             reference_shape: Optional dense reconstruction shape. Omission uses `(sample_count,)`.
             flat_index: Optional flattened reconstruction indices. Omission uses sequential row indices.
 
         Raises:
-            ValueError: If `inputs` or `targets` is not rank two, or if any sample-wise array has a mismatched leading
-                row count.
+            ValueError: If `inputs` or `targets` is not rank two, if any sample-wise array has a mismatched leading
+                row count, or if an auxiliary array is 0-d or uses a reserved name.
         """
         frozen_inputs = _immutable_array(inputs)
         if frozen_inputs.ndim != 2:
@@ -90,8 +91,18 @@ class HostPool:
         if frozen_targets.shape[0] != frozen_inputs.shape[0] or frozen_flat_index.shape[0] != frozen_inputs.shape[0]:
             raise ValueError("Pool arrays must share the same leading row count.")
         frozen_aux = _immutable_mapping(aux)
+        reserved = {"inputs", "targets"}.intersection(frozen_aux)
+        if reserved:
+            raise ValueError(f"Auxiliary fields cannot be named {sorted(reserved)}; those names hold the pool arrays.")
         for name, value in frozen_aux.items():
-            if isinstance(value, np.ndarray) and value.shape[0] != frozen_inputs.shape[0]:
+            if not isinstance(value, np.ndarray):
+                continue
+            if value.ndim == 0:
+                raise ValueError(
+                    f"Auxiliary array `{name}` is 0-d; aux arrays need one row per sample. Store a constant as a "
+                    "Python scalar or in `metadata`."
+                )
+            if value.shape[0] != frozen_inputs.shape[0]:
                 raise ValueError(f"Auxiliary field `{name}` does not match the pool row count.")
         resolved_shape = (frozen_inputs.shape[0],) if reference_shape is None else reference_shape
         object.__setattr__(self, "inputs", frozen_inputs)

@@ -1,3 +1,5 @@
+import warnings
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -56,6 +58,33 @@ def test_host_pool_supplies_safe_unsupervised_and_reconstruction_defaults() -> N
     np.testing.assert_array_equal(pool.flat_index, np.arange(3, dtype=np.int64))
     assert dict(pool.aux) == {}
     assert dict(pool.metadata) == {}
+
+
+@pytest.mark.parametrize(
+    ("aux", "match"),
+    [
+        ({"scale": np.asarray(2.0)}, "is 0-d"),
+        ({"inputs": np.ones((2, 5))}, "cannot be named \\['inputs'\\]"),
+        ({"targets": np.ones((2, 1))}, "cannot be named \\['targets'\\]"),
+    ],
+)
+def test_host_pool_rejects_0d_and_reserved_auxiliary_arrays(aux: dict[str, np.ndarray], match: str) -> None:
+    """Verify a 0-d aux array fails clearly and aux names cannot shadow the pool's own arrays.
+
+    Args:
+        aux: Invalid auxiliary fields.
+        match: Expected error-message fragment.
+    """
+    with pytest.raises(ValueError, match=match):
+        HostPool(inputs=np.zeros((2, 1), dtype=np.float32), aux=aux)
+
+
+def test_host_pool_keeps_scalar_constants_out_of_sample_fields() -> None:
+    """Verify Python and NumPy scalars stay in `aux` without becoming sample-wise fields."""
+    pool = HostPool(inputs=np.zeros((2, 1), dtype=np.float32), aux={"scale": 2.0, "offset": np.float32(1.0)})
+
+    assert set(pool.fields()) == {"inputs", "targets"}
+    assert pool.aux["scale"] == 2.0
 
 
 def test_host_pool_recursively_freezes_nested_metadata() -> None:
@@ -238,6 +267,18 @@ def test_uniform_domain_sampler_uses_named_pool_bounds_and_constant_templates() 
     np.testing.assert_array_equal(batch["coefficient"], np.full((32, 1), 0.25))
     assert bool(jnp.all(jnp.diff(batch["inputs"][:, 0]) >= 0.0))
     assert bool(jnp.all((batch["inputs"][:, 1] >= -2.0) & (batch["inputs"][:, 1] <= 2.0)))
+
+
+def test_uniform_domain_sampler_resolves_float64_requests_without_warnings() -> None:
+    """Verify float64 pool inputs yield float32 coordinates without JAX truncation warnings when x64 is disabled."""
+    pool = HostPool(inputs=np.asarray([[0.0], [1.0]], dtype=np.float64))
+    sampler = create_sampler("uniform_domain", pool, options={"bounds": [[0.0, 1.0]]})
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        batch = sampler.prepare(jax.devices("cpu")[0]).sample(jax.random.key(0), 4)
+
+    assert batch["inputs"].dtype == jnp.float32
 
 
 def test_space_time_sampler_replaces_time_and_preserves_spatial_rows() -> None:
