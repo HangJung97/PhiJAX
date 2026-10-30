@@ -112,6 +112,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   Previously the save kept only the last of the repeated rows and wrote an artifact that `load_prediction_artifact()`
   rejects. Artifact files are now written to a temporary file and renamed into place, so an interrupted save keeps
   the previous file.
+- `load_arrays()` returns classic (pre-v7.3) MATLAB structs as nested dictionaries, as it already did for v7.3 files,
+  so nested keys such as `get_array(arrays, "results/velocity")` work. Previously such structs loaded as SciPy
+  `mat_struct` objects and nested keys raised `KeyError`.
 
 ## [0.2.0b5] - 2026-09-11
 

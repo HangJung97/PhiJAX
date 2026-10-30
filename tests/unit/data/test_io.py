@@ -41,6 +41,33 @@ def test_load_arrays_reads_classic_mat_and_filters_metadata(tmp_path: Path) -> N
     np.testing.assert_array_equal(get_array(arrays, "solution"), expected)
 
 
+def test_load_arrays_reads_nested_structs_from_classic_mat(tmp_path: Path) -> None:
+    """Verify classic MATLAB structs become nested mappings addressable by slash paths, and cells stay loadable.
+
+    Args:
+        tmp_path: Temporary directory used for the MATLAB artifact.
+    """
+    path = tmp_path / "fields.mat"
+    velocity = np.arange(3, dtype=np.float64)
+    pressure = np.ones((2, 2))
+    cells = np.empty(2, dtype=object)
+    cells[:] = [np.arange(2.0), {"p": pressure}]
+    savemat(path, {"results": {"velocity": velocity, "inner": {"p": pressure}}, "cells": cells})
+
+    arrays = load_arrays(path)
+
+    assert isinstance(arrays["results"], dict)
+    np.testing.assert_array_equal(get_array(arrays, "results/velocity"), velocity)
+    np.testing.assert_array_equal(get_array(arrays, "results/inner/p"), pressure)
+    with pytest.raises(TypeError, match="resolves to a group"):
+        get_array(arrays, "results/inner")
+    loaded_cells = get_array(arrays, "cells")
+    assert loaded_cells.dtype == object
+    assert loaded_cells.shape == (2,)
+    np.testing.assert_array_equal(loaded_cells[0], [0.0, 1.0])
+    np.testing.assert_array_equal(loaded_cells[1]["p"], pressure)
+
+
 def test_load_arrays_reads_nested_hdf5_and_mat_v73_containers(tmp_path: Path) -> None:
     """Verify generic HDF5 paths and MATLAB-aware v7.3 dimension decoding.
 
