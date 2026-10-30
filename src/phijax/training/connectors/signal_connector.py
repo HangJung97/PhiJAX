@@ -14,6 +14,9 @@ class _SignalConnector:
 
     The first `SIGINT` or `SIGTERM` only records a stop request. The fit loop calls :meth:`raise_if_requested` at step
     boundaries, so interruption handling always sees a completed step. A repeated signal escalates immediately.
+
+    In a multi-process run, a signal stays pending until the fit loop combines it across processes and calls
+    :meth:`request`, so every process stops at the same step even when only one process received the signal.
     """
 
     def __init__(self) -> None:
@@ -23,6 +26,27 @@ class _SignalConnector:
         self._previous: dict[int, Any] = {}
         self._received = 0
         self._requested: int | None = None
+        self._pending: int | None = None
+        self._synchronized = False
+
+    @property
+    def pending_signal(self) -> int | None:
+        """Return the first signal received in a multi-process run and not yet agreed by every process.
+
+        Returns:
+            Signal number, or `None` when no signal is pending.
+        """
+        return self._pending
+
+    def request(self, signum: int) -> None:
+        """Record a stop request agreed by every process.
+
+        Args:
+            signum: `SIGINT` or `SIGTERM`.
+        """
+        self._requested = signum
+        if signum == signal.SIGTERM:
+            self.received_sigterm = True
 
     def reset(self) -> None:
         """Reset interruption flags before a fit call."""
@@ -30,12 +54,20 @@ class _SignalConnector:
         self.received_sigterm = False
         self._received = 0
         self._requested = None
+        self._pending = None
 
-    def install(self) -> None:
-        """Install `SIGINT` and `SIGTERM` handlers on the main Python thread."""
+    def install(self, *, synchronized: bool = False, handle_sigterm: bool = True) -> None:
+        """Install `SIGINT` and optionally `SIGTERM` handlers on the main Python thread.
+
+        Args:
+            synchronized: Whether signals stay pending until every process agrees, as in a multi-process run.
+            handle_sigterm: Whether to handle `SIGTERM`. A Python handler would hide `SIGTERM` from JAX's preemption
+                service, so multi-process runs leave it to JAX when that service is enabled.
+        """
+        self._synchronized = synchronized
         if threading.current_thread() is not threading.main_thread():
             return
-        for signum in (signal.SIGINT, signal.SIGTERM):
+        for signum in (signal.SIGINT, signal.SIGTERM) if handle_sigterm else (signal.SIGINT,):
             self._previous[signum] = signal.getsignal(signum)
             signal.signal(signum, self._handle_signal)
 
@@ -69,15 +101,18 @@ class _SignalConnector:
             SystemExit: When a repeated signal cannot use its previous handler.
         """
         self._received += 1
-        if signum == signal.SIGTERM:
-            self.received_sigterm = True
         if self._received == 1:
-            self._requested = signum
+            if self._synchronized:
+                self._pending = signum
+            else:
+                self.request(signum)
             log.warning(
                 f"Received {signal.Signals(signum).name}; stopping after the current step. "
                 "Send the signal again to stop immediately."
             )
             return
+        if signum == signal.SIGTERM:
+            self.received_sigterm = True
 
         previous = self._previous.get(signum, signal.SIG_DFL)
         signal.signal(signum, previous)

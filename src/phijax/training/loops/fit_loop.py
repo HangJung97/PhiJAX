@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import signal
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import jax
 import numpy as np
+from jax.experimental import multihost_utils
 
 from phijax.balancers import BalancerUpdate
 from phijax.callbacks import TrainerContext
@@ -112,7 +114,11 @@ class _FitLoop:
         )
         trainer.should_stop = False
         signal_connector.reset()
-        signal_connector.install()
+        multi_process = trainer.strategy.process_count > 1
+        signal_connector.install(
+            synchronized=multi_process,
+            handle_sigterm=not (multi_process and _preemption_service_enabled()),
+        )
 
         try:
             lifecycle.setup()
@@ -134,6 +140,7 @@ class _FitLoop:
                 has_logger=metrics_connector.has_logger,
             )
 
+            _synchronize_stop_requests(trainer, initial_step)
             # `max_steps` is a global target, so a resumed fit only runs the remaining updates.
             remaining_steps = max(trainer.max_steps - initial_step, 0)
             if remaining_steps == 0 and trainer.strategy.is_global_zero:
@@ -244,6 +251,7 @@ class _FitLoop:
                 context = replace(context, callback_states=trainer.callback_state_dict())
                 for callback in trainer.callbacks:
                     callback.on_train_metrics(context)
+                _synchronize_stop_requests(trainer, step)
                 stopped_early = trainer.should_stop
 
                 if stopped_early or step == trainer.max_steps:
@@ -342,6 +350,42 @@ class _FitLoop:
         finally:
             signal_connector.restore()
             lifecycle.teardown()
+
+
+def _preemption_service_enabled() -> bool:
+    """Return whether JAX's preemption service will catch `SIGTERM` in a multi-process run.
+
+    Returns:
+        Value of the `jax_enable_preemption_service` configuration option.
+    """
+    return bool(jax.config.jax_enable_preemption_service)
+
+
+def _synchronize_stop_requests(trainer: Trainer, step: int) -> None:
+    """Make every process agree on stopping after the current step, as Lightning DDP does for `should_stop`.
+
+    A single-process run returns immediately. Otherwise one collective combines `trainer.should_stop` and any pending
+    `SIGINT` or `SIGTERM` across processes, and a request on any process applies to all of them. With JAX's
+    preemption service, `SIGTERM` reaches JAX instead, and every process sees the same preemption sync step.
+
+    Args:
+        trainer: Trainer whose stop flag and signal state are updated.
+        step: Global step completed on every process, used as the preemption sync step.
+    """
+    if trainer.strategy.process_count == 1:
+        return
+    connector = trainer._signal_connector
+    pending = connector.pending_signal
+    should_stop, interrupt, terminate = trainer.strategy.reduce_boolean_decisions(
+        trainer.should_stop, pending == signal.SIGINT, pending == signal.SIGTERM, all=False
+    )
+    if _preemption_service_enabled() and multihost_utils.reached_preemption_sync_point(step):
+        terminate = True
+    trainer.should_stop = should_stop
+    if terminate:
+        connector.request(signal.SIGTERM)
+    elif interrupt:
+        connector.request(signal.SIGINT)
 
 
 def _state_step(state: TrainState) -> int:

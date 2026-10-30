@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from phijax.training import (
@@ -124,3 +125,140 @@ def test_strategy_barrier_synchronizes_only_multi_process_runs(monkeypatch: pyte
     strategy.barrier("multi")
 
     assert synchronized == ["multi"]
+
+
+def test_process_key_keeps_single_process_keys_and_separates_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify one process samples with the stored key, while several processes fold in their process index.
+
+    Args:
+        monkeypatch: Pytest attribute patch helper.
+    """
+    key = jax.random.key(0)
+    strategy = SingleDeviceStrategy(jax.devices("cpu")[0])
+    assert strategy.process_key(key) is key
+
+    monkeypatch.setattr(strategies_module.jax, "process_count", lambda: 2)
+    strategy.process_index = 1
+    folded = strategy.process_key(key)
+
+    assert jnp.array_equal(jax.random.key_data(folded), jax.random.key_data(jax.random.fold_in(key, 1)))
+
+
+def test_create_strategy_selects_the_same_local_devices_on_every_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify `devices` counts and indexes each process's devices and the mesh spans all processes.
+
+    Args:
+        monkeypatch: Pytest attribute patch helper.
+    """
+    fake_devices = [
+        SimpleNamespace(process_index=process, id=2 * process + local) for process in (0, 1) for local in (0, 1)
+    ]
+    monkeypatch.setattr(strategies_module.jax, "devices", lambda backend=None: fake_devices)
+    monkeypatch.setattr(strategies_module.jax, "process_count", lambda: 2)
+    monkeypatch.setattr(strategies_module.jax, "process_index", lambda: 1)
+    monkeypatch.setattr(strategies_module, "DataParallelStrategy", lambda devices: tuple(d.id for d in devices))
+
+    assert create_strategy("cpu", devices=1) == (0, 2)
+    assert create_strategy("cpu", devices=[1]) == (1, 3)
+    assert create_strategy("cpu", devices="auto") == (0, 1, 2, 3)
+    with pytest.raises(ValueError, match="Requested 3 devices, but 2 are available"):
+        create_strategy("cpu", devices=3)
+
+    # Process 0 has two devices, but process 1 has only one.
+    uneven = fake_devices[:3]
+    monkeypatch.setattr(strategies_module.jax, "devices", lambda backend=None: uneven)
+    monkeypatch.setattr(strategies_module.jax, "process_index", lambda: 0)
+    with pytest.raises(ValueError, match="Every JAX process needs at least 2"):
+        create_strategy("cpu", devices=[1])
+
+
+def test_data_parallel_mesh_uses_make_mesh_with_auto_axes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify the data mesh comes from `jax.make_mesh` with explicit Auto axes, as the compiled step relies on them.
+
+    Args:
+        monkeypatch: Pytest attribute patch helper.
+    """
+    calls: list[tuple[Any, ...]] = []
+    original_make_mesh = jax.make_mesh
+
+    def make_mesh(axis_sizes: Any, axis_names: Any, axis_types: Any, *, devices: Any) -> Any:
+        """Record mesh arguments and build a real single-device mesh.
+
+        Args:
+            axis_sizes: Requested axis sizes.
+            axis_names: Requested axis names.
+            axis_types: Requested axis types.
+            devices: Requested mesh devices.
+
+        Returns:
+            One-device CPU mesh.
+        """
+        calls.append((tuple(axis_sizes), tuple(axis_names), tuple(axis_types), len(devices)))
+        return original_make_mesh((1,), axis_names, axis_types, devices=jax.devices("cpu")[:1])
+
+    monkeypatch.setattr(strategies_module.jax, "make_mesh", make_mesh)
+    cpu = jax.devices("cpu")[0]
+    DataParallelStrategy((cpu, cpu), axis_name="batch")
+
+    assert calls == [((2,), ("batch",), (strategies_module.AxisType.Auto,), 2)]
+
+
+def test_multi_process_state_check_names_differing_leaves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify identical process states pass and a differing leaf, here a PRNG key, is reported by path.
+
+    Args:
+        monkeypatch: Pytest attribute patch helper.
+    """
+    state = {"key": jax.random.key(0), "weight": jnp.ones(2)}
+    differing_leaf: list[int] = []
+
+    def allgather(digests: np.ndarray) -> np.ndarray:
+        """Stack this process's digests with a simulated second process whose selected leaves differ.
+
+        Args:
+            digests: This process's digests with shape `[leaves, 32]`.
+
+        Returns:
+            Digests of both processes with shape `[2, leaves, 32]`.
+        """
+        other = digests.copy()
+        other[differing_leaf] ^= 1
+        return np.stack([digests, other])
+
+    monkeypatch.setattr(strategies_module.multihost_utils, "process_allgather", allgather)
+    strategies_module._check_identical_across_processes(state)
+
+    differing_leaf.append(0)
+    with pytest.raises(ValueError, match=r"differs between JAX processes in \[\"\['key'\]\"\]"):
+        strategies_module._check_identical_across_processes(state)
+
+
+def test_reduce_boolean_decisions_combines_processes_with_any_or_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify decisions pass through in one process and combine across processes in a single gather.
+
+    Args:
+        monkeypatch: Pytest attribute patch helper.
+    """
+    strategy = SingleDeviceStrategy(jax.devices("cpu")[0])
+    assert strategy.reduce_boolean_decisions(True, False) == (True, False)
+
+    gathers: list[np.ndarray] = []
+
+    def allgather(decisions: np.ndarray) -> np.ndarray:
+        """Stack this process's decisions with a simulated second process that decided the opposite.
+
+        Args:
+            decisions: This process's decisions.
+
+        Returns:
+            Decisions of both processes with shape `[2, decisions]`.
+        """
+        gathers.append(decisions)
+        return np.stack([decisions, ~decisions])
+
+    monkeypatch.setattr(strategies_module.jax, "process_count", lambda: 2)
+    monkeypatch.setattr(strategies_module.multihost_utils, "process_allgather", allgather)
+
+    assert strategy.reduce_boolean_decisions(True, False, all=False) == (True, True)
+    assert strategy.reduce_boolean_decisions(True, False) == (False, False)
+    assert len(gathers) == 2

@@ -80,7 +80,7 @@ performance and compilation trade-offs, and the official OpenXLA and JAX referen
 | Argument                     | Supported values                                                                   | Default     |
 | ---------------------------- | ---------------------------------------------------------------------------------- | ----------- |
 | `accelerator`                | `"auto"`, `"cpu"`, `"gpu"`, `"tpu"`                                                | `"auto"`    |
-| `devices`                    | Positive count, device-index sequence, or `"auto"`                                 | `1`         |
+| `devices`                    | Positive count per process, local device-index sequence, or `"auto"`               | `1`         |
 | `strategy`                   | A configured `Strategy`, which replaces `accelerator` and `devices`                | `None`      |
 | `precision`                  | `"64-true"`, `"32-true"`, `"16-true"`, `"bf16-true"`, `"16-mixed"`, `"bf16-mixed"` | `"32-true"` |
 | `matmul_precision`           | `None`, `"default"`, `"high"`, `"highest"`                                         | `None`      |

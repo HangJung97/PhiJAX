@@ -75,6 +75,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `Strategy.barrier()` and then run `setup()`, so prepared files must be on storage every host can read.
   Single-process runs are unchanged. See
   [multi-process runs](https://hangjung97.github.io/PhiJAX/api/data/#multi-process-runs).
+- `ModelCheckpoint` always saves the last completed step when a fit stops on `SIGTERM`, as on preemption, even without
+  `save_on_exception=True`.
 
 ### Fixed
 
@@ -119,6 +121,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   sampled batches, and reports 0-d auxiliary arrays with a clear `ValueError` instead of an `IndexError`. The
   `uniform_domain` sampler generates `float32` coordinates from `float64` pool inputs without JAX truncation warnings
   unless 64-bit mode is enabled.
+- Multi-process `DataParallelStrategy` fits now run. Previously they failed before the first step because state and
+  PRNG keys were placed with `jax.device_put` on devices of other processes. Each process now samples different rows
+  through the new `Strategy.process_key()`, `devices` counts or indexes each process's local devices, and fitting
+  raises `ValueError` when the starting state differs between processes. A stop requested by any process stops every
+  process after the same step: `trainer.should_stop` and `SIGINT` are combined with the new
+  `Strategy.reduce_boolean_decisions()`, and `SIGTERM` uses JAX's preemption sync step. A two-process CPU integration
+  test covers fitting, resuming, and each stop request. Multi-process `Trainer.predict()` raises `NotImplementedError`
+  for now.
 
 ## [0.2.0b5] - 2026-09-11
 

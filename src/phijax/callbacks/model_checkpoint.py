@@ -173,7 +173,8 @@ class ModelCheckpoint(Callback):
             checkpoint_io: Storage backend used for checkpoint operations.
             every_n_steps: Positive periodic save interval, or `None` to disable periodic saves.
             save_last: Whether to save the final state passed to :meth:`on_fit_end`.
-            save_on_exception: Whether to save the last valid state from :meth:`on_exception`.
+            save_on_exception: Whether to save the last valid state from :meth:`on_exception`. A fit stopped by
+                `SIGTERM` always saves it.
             monitor: Optional scalar metric used to rank checkpoints. `step` ranks checkpoints by training step.
             mode: `"min"` or `"max"` monitored-metric optimization direction.
             save_top_k: Number of ranked checkpoints to keep. `-1` keeps all and `0` disables ranked saves. Without
@@ -297,7 +298,10 @@ class ModelCheckpoint(Callback):
             self._schedule_deletions(previous_last_step)
 
     def on_exception(self, exception: BaseException, context: CallbackContext) -> None:
-        """Optionally save the most recent valid state during exceptional shutdown.
+        """Save the most recent valid state when `save_on_exception` is set or the fit received `SIGTERM`.
+
+        `SIGTERM` usually means a cluster scheduler is preempting the job, so the last completed step is always saved
+        for a later resume.
 
         Args:
             exception: Exception or interruption terminating the fit call.
@@ -306,7 +310,8 @@ class ModelCheckpoint(Callback):
         del exception
         if not isinstance(context, TrainerContext):
             return
-        if self.save_on_exception and context.step != self._last_saved_step:
+        preempted = self._trainer is not None and self._trainer.received_sigterm
+        if (self.save_on_exception or preempted) and context.step != self._last_saved_step:
             self._save(context, save_as_last=True)
 
     def teardown(self) -> None:
