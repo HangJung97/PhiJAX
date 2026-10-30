@@ -55,6 +55,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   axes. `PeriodicFeatures` takes `periods={axis: T}` instead of `axes` and `frequencies`, model factories receive
   `input_periods`, and `bind_input_statistics()` is now `bind_inputs()`. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#periodic-features-in-physical-units).
+- `ChunkedPredictionSource` batches carry their padding mask as `valid_predict_mask` instead of `mask`, so a pool can
+  keep its own `mask` field. Code reading `batch["mask"]` in `predict_step()` must read `batch["valid_predict_mask"]`.
+  A prediction pool with an auxiliary array named `valid_predict_mask` raises `ValueError`; previously a `mask` field
+  was silently replaced by the padding mask.
 
 ### Changed
 

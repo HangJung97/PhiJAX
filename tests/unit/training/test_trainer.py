@@ -2254,13 +2254,13 @@ def test_trainer_prepares_sources_and_batches_for_its_strategy() -> None:
     batch = trainer.prepare_batch(
         {
             "inputs": np.ones((2, 1), dtype=np.float64),
-            "mask": np.asarray([True, False]),
+            "valid_predict_mask": np.asarray([True, False]),
         }
     )
     assert batch["inputs"].dtype == jnp.float32
-    assert batch["mask"].dtype == jnp.bool_
+    assert batch["valid_predict_mask"].dtype == jnp.bool_
     assert batch["inputs"].devices() == {device}
-    assert batch["mask"].devices() == {device}
+    assert batch["valid_predict_mask"].devices() == {device}
 
     fit_source = _PreparableSource()
     result = trainer.fit_state(_RecordingModule(), _train_step, _state(), fit_source)
@@ -2910,8 +2910,8 @@ def test_trainer_predict_concatenates_only_valid_padded_rows() -> None:
     )
     module = _RecordingModule(timeline)
     batches = (
-        {"inputs": jnp.asarray([[1.0], [2.0]]), "mask": jnp.asarray([True, True])},
-        {"inputs": jnp.asarray([[3.0], [0.0]]), "mask": jnp.asarray([True, False])},
+        {"inputs": jnp.asarray([[1.0], [2.0]]), "valid_predict_mask": jnp.asarray([True, True])},
+        {"inputs": jnp.asarray([[3.0], [0.0]]), "valid_predict_mask": jnp.asarray([True, False])},
     )
 
     state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})

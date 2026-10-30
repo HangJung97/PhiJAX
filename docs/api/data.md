@@ -116,8 +116,9 @@ def train_batch_source(self, batch_keys, key):
 An integer samples that many rows on every optimizer step. The `"all"` policy uses every row and is available only
 for finite pools.
 
-`ChunkedPredictionSource` pads its final host batch and supplies a Boolean `mask`; prediction removes padded rows
-before output assembly.
+`ChunkedPredictionSource` pads its final host batch to `batch_size`. Each batch carries a Boolean `valid_predict_mask`
+that is `True` for pool rows and `False` for padding, and prediction removes padded rows before output assembly. The
+name is reserved: a prediction pool with an auxiliary array named `valid_predict_mask` raises `ValueError`.
 
 ::: phijax.data.TrainingBatchSource
 

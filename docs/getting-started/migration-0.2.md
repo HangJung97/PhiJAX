@@ -19,6 +19,7 @@ under names that describe its state-level contract.
 | `from phijax.module import BasePhiModule`                        | `from phijax.core import BasePhiModule`                             |
 | `from phijax.training.trainer import FitResult`                  | `from phijax.training import FitResult`                             |
 | `trainer.set_logger(instantiate_loggers(cfg.logger, trainer))`   | `instantiate_trainer(cfg.trainer, callbacks, logger=loggers)`       |
+| `batch["mask"]` in prediction batches                            | `batch["valid_predict_mask"]`                                       |
 
 Top-level imports are the recommended application API. PhiJAX 0.2 removes the old `phijax.module` path; custom module
 implementations that need a deep import should use `phijax.core`.

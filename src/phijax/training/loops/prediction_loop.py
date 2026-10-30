@@ -98,9 +98,9 @@ class _PredictionLoop:
                     callback.on_predict_batch_start(context)
                 module.on_predict_batch_start(model_state, context)
                 prediction = module.predict_step(model_state, placed_batch)
-                mask = placed_batch.get("mask")
-                if mask is not None:
-                    prediction = prediction[mask]
+                valid_rows = placed_batch.get("valid_predict_mask")
+                if valid_rows is not None:
+                    prediction = prediction[valid_rows]
                 batch_count += 1
                 context = PredictionContext(
                     outputs=prediction,
