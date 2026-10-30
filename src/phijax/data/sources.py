@@ -222,12 +222,18 @@ class ChunkedPredictionSource:
     batch_size: int
 
     def __post_init__(self) -> None:
-        """Validate prediction row and fixed batch sizes.
+        """Validate prediction row and fixed batch sizes and the reserved `valid_predict_mask` field.
 
         Raises:
-            ValueError: If pool rows or `batch_size` are invalid.
+            ValueError: If pool rows or `batch_size` are invalid, or if the pool has an array field named
+                `valid_predict_mask`.
         """
         _chunk_layout(int(self.pool.inputs.shape[0]), self.batch_size)
+        if "valid_predict_mask" in self.pool.fields():
+            raise ValueError(
+                "Prediction pools cannot have an auxiliary array named `valid_predict_mask`; ChunkedPredictionSource "
+                "uses that name for its padding mask. Rename the field."
+            )
 
     def __len__(self) -> int:
         """Return the finite number of padded prediction batches.
@@ -242,7 +248,8 @@ class ChunkedPredictionSource:
         """Yield host-sliced and padded prediction batches.
 
         Yields:
-            Field mappings with a fixed leading dimension and Boolean `mask` identifying valid rows.
+            Field mappings with a fixed leading dimension and a Boolean `valid_predict_mask` that is `True` for pool
+            rows and `False` for padding.
         """
         row_count = int(self.pool.inputs.shape[0])
         fields = self.pool.fields()
@@ -256,8 +263,7 @@ class ChunkedPredictionSource:
                 selected = np.asarray(values[start:stop])
                 pad_width = ((0, padding), *(((0, 0),) * (selected.ndim - 1)))
                 batch[name] = np.pad(selected, pad_width)
-            mask = np.arange(self.batch_size) < valid_count
-            batch["mask"] = mask
+            batch["valid_predict_mask"] = np.arange(self.batch_size) < valid_count
             yield batch
 
 

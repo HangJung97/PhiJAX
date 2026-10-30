@@ -105,13 +105,13 @@ def test_prediction_chunks_are_deterministic_and_aligned() -> None:
 
     assert prediction_source.pool is host_pool
     assert len(prediction_source) == len(chunks) == 2
-    assert set(chunks[0]) == {"inputs", "targets", "period", "mask"}
+    assert set(chunks[0]) == {"inputs", "targets", "period", "valid_predict_mask"}
     assert chunks[0]["inputs"].shape == (3, 3)
     assert chunks[1]["inputs"].shape == (3, 3)
     assert isinstance(chunks[0]["inputs"], np.ndarray)
-    assert isinstance(chunks[0]["mask"], np.ndarray)
-    np.testing.assert_array_equal(chunks[0]["mask"], [True, True, True])
-    np.testing.assert_array_equal(chunks[1]["mask"], [True, False, False])
+    assert isinstance(chunks[0]["valid_predict_mask"], np.ndarray)
+    np.testing.assert_array_equal(chunks[0]["valid_predict_mask"], [True, True, True])
+    np.testing.assert_array_equal(chunks[1]["valid_predict_mask"], [True, False, False])
     for batch, repeated_batch in zip(chunks, repeated, strict=True):
         for name in batch:
             np.testing.assert_array_equal(batch[name], repeated_batch[name])
@@ -132,7 +132,21 @@ def test_chunked_prediction_source_validates_batch_size_and_handles_empty_pools(
     chunks = tuple(ChunkedPredictionSource(empty_pool, 4))
     assert len(chunks) == 1
     assert chunks[0]["inputs"].shape == (4, 3)
-    assert not bool(jnp.any(chunks[0]["mask"]))
+    assert not bool(jnp.any(chunks[0]["valid_predict_mask"]))
+
+
+def test_chunked_prediction_source_keeps_a_mask_field_and_rejects_the_reserved_name() -> None:
+    """Verify a pool's own `mask` field is padded like other fields, while `valid_predict_mask` is reserved."""
+    inputs = np.zeros((2, 1), dtype=np.float32)
+    pool = HostPool(inputs=inputs, aux={"mask": np.asarray([False, True])})
+
+    (batch,) = ChunkedPredictionSource(pool, 3)
+    np.testing.assert_array_equal(batch["mask"], [False, True, False])
+    np.testing.assert_array_equal(batch["valid_predict_mask"], [True, True, False])
+
+    reserved = HostPool(inputs=inputs, aux={"valid_predict_mask": np.asarray([True, False])})
+    with pytest.raises(ValueError, match="auxiliary array named `valid_predict_mask`"):
+        ChunkedPredictionSource(reserved, 2)
 
 
 def test_named_sampler_source_preserves_all_rows_and_step_determinism() -> None:
