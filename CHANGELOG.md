@@ -74,6 +74,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   keep the same global batch on `n` devices, divide each size by `n`. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#per-device-batch-sizes).
 
+- Training and NTK batches drawn with `"all"` are replicated on every device instead of split by rows, so a pool no
+  longer needs to divide by the device count, and with several processes the pool counts once instead of once per
+  process. The loss is unchanged. `Strategy.place_batch()` takes a `replicated` argument naming the batches to
+  replicate; the Trainer passes it only when a batch uses `"all"`.
+
 ### Changed
 
 - Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's

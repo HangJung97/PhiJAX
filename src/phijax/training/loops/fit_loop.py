@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import signal
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -66,6 +66,7 @@ class _FitLoop:
         initial_step: int,
         balancer_update: _BalancerUpdateRuntime | None = None,
         hyperparameters: Mapping[str, Any] | None = None,
+        replicated_batches: Collection[str] = (),
     ) -> FitResult:
         """Run compiled training updates over a callable or finite iterable batch source.
 
@@ -78,6 +79,7 @@ class _FitLoop:
                 the global step reaches `trainer.max_steps`.
             balancer_update: Optional adaptive update and host-side schedule.
             hyperparameters: Optional resolved configuration recorded before the first update.
+            replicated_batches: Top-level batch names placed in full on every device, such as `all` batches.
 
         Returns:
             Final state, metrics, stop status, and processed batch count.
@@ -157,7 +159,7 @@ class _FitLoop:
                     batch = batches(global_step) if callable(batches) else next(batch_iterator)  # type: ignore[arg-type]
                 except StopIteration:
                     break
-                batch = trainer.prepare_batch(batch)
+                batch = trainer.prepare_batch(batch, replicated_batches)
                 context = TrainerContext(
                     state=state,
                     step=global_step,

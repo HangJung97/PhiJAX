@@ -167,7 +167,7 @@ The new rule stops one check earlier. To stop at the same step as before, increa
 
 ## Per-device batch sizes
 
-From PhiJAX 0.2.0b6, training batch sizes and prediction chunk sizes count rows per device, as in Lightning and jaxpi.
+From PhiJAX 0.2.0b6, training batch sizes and prediction chunk sizes count rows per device, as in Lightning.
 Runs on one device are unchanged.
 
 | Size                                 | PhiJAX 0.2.0b5 and earlier               | PhiJAX 0.2.0b6 and later          |

@@ -110,7 +110,8 @@ with the number of rows, so keep random samples for large data pools and colloca
 
 By default, the Trainer draws the diagnostic batches once per fit and reuses them for every update, so the weights
 follow the training dynamics rather than sampling noise. Set `resample=True` to draw new rows for every update,
-which covers more of the domain over time. Terms whose `kernel_size` is `"all"` use the same rows either way.
+which covers more of the domain over time. Terms whose `kernel_size` is `"all"` use the same rows either way, and like
+`"all"` training batches they are replicated on every device.
 
 Diagnostic batches depend only on `TrainState.balancer_key` and, with `resample=True`, the global step of the update.
 A resumed fit therefore draws the same batches as an uninterrupted run.

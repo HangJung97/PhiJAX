@@ -1,6 +1,6 @@
 import json
 import warnings
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import replace
 from functools import partial
@@ -416,7 +416,7 @@ class Trainer:
             return source
         return cast(SourceT, prepare(self.strategy.root_device))
 
-    def prepare_batch(self, batch: Any) -> Any:
+    def prepare_batch(self, batch: Any, replicated: Collection[str] = ()) -> Any:
         """Cast and place one batch according to the configured precision and Strategy.
 
         NumPy floating leaves are cast on the host before transfer. Device-resident sampler outputs retain their
@@ -424,11 +424,14 @@ class Trainer:
 
         Args:
             batch: Arbitrary host or device batch PyTree.
+            replicated: Top-level batch names placed in full on every device, such as batches drawn with `all`.
 
         Returns:
             Precision-normalized batch placed or sharded for compiled execution.
         """
-        return self.strategy.place_batch(self.precision.cast_batch(batch))
+        batch = self.precision.cast_batch(batch)
+        # Only pass `replicated` when needed, so custom strategies with the original signature keep working.
+        return self.strategy.place_batch(batch, replicated) if replicated else self.strategy.place_batch(batch)
 
     def fit(
         self,
@@ -597,6 +600,8 @@ class Trainer:
         sampling_key = self.strategy.process_key(state.sampling_key)
         batches = self._training_batch_source(plan, batches, datamodule, sampling_key)
         balancer_update = self._balancer_update_runtime(plan, batches, self.strategy.process_key(state.balancer_key))
+        # Batches drawn with `all` hold the whole pool, so every device receives them in full.
+        full_pools = _full_pool_names(getattr(batches, "batch_sizes", None))
         precision_context = (
             nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
         )
@@ -609,6 +614,7 @@ class Trainer:
                 initial_step=initial_step,
                 balancer_update=balancer_update,
                 hyperparameters=hyperparameters,
+                replicated_batches=full_pools,
             )
 
     def _training_batch_source(
@@ -682,6 +688,7 @@ class Trainer:
         sample_batches: Callable[[int], Any] | None = None
         batch_sizes = update_plan.batch_sizes
         if batch_sizes is not None:
+            full_pools = _full_pool_names(batch_sizes)
             sample = getattr(batches, "sample", None)
             if not callable(sample):
                 raise TypeError("Adaptive-balancer diagnostic batches require a training source with `sample()`.")
@@ -696,7 +703,7 @@ class Trainer:
                     Diagnostic batches placed on the Trainer's device.
                 """
                 # Keys depend only on `balancer_key` and the global step, so resumed fits draw the same batches.
-                return self.prepare_batch(sample(jax.random.fold_in(balancer_key, step), batch_sizes))
+                return self.prepare_batch(sample(jax.random.fold_in(balancer_key, step), batch_sizes), full_pools)
 
             if update_plan.resample:
                 sample_batches = draw
@@ -939,6 +946,18 @@ class Trainer:
         """
         del exception_type, exception, traceback
         self.close()
+
+
+def _full_pool_names(batch_sizes: Mapping[str, Any] | None) -> frozenset[str]:
+    """Return the batch names drawn with the `all` policy.
+
+    Args:
+        batch_sizes: Optional mapping from batch name to an integer size or `all`.
+
+    Returns:
+        Names whose batches hold a whole pool.
+    """
+    return frozenset(name for name, size in (batch_sizes or {}).items() if size == "all")
 
 
 def _for_devices[SourceT](source: SourceT, count: int) -> SourceT:

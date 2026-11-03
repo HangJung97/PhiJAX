@@ -31,7 +31,16 @@ from phijax.training import OrbaxCheckpointIO, create_strategy
 
 
 class _LineDataModule(PhiDataModule):
-    """Provide one supervised pool sampled randomly at every step."""
+    """Provide one supervised pool sampled randomly at every step, or a small pool used whole."""
+
+    def __init__(self, *, full_pool: bool = False) -> None:
+        """Choose the training pool.
+
+        Args:
+            full_pool: Whether to train on all six rows of a small pool, which do not divide over four devices.
+        """
+        super().__init__()
+        self.full_pool = full_pool
 
     def setup(self, stage: DataStage) -> None:
         """Build the training pool on every process.
@@ -40,7 +49,7 @@ class _LineDataModule(PhiDataModule):
             stage: Requested stage; only `fit` is used.
         """
         del stage
-        inputs = np.linspace(-1.0, 1.0, 64, dtype=np.float32)[:, None]
+        inputs = np.linspace(-1.0, 1.0, 6 if self.full_pool else 64, dtype=np.float32)[:, None]
         # Ten prediction rows with one row per device: four-row chunks on four devices, the last one padded.
         predict_inputs = np.linspace(-0.9, 0.9, 10, dtype=np.float32)[:, None]
         self.pools = {
@@ -49,7 +58,7 @@ class _LineDataModule(PhiDataModule):
         }
 
     def train_batch_source(self, batch_keys: tuple[str, ...], key: jax.Array) -> NamedBatchSource:
-        """Sample four rows per device and step.
+        """Sample four rows per device and step, or the whole pool.
 
         Args:
             batch_keys: Objective batch keys.
@@ -58,7 +67,8 @@ class _LineDataModule(PhiDataModule):
         Returns:
             Step-indexed batch source.
         """
-        return NamedBatchSource.from_pools({"data": self.pools["data"]}, {"data": 4}, key, names=batch_keys)
+        size = "all" if self.full_pool else 4
+        return NamedBatchSource.from_pools({"data": self.pools["data"]}, {"data": size}, key, names=batch_keys)
 
     def predict_batch_source(self) -> ChunkedPredictionSource:
         """Yield ordered prediction chunks of one row per device.
@@ -129,6 +139,8 @@ def _fit(
     stop_request: str | None = None,
     predict: bool = False,
     ntk: bool = False,
+    full_pool: bool = False,
+    devices: int | str = "auto",
 ) -> dict[str, Any]:
     """Fit across every process and return host-readable results.
 
@@ -140,6 +152,8 @@ def _fit(
         stop_request: Optional stop that process 1 alone requests after step 2.
         predict: Whether to predict after fitting and compare with a direct single-device evaluation.
         ntk: Whether to balance with exact NTK on four diagnostic rows per process, updated at every step.
+        full_pool: Whether to train on a whole six-row pool with the `all` policy.
+        devices: Devices per process.
 
     Returns:
         Recorded batches, final step, flattened parameters, and metrics.
@@ -148,7 +162,7 @@ def _fit(
     trainer = Trainer(
         max_steps=max_steps,
         accelerator="cpu",
-        devices="auto",
+        devices=devices,
         logger=False,
         enable_progress_bar=False,
         enable_model_summary=False,
@@ -165,7 +179,7 @@ def _fit(
     )
     result = trainer.fit(
         module,
-        datamodule=_LineDataModule(),
+        datamodule=_LineDataModule(full_pool=full_pool),
         optimizer=optax.adam(1e-2),
         balancer=(
             ExactNTKBalancer(module.loss_names, update_every_n_steps=1, update_start_step=0, kernel_size=4)
@@ -217,6 +231,7 @@ def main(output: Path) -> None:
         _fit(output / "mismatch", 1, seed=jax.process_index())
     except ValueError as error:
         results["mismatch_error"] = str(error)
+    results["full_pool"] = _fit(output / "full_pool", 2, full_pool=True)
     results["should_stop"] = _fit(output / "should_stop", 10, stop_request="should_stop")
     results["sigint"] = _fit(output / "sigint", 10, stop_request="SIGINT")
     # JAX's preemption sync step stays fixed for the process, so the `SIGTERM` case runs last.
@@ -234,7 +249,13 @@ def main_single_process(output: Path) -> None:
     Args:
         output: Directory for checkpoints and results.
     """
-    (output / "single_process.json").write_text(json.dumps(_fit(output / "single", 2, predict=True, ntk=True)))
+    results = {
+        "fit": _fit(output / "single", 2, predict=True, ntk=True),
+        # `all` batches are deterministic, so four devices must reproduce one device.
+        "full_pool": _fit(output / "full_pool", 3, full_pool=True),
+        "full_pool_one_device": _fit(output / "full_pool_one_device", 3, full_pool=True, devices=1),
+    }
+    (output / "single_process.json").write_text(json.dumps(results))
 
 
 if __name__ == "__main__":
