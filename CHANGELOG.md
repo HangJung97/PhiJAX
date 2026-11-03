@@ -147,6 +147,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   process after the same step: `trainer.should_stop` and `SIGINT` are combined with the new
   `Strategy.reduce_boolean_decisions()`, and `SIGTERM` uses JAX's preemption sync step. A two-process CPU integration
   test covers fitting, resuming, and each stop request.
+- `ExactNTKBalancer` averages each term's NTK over all rows of the batches that term reads. With a `kernel_size`
+  mapping of different sizes, every term was mapped over all diagnostic batches together: the default
+  `kernel_chunk_size=1` silently kept only as many rows as the alphabetically first batch, and other settings raised
+  an error. `BasePhiModule.stream_batch_keys()` and `CompositeObjective.stream_batch_keys()` report the batches of
+  each stream; a stream reading batches of different sizes raises `ValueError`.
 
 ## [0.2.0b5] - 2026-09-11
 

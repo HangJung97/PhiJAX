@@ -103,6 +103,14 @@ an integer `kernel_size` is the number of rows per process, split over its devic
 | `"all"`                            | Every row of every finite pool                               |
 | `{"pde": 1024, "boundary": "all"}` | Set per objective batch key; the mapping must name every key |
 
+Each term's NTK is averaged over the diagnostic rows of its own batch, so different terms may use different sizes,
+as in the mapping above.
+
+Most terms read one batch, such as `ResidualTerm(equation, batch_key="pde")`. A custom term can read several batches
+whose rows belong together, for example `boundary` points and their `normals`. The NTK is then computed one row at a
+time across those batches, so each of them needs the same number of diagnostic rows. Give them the same
+`kernel_size`; otherwise the update raises `ValueError`.
+
 A random sample estimates the mean NTK of a term. `"all"` computes it exactly, which suits small boundary and initial
 condition sets. It removes sampling noise and catches points with unusual NTK values, such as corners. `"all"` requires
 a finite pool; a generated sampler, such as `UniformDomainSampler`, raises `ValueError`. The cost of an update grows

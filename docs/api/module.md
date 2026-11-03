@@ -82,6 +82,11 @@ Subclass `BasePhiModule` when the standard model-factory and objective compositi
 `loss_names`, `forward()`, and `training_step()`. Implement `residual_stream()` when an adaptive loss balancer needs
 raw residuals or output streams.
 
+Also override `stream_batch_keys(name)` to return the batch keys that stream `name` reads, such as `("boundary",)`.
+Exact NTK averages each stream over the diagnostic rows of those batches only. The default returns every batch key, so
+all diagnostic batches must then have the same number of rows. `PhiModule` reports the keys from its objective, so it
+needs no override.
+
 ```python
 class HeatModule(BasePhiModule):
     @property
@@ -143,6 +148,7 @@ See [Trainer and module hooks](hooks.md) for the complete fit, prediction, inter
         - log
         - format_training_metrics
         - residual_stream
+        - stream_batch_keys
         - summarize_model
         - predict_step
         - setup

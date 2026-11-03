@@ -219,3 +219,87 @@ def test_exact_ntk_rejects_non_positive_update_settings(kwargs: dict[str, object
     """
     with pytest.raises(ValueError, match=message):
         ExactNTKBalancer(("linear",), **kwargs)  # type: ignore[arg-type]
+
+
+class _TwoStreamModule:
+    """Expose two linear residual streams that read differently sized batches."""
+
+    def __init__(self, stream_keys: dict[str, tuple[str, ...]]) -> None:
+        """Store the batch keys each stream reads.
+
+        Args:
+            stream_keys: Batch keys reported for each stream name.
+        """
+        self.stream_keys = stream_keys
+
+    def stream_batch_keys(self, name: str) -> tuple[str, ...]:
+        """Return the batch keys read by one stream.
+
+        Args:
+            name: Stream name.
+
+        Returns:
+            Configured batch keys.
+        """
+        return self.stream_keys[name]
+
+    def residual_stream(
+        self,
+        name: str,
+        model_state: dict[str, jax.Array],
+        batches: dict[str, dict[str, jax.Array]],
+    ) -> jax.Array:
+        """Evaluate a two-feature residual `[w x, 2 w x]` on the stream's own batch.
+
+        Args:
+            name: Stream name, equal to the batch key it reads.
+            model_state: Scalar linear weight mapping.
+            batches: Named input batch mapping.
+
+        Returns:
+            Residual matrix whose pointwise diagonal NTK is `5 x**2`.
+        """
+        prediction = batches[name]["inputs"] * model_state["weight"]
+        return jnp.concatenate((prediction, 2.0 * prediction), axis=-1)
+
+
+@pytest.mark.parametrize("kernel_chunk_size", [1, None])
+@pytest.mark.parametrize(("long_key", "short_key"), [("a", "b"), ("b", "a")])
+def test_ntk_update_maps_each_stream_over_its_own_batch(
+    kernel_chunk_size: int | None, long_key: str, short_key: str
+) -> None:
+    """Verify streams whose batches differ in size each average over all of their own rows.
+
+    The pointwise diagonal NTK of `[w x, 2 w x]` is `5 x**2`, so each mean is `5 * mean(x**2)` over its own batch.
+    Mapping every stream over all batches together either failed or, when the shorter batch sorted first, silently kept
+    only three rows of the longer one: `5 * mean([1, 4, 9]) ~= 23.3` instead of `37.5`.
+
+    Args:
+        kernel_chunk_size: Sequential or fully vectorized sample evaluation.
+        long_key: Batch key of the four-row batch.
+        short_key: Batch key of the three-row batch.
+    """
+    names = tuple(sorted((long_key, short_key)))
+    balancer = ExactNTKBalancer(names, update_every_n_steps=1, kernel_size={long_key: 4, short_key: "all"})
+    module = cast(BasePhiModule, _TwoStreamModule({long_key: (long_key,), short_key: (short_key,)}))
+    batches = {
+        long_key: {"inputs": jnp.asarray([[1.0], [2.0], [3.0], [4.0]])},
+        short_key: {"inputs": jnp.asarray([[1.0], [1.0], [1.0]])},
+    }
+
+    state = balancer.update(
+        module, {"weight": jnp.asarray(0.5)}, batches, balancer.initialize(), kernel_chunk_size=kernel_chunk_size
+    )
+
+    expected = {long_key: 37.5, short_key: 5.0}
+    np.testing.assert_allclose(state.traces, [expected[name] for name in names], rtol=1e-6)
+
+
+def test_ntk_update_rejects_a_stream_whose_batches_differ_in_size() -> None:
+    """Verify one stream reading two batches with different row counts fails clearly instead of truncating rows."""
+    balancer = ExactNTKBalancer(("a", "b"), update_every_n_steps=1, kernel_size={"a": 4, "b": "all"})
+    module = cast(BasePhiModule, _TwoStreamModule({"a": ("a", "b"), "b": ("b",)}))
+    batches = {"a": {"inputs": jnp.ones((4, 1))}, "b": {"inputs": jnp.ones((3, 1))}}
+
+    with pytest.raises(ValueError, match=r"stream `a` reads batches \['a', 'b'\] with different row counts \[3, 4\]"):
+        balancer.update(module, {"weight": jnp.asarray(0.5)}, batches, balancer.initialize())

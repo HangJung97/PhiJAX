@@ -1,6 +1,6 @@
 from collections.abc import Callable, Mapping, Sequence
 from functools import partial
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -293,26 +293,42 @@ class ExactNTKBalancer:
         """Compute pointwise diagonal NTKs one named stream at a time and update state.
 
         Args:
-            module: Module exposing `residual_stream(name, model_state, batches)` independently of this balancer.
+            module: Module exposing `residual_stream(name, model_state, batches)` and `stream_batch_keys(name)`
+                independently of this balancer.
             model_state: Differentiable model parameter PyTree.
-            ntk_batches: Fixed-shape named batches with a shared leading sample size, used only for NTK estimation.
+            ntk_batches: Fixed-shape named batches used only for NTK estimation. Each stream is evaluated over the
+                batches named by `module.stream_batch_keys(name)`, which must share one leading row count.
             state: Previous balancer state.
             kernel_chunk_size: Positive number of kernel samples differentiated in parallel. `1` evaluates samples
                 sequentially for minimum peak memory; `None` uses a full :func:`jax.vmap`.
 
         Returns:
             Updated weights and mean diagonal-NTK values in :attr:`loss_names` order.
+
+        Raises:
+            ValueError: If the batches read by one stream have different row counts.
         """
         kernel_chunk_size = _validate_kernel_chunk_size(kernel_chunk_size)
         traces = []
         for name in self.loss_names:
+            # Map only over the batches this stream reads, whose rows are aligned; other keys may differ in size.
+            stream_batch_keys = getattr(module, "stream_batch_keys", None)
+            keys = tuple(cast(Sequence[str], stream_batch_keys(name))) if callable(stream_batch_keys) else ()
+            keys = keys or tuple(ntk_batches)
+            stream_batches = {key: ntk_batches[key] for key in keys}
+            row_counts = {leaf.shape[0] for leaf in jax.tree.leaves(stream_batches)}
+            if len(row_counts) != 1:
+                raise ValueError(
+                    f"NTK stream `{name}` reads batches {list(keys)} with different row counts {sorted(row_counts)}; "
+                    "give them the same `kernel_size`."
+                )
             pointwise_trace = partial(_pointwise_ntk_trace, module, name, model_state)
             if kernel_chunk_size is None:
-                pointwise_diagonal = jax.vmap(pointwise_trace)(ntk_batches)
+                pointwise_diagonal = jax.vmap(pointwise_trace)(stream_batches)
             else:
                 pointwise_diagonal = jax.lax.map(
                     pointwise_trace,
-                    ntk_batches,
+                    stream_batches,
                     batch_size=kernel_chunk_size,
                 )
             traces.append(jnp.mean(pointwise_diagonal, dtype=jnp.float32))

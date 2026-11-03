@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import jax
 import numpy as np
@@ -212,6 +212,21 @@ class BasePhiModule(_ModuleHooks, ABC):
         metrics.update({f"train/loss/{name}": value for name, value in losses.items()})
         metrics.update({f"train/{name}": value for name, value in diagnostics.items()})
         return metrics
+
+    def stream_batch_keys(self, name: str) -> Sequence[str]:
+        """Return the batch names that one residual stream reads.
+
+        Derivative-based balancers evaluate a stream row by row over these batches only. The default returns every
+        :attr:`batch_keys` entry, so all diagnostic batches of a custom module must then share one row count.
+
+        Args:
+            name: One entry from :attr:`loss_names`.
+
+        Returns:
+            Batch keys read by the stream.
+        """
+        del name
+        return self.batch_keys
 
     def residual_stream(self, name: str, model_state: Any, batches: NamedBatches) -> jax.Array:
         """Evaluate one residual stream for an adaptive external balancer.
@@ -542,6 +557,20 @@ class PhiModule(BasePhiModule):
             if name not in declared_names and _metric_is_scalar(value):
                 self.log(name, value)
         return model_state, context.metrics
+
+    def stream_batch_keys(self, name: str) -> tuple[str, ...]:
+        """Return the batch names read by one configured objective stream.
+
+        Args:
+            name: One entry from :attr:`loss_names`.
+
+        Returns:
+            The owning term's batch keys when the objective reports them, otherwise every :attr:`batch_keys` entry.
+        """
+        stream_batch_keys = getattr(self.objective, "stream_batch_keys", None)
+        if not callable(stream_batch_keys):
+            return self.batch_keys
+        return tuple(cast(Sequence[str], stream_batch_keys(name)))
 
     def residual_stream(self, name: str, model_state: Any, batches: NamedBatches) -> jax.Array:
         """Evaluate one configured objective residual stream.
