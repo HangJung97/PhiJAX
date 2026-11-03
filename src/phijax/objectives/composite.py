@@ -85,6 +85,23 @@ class CompositeObjective:
             losses.update(term.losses(model_apply, model_state, batches))
         return {name: losses[name] for name in self.loss_names}
 
+    def stream_batch_keys(self, name: str) -> tuple[str, ...]:
+        """Return the batch names read by one residual stream.
+
+        Args:
+            name: One entry from :attr:`loss_names`.
+
+        Returns:
+            Batch keys of the term that owns `name`.
+
+        Raises:
+            KeyError: If no configured term owns `name`.
+        """
+        for term in self.terms.values():
+            if name in term.loss_names:
+                return tuple(term.batch_keys)
+        raise KeyError(f"Unknown objective stream: {name}")
+
     def residual_stream(
         self,
         name: str,

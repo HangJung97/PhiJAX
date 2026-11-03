@@ -76,3 +76,23 @@ def test_composite_objective_validates_terms_and_loss_names() -> None:
         CompositeObjective({"invalid": object()})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match="globally unique"):
         CompositeObjective({"first": _StreamObjective(), "second": _StreamObjective()})
+
+
+def test_composite_objective_reports_the_batch_keys_of_each_stream() -> None:
+    """Verify each stream maps to its owning term's batch keys, and the module forwards them."""
+    from functools import partial
+
+    from phijax import PhiModule
+    from phijax.equations import base_data_fidelity
+    from phijax.models import build_mlp
+
+    objective = CompositeObjective.from_equations({"data": base_data_fidelity, "anchor": base_data_fidelity})
+    data_name, anchor_name = objective.loss_names
+
+    assert objective.stream_batch_keys(data_name) == ("data",)
+    assert objective.stream_batch_keys(anchor_name) == ("anchor",)
+    with pytest.raises(KeyError, match="Unknown objective stream"):
+        objective.stream_batch_keys("missing")
+
+    module = PhiModule(partial(build_mlp, input_dim=1, output_dim=1, hidden=(4,)), objective)
+    assert module.stream_batch_keys(anchor_name) == ("anchor",)
