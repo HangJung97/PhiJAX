@@ -12,7 +12,15 @@ from phijax.types import JaxDevice, NamedBatches
 
 
 class TrainingBatchSource(Protocol):
-    """Define deterministic step-indexed training and diagnostic batch delivery."""
+    """Define deterministic step-indexed training and diagnostic batch delivery.
+
+    Batch sizes are per device. A source may also define an optional `for_devices(count: int) -> Self` method that
+    returns a copy drawing `count` times every integer batch size, as :meth:`NamedBatchSource.for_devices` does. The
+    Trainer calls it before :meth:`prepare` with this process's device count, because each process draws its own batch
+    and splits it over its devices. Diagnostic sizes passed to :meth:`sample` are not scaled. A source without
+    `for_devices` is used as it is, so its batches are the rows of the whole process and their leading dimension must
+    divide by the process's device count.
+    """
 
     def prepare(self, device: JaxDevice) -> Self:
         """Prepare persistent source state for one trainer-selected device.
@@ -54,7 +62,13 @@ class TrainingBatchSource(Protocol):
 
 
 class PredictionBatchSource(Protocol):
-    """Define finite ordered prediction batches and their reconstruction pool."""
+    """Define finite ordered prediction batches and their reconstruction pool.
+
+    Chunk sizes are per device. A source may also define an optional `for_devices(count: int) -> Self` method that
+    returns a copy with `count` times larger chunks, as :meth:`ChunkedPredictionSource.for_devices` does. The Trainer
+    calls it with the total device count, because every process iterates the same chunks and splits each one over all
+    devices. A source without `for_devices` is used as it is; its chunks are padded to divide over the devices.
+    """
 
     @property
     def pool(self) -> HostPool:
@@ -76,7 +90,7 @@ class NamedBatchSource:
 
     Attributes:
         samplers: Named sampling policies aligned with objective batch keys.
-        batch_sizes: Per-sampler positive integer or `all` policies.
+        batch_sizes: Per-sampler positive integer or `all` policies. Integer sizes are rows per device.
         key: Explicit root key folded with each global optimizer step.
     """
 
@@ -135,6 +149,23 @@ class NamedBatchSource:
             raise ValueError("At least one named sampler is required.")
         for name, sampler in self.samplers.items():
             _validate_batch_size(self.batch_sizes[name], allow_all=isinstance(sampler, RandomRowSampler))
+
+    def for_devices(self, count: int) -> Self:
+        """Return a copy that draws every integer batch size once per device.
+
+        Batch sizes are per device, as in Lightning. The Trainer calls this with the number of devices that share
+        each sampled batch, so every device receives the configured rows. `all` policies keep the whole pool.
+
+        Args:
+            count: Positive number of devices that split each batch.
+
+        Returns:
+            This source when `count` is `1`, otherwise a copy with scaled batch sizes.
+        """
+        if count == 1:
+            return self
+        sizes = {name: size if size == "all" else size * count for name, size in self.batch_sizes.items()}
+        return type(self)(self.samplers, sizes, self.key)
 
     def prepare(self, device: JaxDevice) -> Self:
         """Place persistent sampler arrays and the root key on a trainer-selected device.
@@ -215,7 +246,7 @@ class ChunkedPredictionSource:
 
     Attributes:
         pool: Immutable host prediction pool carrying dense reconstruction metadata.
-        batch_size: Positive fixed number of rows yielded per batch.
+        batch_size: Positive fixed number of rows yielded per batch, for each device that shares it.
     """
 
     pool: HostPool
@@ -234,6 +265,20 @@ class ChunkedPredictionSource:
                 "Prediction pools cannot have an auxiliary array named `valid_predict_mask`; ChunkedPredictionSource "
                 "uses that name for its padding mask. Rename the field."
             )
+
+    def for_devices(self, count: int) -> Self:
+        """Return a copy whose chunks hold `batch_size` rows for each device.
+
+        The chunk size is per device, as in Lightning. The Trainer calls this with the number of devices that share
+        each chunk.
+
+        Args:
+            count: Positive number of devices that split each chunk.
+
+        Returns:
+            This source when `count` is `1`, otherwise a copy with a scaled chunk size.
+        """
+        return self if count == 1 else type(self)(self.pool, self.batch_size * count)
 
     def __len__(self) -> int:
         """Return the finite number of padded prediction batches.

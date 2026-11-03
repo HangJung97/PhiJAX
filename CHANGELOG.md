@@ -39,6 +39,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Breaking changes
 
 - `ModelCheckpoint` now owns checkpoint retention, following Lightning's `ModelCheckpoint`:
+
     - `OrbaxCheckpointIO` no longer accepts `max_to_keep` and never deletes checkpoints on its own.
     - `save_top_k` defaults to `1`, so `ModelCheckpoint(checkpoint_io)` keeps only the latest checkpoint instead of
       every checkpoint. Pass `save_top_k=-1` to keep every checkpoint.
@@ -46,22 +47,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     - To keep the latest `k` checkpoints, replace `max_to_keep=k` with
       `ModelCheckpoint(..., monitor="step", mode="max", save_top_k=k)`. See the
       [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#checkpoint-retention).
+
 - `Trainer(max_steps=...)` is now the global optimizer step at which training stops, as in Lightning. A fit resumed
   from step `N` runs `max_steps - N` updates instead of `max_steps` more, and logs and progress bars follow the global
   step. Resume with `max_steps = N + extra` to train `extra` more steps. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#global-max_steps).
+
 - `EarlyStopping` follows Lightning's callback: it checks metrics in `on_train_metrics()`, so it sees module-logged and
   callback metrics, and stops once `wait_count >= patience` instead of `> patience`. `best` and `bad_checks` are
   renamed `best_score` and `wait_count`, and a NaN or infinite metric stops training immediately by default. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#early-stopping).
+
 - Periodic features use physical periods of the physical coordinate, so input normalization no longer affects periodic
   axes. `PeriodicFeatures` takes `periods={axis: T}` instead of `axes` and `frequencies`, model factories receive
   `input_periods`, and `bind_input_statistics()` is now `bind_inputs()`. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#periodic-features-in-physical-units).
+
 - `ChunkedPredictionSource` batches carry their padding mask as `valid_predict_mask` instead of `mask`, so a pool can
   keep its own `mask` field. Code reading `batch["mask"]` in `predict_step()` must read `batch["valid_predict_mask"]`.
   A prediction pool with an auxiliary array named `valid_predict_mask` raises `ValueError`; previously a `mask` field
   was silently replaced by the padding mask.
+
+- Training batch sizes and prediction chunk sizes count rows per device, as in Lightning: `NamedBatchSource` batch
+  sizes and the `ChunkedPredictionSource` chunk size. The Trainer scales built-in sources with their new
+  `for_devices()` method, so sizes no longer need to divide by the device count. Single-device runs are unchanged; to
+  keep the same global batch on `n` devices, divide each size by `n`. See the
+  [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#per-device-batch-sizes).
 
 ### Changed
 

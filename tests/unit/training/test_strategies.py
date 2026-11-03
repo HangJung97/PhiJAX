@@ -262,3 +262,11 @@ def test_reduce_boolean_decisions_combines_processes_with_any_or_all(monkeypatch
     assert strategy.reduce_boolean_decisions(True, False, all=False) == (True, True)
     assert strategy.reduce_boolean_decisions(True, False) == (False, False)
     assert len(gathers) == 2
+
+
+def test_strategy_counts_only_this_process_devices() -> None:
+    """Verify `local_device_count` ignores devices owned by other processes."""
+    strategy = SingleDeviceStrategy(jax.devices("cpu")[0])
+    strategy.devices = (SimpleNamespace(process_index=0), SimpleNamespace(process_index=1))  # type: ignore[assignment]
+
+    assert strategy.local_device_count == 1

@@ -20,6 +20,7 @@ import optax
 from jax.experimental import multihost_utils
 
 from phijax import PhiModule, Trainer
+from phijax.balancers import ExactNTKBalancer
 from phijax.callbacks import Callback, ModelCheckpoint
 from phijax.data import ChunkedPredictionSource, HostPool, NamedBatchSource, PhiDataModule
 from phijax.data.datamodule import DataStage
@@ -40,7 +41,7 @@ class _LineDataModule(PhiDataModule):
         """
         del stage
         inputs = np.linspace(-1.0, 1.0, 64, dtype=np.float32)[:, None]
-        # Ten prediction rows in chunks of six: the last chunk is padded, and six rows do not split over four devices.
+        # Ten prediction rows with one row per device: four-row chunks on four devices, the last one padded.
         predict_inputs = np.linspace(-0.9, 0.9, 10, dtype=np.float32)[:, None]
         self.pools = {
             "data": HostPool(inputs=inputs, targets=np.sin(3.0 * inputs)),
@@ -48,7 +49,7 @@ class _LineDataModule(PhiDataModule):
         }
 
     def train_batch_source(self, batch_keys: tuple[str, ...], key: jax.Array) -> NamedBatchSource:
-        """Sample four rows per process and step.
+        """Sample four rows per device and step.
 
         Args:
             batch_keys: Objective batch keys.
@@ -60,12 +61,12 @@ class _LineDataModule(PhiDataModule):
         return NamedBatchSource.from_pools({"data": self.pools["data"]}, {"data": 4}, key, names=batch_keys)
 
     def predict_batch_source(self) -> ChunkedPredictionSource:
-        """Yield ordered prediction chunks of six rows.
+        """Yield ordered prediction chunks of one row per device.
 
         Returns:
             Chunked prediction source.
         """
-        return ChunkedPredictionSource(self.pools["predict"], 6)
+        return ChunkedPredictionSource(self.pools["predict"], 1)
 
 
 class _BatchRecorder(Callback):
@@ -127,6 +128,7 @@ def _fit(
     seed: int = 0,
     stop_request: str | None = None,
     predict: bool = False,
+    ntk: bool = False,
 ) -> dict[str, Any]:
     """Fit across every process and return host-readable results.
 
@@ -137,6 +139,7 @@ def _fit(
         seed: Initialization seed for this process.
         stop_request: Optional stop that process 1 alone requests after step 2.
         predict: Whether to predict after fitting and compare with a direct single-device evaluation.
+        ntk: Whether to balance with exact NTK on four diagnostic rows per process, updated at every step.
 
     Returns:
         Recorded batches, final step, flattened parameters, and metrics.
@@ -164,6 +167,11 @@ def _fit(
         module,
         datamodule=_LineDataModule(),
         optimizer=optax.adam(1e-2),
+        balancer=(
+            ExactNTKBalancer(module.loss_names, update_every_n_steps=1, update_start_step=0, kernel_size=4)
+            if ntk
+            else None
+        ),
         seed=seed,
         ckpt_path=directory if resume else None,
     )
@@ -226,7 +234,7 @@ def main_single_process(output: Path) -> None:
     Args:
         output: Directory for checkpoints and results.
     """
-    (output / "single_process.json").write_text(json.dumps(_fit(output / "single", 2, predict=True)))
+    (output / "single_process.json").write_text(json.dumps(_fit(output / "single", 2, predict=True, ntk=True)))
 
 
 if __name__ == "__main__":

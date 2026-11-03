@@ -111,6 +111,15 @@ class Strategy:
         raise NotImplementedError
 
     @property
+    def local_device_count(self) -> int:
+        """Return the number of strategy devices owned by this process.
+
+        Returns:
+            Count of devices whose `process_index` matches this process.
+        """
+        return sum(device.process_index == self.process_index for device in self.devices)
+
+    @property
     def root_device(self) -> JaxDevice:
         """Return the first strategy device addressable by this process.
 
@@ -259,7 +268,7 @@ class DataParallelStrategy(Strategy):
                 if jax.process_count() > 1:
                     return jax.make_array_from_process_local_data(self._replicated, array)
                 return jax.device_put(array, self._replicated)
-            local_device_count = sum(device.process_index == self.process_index for device in self.devices)
+            local_device_count = self.local_device_count
             shard_count = local_device_count if jax.process_count() > 1 else len(self.devices)
             if shard_count == 0:
                 raise ValueError("The data mesh contains no device addressable by this JAX process.")

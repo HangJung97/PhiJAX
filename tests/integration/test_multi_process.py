@@ -61,9 +61,10 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
     assert full["mesh_size"] == _PROCESS_COUNT * _LOCAL_DEVICE_COUNT
     assert full["step"] == 4
 
-    # The global batch stacks one four-row batch per process; distinct keys must give the processes different rows.
+    # Four rows per device give eight rows per process; distinct keys must give the processes different rows.
     for batch in full["batches"].values():
         rows = np.asarray(batch).reshape(_PROCESS_COUNT, -1)
+        assert rows.shape[1] == 4 * _LOCAL_DEVICE_COUNT
         assert not np.array_equal(rows[0], rows[1])
 
     resumed = results[0]["resumed"]
@@ -94,8 +95,8 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
-def test_single_process_prediction_pads_chunks_over_local_devices(tmp_path: Path) -> None:
-    """Verify one process with four devices predicts six-row chunks, which do not divide evenly over the devices.
+def test_single_process_fit_and_prediction_use_per_device_sizes(tmp_path: Path) -> None:
+    """Verify one process with four devices samples and predicts per-device sizes across several padded chunks.
 
     Args:
         tmp_path: Directory for the worker's checkpoints and results.
@@ -114,5 +115,6 @@ def test_single_process_prediction_pads_chunks_over_local_devices(tmp_path: Path
 
     result = json.loads((tmp_path / "single_process.json").read_text())
     assert result["mesh_size"] == 4
+    assert all(len(batch) == 4 * 4 for batch in result["batches"].values())
     assert len(result["prediction"]["values"]) == 10
     assert result["prediction"]["max_error"] < 1e-6

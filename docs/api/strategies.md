@@ -24,9 +24,21 @@ trainer = Trainer(max_steps=20_000, accelerator="gpu", devices="auto")  # or dev
 trainer.fit(module, datamodule=datamodule, optimizer=optimizer, seed=0)
 ```
 
-The batch sizes requested by the DataModule are the total rows per step. They must be divisible by the device count.
-Prediction chunks can have any size: `Trainer.predict()` pads each chunk to a multiple of the device count, splits it
-over the devices, and drops the padded rows from the returned predictions.
+### Batch sizes
+
+Batch sizes count rows **per device**. With `{"pde": 64}` on four GPUs, each GPU evaluates 64 `pde` rows, so one step
+uses 256.
+
+| Size                                         | Meaning                       | Divisible by the device count? |
+| -------------------------------------------- | ----------------------------- | ------------------------------ |
+| Training batch size (`NamedBatchSource`)     | Rows per device               | Not required                   |
+| Prediction chunk (`ChunkedPredictionSource`) | Rows per device in each chunk | Not required                   |
+| `"all"`                                      | Every row of the pool         | Required                       |
+| `ExactNTKBalancer(kernel_size=...)`          | Diagnostic rows per process   | Required                       |
+
+The Trainer scales the built-in sources with their `for_devices()` method. A custom batch source without
+`for_devices()` is used unchanged, so its batches are the rows of the whole process and must divide by the device
+count. See [exact NTK weighting](balancers.md#exact-ntk-weighting) for running NTK on several devices.
 
 ## Run on several machines
 
@@ -53,7 +65,7 @@ Several machines change four rules:
 | Setting         | Meaning with several processes                                                                 |
 | --------------- | ---------------------------------------------------------------------------------------------- |
 | `devices`       | Devices per process, like Lightning's `devices` per node. `devices=4` on two machines gives 8. |
-| Batch sizes     | Rows per process. The global batch is the batch size times the process count.                  |
+| Batch sizes     | Rows per device, as on one machine. The global batch is the batch size times all devices.      |
 | `seed`          | Must be identical on every process. Fitting raises `ValueError` if the starting state differs. |
 | Data and output | `prepare_data()` files and checkpoints must be on storage every machine can read.              |
 
@@ -69,11 +81,12 @@ only. `Trainer.predict()` runs on every process and returns the complete predict
 - **Sampling.** [`Strategy.process_key()`](#phijax.training.Strategy.process_key) folds the process index into the
   stored sampling and balancer keys. Processes draw different rows, while the checkpointed keys stay identical, so a
   resumed fit draws the same batches.
-- **Prediction.** Every process builds the same prediction batches. As on one machine, each batch is padded so its
-  rows divide over all devices, and each process predicts an equal share. The outputs are gathered with
-  `multihost_utils.process_allgather()` and put back in batch order, so every process receives the same complete
-  predictions, and `PredictionWriter` writes them once from global process zero. Like Lightning's distributed
-  prediction, this spreads the work over every device; unlike Lightning, no per-rank files need merging.
+- **Prediction.** Every process builds the same prediction batches, so a per-device chunk spans every device of every
+  process. Each batch is padded so its rows divide over all devices, and each process predicts an equal share. The
+  outputs are gathered with `multihost_utils.process_allgather()` and put back in batch order, so every process
+  receives the same complete predictions, and `PredictionWriter` writes them once from global process zero. Like
+  Lightning's distributed prediction, this spreads the work over every device; unlike Lightning, no per-rank files
+  need merging.
 - **Data preparation.** [`Strategy.barrier()`](#phijax.training.Strategy.barrier) makes every process wait until
   global process zero finishes `PhiDataModule.prepare_data()`. See [multi-process runs](data.md#multi-process-runs).
 

@@ -401,12 +401,16 @@ class Trainer:
         and finite iterables. Built-in PhiJAX sources transfer finite candidate pools, generation bounds, templates,
         and PRNG keys once instead of transferring sampled training batches from the host on every step.
 
+        Batch sizes are per device. A source exposing `for_devices(count)` is first scaled by this process's device
+        count; other sources are used as they are, so their batches are the rows of this process.
+
         Args:
             source: Training batch callable or iterable, optionally exposing `prepare(device)`.
 
         Returns:
             Source prepared for the selected Strategy, or the original source when preparation is unsupported.
         """
+        source = _for_devices(source, self.strategy.local_device_count)
         prepare = getattr(source, "prepare", None)
         if not callable(prepare):
             return source
@@ -787,6 +791,8 @@ class Trainer:
                 batches = datamodule.predict_batch_source()
                 if batches is None:
                     return None
+            # Every process works through the same chunks, so a per-device chunk spans all devices.
+            batches = _for_devices(batches, len(self.strategy.devices))
             # Prediction is not transfer learning: use the statistics the checkpointed model was trained with.
             restored_state = self._restore_state(
                 _with_module_inputs(state, module), ckpt_path, ckpt_step, weights_only=False
@@ -933,6 +939,20 @@ class Trainer:
         """
         del exception_type, exception, traceback
         self.close()
+
+
+def _for_devices[SourceT](source: SourceT, count: int) -> SourceT:
+    """Scale a batch source's per-device sizes to the devices that share each batch.
+
+    Args:
+        source: Batch source, optionally exposing `for_devices(count)` like the built-in PhiJAX sources.
+        count: Number of devices that split each batch.
+
+    Returns:
+        The scaled source, or `source` unchanged when it has no `for_devices` method.
+    """
+    for_devices = getattr(source, "for_devices", None)
+    return cast(SourceT, for_devices(count)) if callable(for_devices) else source
 
 
 def _unique_devices(devices: Sequence[JaxDevice]) -> tuple[JaxDevice, ...]:

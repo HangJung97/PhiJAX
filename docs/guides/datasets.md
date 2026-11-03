@@ -116,7 +116,7 @@ These values mean:
 
 ```text
 pde_size          = finite candidate coordinates stored in the host pool
-batch_sizes["pde"] = candidate rows evaluated during one optimizer step
+batch_sizes["pde"] = candidate rows evaluated on each device during one optimizer step
 ```
 
 For a continuously generated sampler such as `uniform_domain`, no finite `pde_size` exists. In that case,
@@ -133,7 +133,10 @@ empirical pool statistics or the exact values
 `mean = (a + b) / 2` and `std = (b - a) / sqrt(12)`.
 
 Prediction batch size is a chunking policy, not a prediction-grid size. The grid size comes from `reference_shape`;
-`batch_sizes["predict"]` only limits the number of rows evaluated at once.
+`batch_sizes["predict"]` only limits the number of rows each device evaluates at once.
+
+Batch sizes are per device, as in Lightning. On one device nothing changes; with several devices, each device
+evaluates the configured rows. See [device strategies](../api/strategies.md).
 
 ## Application DataModule pattern
 
