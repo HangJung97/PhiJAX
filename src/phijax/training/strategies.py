@@ -1,5 +1,5 @@
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Literal
 
 import jax
@@ -99,16 +99,27 @@ class Strategy:
         """
         raise NotImplementedError
 
-    def place_batch(self, batch: Any) -> Any:
+    def place_batch(self, batch: Any, replicated: Collection[str] = ()) -> Any:
         """Place a training-batch PyTree.
 
         Args:
             batch: Training-batch PyTree.
+            replicated: Top-level batch names placed in full on every device instead of split by rows, such as
+                batches drawn with the `all` policy.
 
         Returns:
             Device-placed training batch.
         """
         raise NotImplementedError
+
+    @property
+    def local_device_count(self) -> int:
+        """Return the number of strategy devices owned by this process.
+
+        Returns:
+            Count of devices whose `process_index` matches this process.
+        """
+        return sum(device.process_index == self.process_index for device in self.devices)
 
     @property
     def root_device(self) -> JaxDevice:
@@ -152,11 +163,12 @@ class SingleDeviceStrategy(Strategy):
         """
         return jax.device_put(state, self.device)
 
-    def place_batch(self, batch: Any) -> Any:
+    def place_batch(self, batch: Any, replicated: Collection[str] = ()) -> Any:
         """Place the batch on the configured device.
 
         Args:
             batch: Training-batch PyTree.
+            replicated: Ignored, because one device always holds the whole batch.
 
         Returns:
             Batch placed on `device`.
@@ -229,18 +241,38 @@ class DataParallelStrategy(Strategy):
         # `device_put` cannot target devices owned by other processes.
         return jax.tree.map(replicate, state)
 
-    def place_batch(self, batch: Any) -> Any:
-        """Shard each non-scalar batch leaf along its leading dimension.
+    def place_batch(self, batch: Any, replicated: Collection[str] = ()) -> Any:
+        """Shard each non-scalar batch leaf along its leading dimension, or replicate the named batches.
+
+        Replicated batches give every device the whole batch, so their row count need not divide by the device count.
+        In a multi-process run, every process must hold the same rows for them; each process's copy then forms one
+        replicated array instead of adding its own rows.
 
         Args:
-            batch: Training-batch PyTree whose non-scalar leading dimensions are divisible by the mesh size.
+            batch: Training-batch PyTree whose non-scalar leading dimensions are divisible by the mesh size, except
+                under `replicated` names.
+            replicated: Top-level names of a mapping batch placed in full on every device.
 
         Returns:
-            Global batch with leading axes sharded over the data mesh.
+            Global batch with leading axes sharded over the data mesh, and replicated batches.
 
         Raises:
-            ValueError: If a non-scalar leading dimension is not divisible by the device count.
+            ValueError: If a sharded non-scalar leading dimension is not divisible by the device count.
         """
+
+        def replicate_leaf(value: Any) -> Any:
+            """Place one batch leaf in full on every device.
+
+            Args:
+                value: Array-like batch leaf, identical on every process.
+
+            Returns:
+                Global replicated array.
+            """
+            array = np.asarray(value) if not hasattr(value, "shape") else value
+            if jax.process_count() > 1:
+                return jax.make_array_from_process_local_data(self._replicated, array)
+            return jax.device_put(array, self._replicated)
 
         def place_leaf(value: Any) -> Any:
             """Place one batch leaf with replicated or leading-axis sharding.
@@ -256,10 +288,8 @@ class DataParallelStrategy(Strategy):
             """
             array = np.asarray(value) if not hasattr(value, "shape") else value
             if len(array.shape) == 0:
-                if jax.process_count() > 1:
-                    return jax.make_array_from_process_local_data(self._replicated, array)
-                return jax.device_put(array, self._replicated)
-            local_device_count = sum(device.process_index == self.process_index for device in self.devices)
+                return replicate_leaf(array)
+            local_device_count = self.local_device_count
             shard_count = local_device_count if jax.process_count() > 1 else len(self.devices)
             if shard_count == 0:
                 raise ValueError("The data mesh contains no device addressable by this JAX process.")
@@ -273,6 +303,11 @@ class DataParallelStrategy(Strategy):
                 return jax.make_array_from_process_local_data(sharding, array)
             return jax.device_put(array, sharding)
 
+        if replicated and isinstance(batch, Mapping):
+            return {
+                name: jax.tree.map(replicate_leaf if name in replicated else place_leaf, value)
+                for name, value in batch.items()
+            }
         return jax.tree.map(place_leaf, batch)
 
 

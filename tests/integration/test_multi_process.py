@@ -61,9 +61,10 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
     assert full["mesh_size"] == _PROCESS_COUNT * _LOCAL_DEVICE_COUNT
     assert full["step"] == 4
 
-    # The global batch stacks one four-row batch per process; distinct keys must give the processes different rows.
+    # Four rows per device give eight rows per process; distinct keys must give the processes different rows.
     for batch in full["batches"].values():
         rows = np.asarray(batch).reshape(_PROCESS_COUNT, -1)
+        assert rows.shape[1] == 4 * _LOCAL_DEVICE_COUNT
         assert not np.array_equal(rows[0], rows[1])
 
     resumed = results[0]["resumed"]
@@ -82,6 +83,10 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
     for result in results:
         assert "differs between JAX processes" in result["mismatch_error"]
 
+    # An `all` batch is replicated: the six pool rows appear once in the global batch, not once per process.
+    assert all(len(batch) == 6 for batch in results[0]["full_pool"]["batches"].values())
+    assert results[0]["full_pool"] == results[1]["full_pool"]
+
     # A stop requested by process 1 alone stops every process after the same step instead of hanging the others.
     for result in results:
         assert result["should_stop"]["step"] == result["sigint"]["step"] == 2
@@ -94,8 +99,8 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
-def test_single_process_prediction_pads_chunks_over_local_devices(tmp_path: Path) -> None:
-    """Verify one process with four devices predicts six-row chunks, which do not divide evenly over the devices.
+def test_single_process_fit_and_prediction_use_per_device_sizes(tmp_path: Path) -> None:
+    """Verify one process with four devices samples and predicts per-device sizes across several padded chunks.
 
     Args:
         tmp_path: Directory for the worker's checkpoints and results.
@@ -112,7 +117,16 @@ def test_single_process_prediction_pads_chunks_over_local_devices(tmp_path: Path
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
-    result = json.loads((tmp_path / "single_process.json").read_text())
+    results = json.loads((tmp_path / "single_process.json").read_text())
+    result = results["fit"]
     assert result["mesh_size"] == 4
+    assert all(len(batch) == 4 * 4 for batch in result["batches"].values())
     assert len(result["prediction"]["values"]) == 10
     assert result["prediction"]["max_error"] < 1e-6
+
+    # Six `all` rows do not divide over four devices; replicated, they train exactly as on one device.
+    full_pool, reference = results["full_pool"], results["full_pool_one_device"]
+    assert full_pool["mesh_size"] == 4
+    assert reference["mesh_size"] == 1
+    for actual, expected in zip(full_pool["parameters"], reference["parameters"], strict=True):
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)

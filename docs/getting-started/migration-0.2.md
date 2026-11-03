@@ -165,6 +165,20 @@ From PhiJAX 0.2.0b6, `EarlyStopping` follows Lightning's callback and checks met
 
 The new rule stops one check earlier. To stop at the same step as before, increase `patience` by one.
 
+## Per-device batch sizes
+
+From PhiJAX 0.2.0b6, training batch sizes and prediction chunk sizes count rows per device, as in Lightning.
+Runs on one device are unchanged.
+
+| Size                                 | PhiJAX 0.2.0b5 and earlier               | PhiJAX 0.2.0b6 and later          |
+| ------------------------------------ | ---------------------------------------- | --------------------------------- |
+| `NamedBatchSource` batch sizes       | Rows per process, split over its devices | Rows per device                   |
+| `ChunkedPredictionSource` chunk size | Rows per chunk, split over every device  | Rows per device in each chunk     |
+| Divisibility by the device count     | Required for training batch sizes        | Not required for built-in sources |
+
+To keep the same global batch on `n` devices, divide each integer size by `n`. The `"all"` policy keeps its meaning,
+and `ExactNTKBalancer(kernel_size=...)` is unchanged.
+
 ## Adaptive balancing
 
 Adaptive balancers now own their update cadence and diagnostic settings:

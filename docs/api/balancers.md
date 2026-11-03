@@ -84,12 +84,18 @@ Exact NTK balancing computes the squared parameter-Jacobian norm at each point. 
 residual stream and normalizes the loss weights from those means. Named streams are evaluated one at a time.
 `kernel_chunk_size=1` minimizes peak memory; `None` vectorizes over all samples.
 
+With several devices, the default `kernel_chunk_size=1` loops over the diagnostic rows, and XLA gathers every row onto
+every device before the loop, so each device computes the whole diagnostic batch. `kernel_chunk_size=None` keeps each
+device on its own rows and runs them in parallel, at the memory cost of vectorizing those rows at once. Use it on
+several devices when the diagnostic rows fit in memory.
+
 Each `train/ntk/<loss_name>` value is the resulting mean for one named residual or output stream. Each scheduled update
 evaluates the current model on diagnostic batches drawn from the training source.
 
 ### Choose the diagnostic samples
 
-`kernel_size` sets how many rows each objective batch contributes to the NTK estimate:
+`kernel_size` sets how many rows each objective batch contributes to the NTK estimate. Unlike training batch sizes,
+an integer `kernel_size` is the number of rows per process, split over its devices:
 
 | `kernel_size`                      | Diagnostic rows                                              |
 | ---------------------------------- | ------------------------------------------------------------ |
@@ -104,7 +110,8 @@ with the number of rows, so keep random samples for large data pools and colloca
 
 By default, the Trainer draws the diagnostic batches once per fit and reuses them for every update, so the weights
 follow the training dynamics rather than sampling noise. Set `resample=True` to draw new rows for every update,
-which covers more of the domain over time. Terms whose `kernel_size` is `"all"` use the same rows either way.
+which covers more of the domain over time. Terms whose `kernel_size` is `"all"` use the same rows either way, and like
+`"all"` training batches they are replicated on every device.
 
 Diagnostic batches depend only on `TrainState.balancer_key` and, with `resample=True`, the global step of the update.
 A resumed fit therefore draws the same batches as an uninterrupted run.

@@ -113,12 +113,21 @@ def train_batch_source(self, batch_keys, key):
     return NamedBatchSource.from_pools(self.pools, self.batch_sizes, key, names=batch_keys)
 ```
 
-An integer samples that many rows on every optimizer step. The `"all"` policy uses every row and is available only
-for finite pools.
+An integer samples that many rows per device on every optimizer step. The `"all"` policy uses every row, is available
+only for finite pools, and places the whole pool on every device. See [batch sizes](strategies.md#batch-sizes).
 
 `ChunkedPredictionSource` pads its final host batch to `batch_size`. Each batch carries a Boolean `valid_predict_mask`
 that is `True` for pool rows and `False` for padding, and prediction removes padded rows before output assembly. The
 name is reserved: a prediction pool with an auxiliary array named `valid_predict_mask` raises `ValueError`.
+
+### Custom batch sources
+
+A custom source implements [`TrainingBatchSource`](#phijax.data.TrainingBatchSource) or
+[`PredictionBatchSource`](#phijax.data.PredictionBatchSource). To support per-device batch sizes on
+several devices, also define `for_devices(count)`, returning a copy whose integer sizes are multiplied by `count`. The
+Trainer passes this process's device count for training sources and the total device count for prediction sources.
+Without the method, a training source's batches are the rows of the whole process and must divide by its device count.
+See [device strategies](strategies.md).
 
 ::: phijax.data.TrainingBatchSource
 

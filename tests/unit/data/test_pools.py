@@ -319,3 +319,17 @@ def test_sampler_names_and_generated_field_semantics_are_validated() -> None:
                 "constant_fields": ["targets"],
             },
         )
+
+
+def test_batch_sources_scale_per_device_sizes() -> None:
+    """Verify `for_devices` multiplies integer batch sizes and chunk sizes, keeps `all`, and is free for one device."""
+    pool = _pool()
+    source = NamedBatchSource.from_pools({"a": pool, "b": pool}, {"a": 2, "b": "all"}, jax.random.key(0))
+
+    assert source.for_devices(1) is source
+    assert dict(source.for_devices(3).batch_sizes) == {"a": 6, "b": "all"}
+
+    chunks = ChunkedPredictionSource(pool, 1)
+    assert chunks.for_devices(1) is chunks
+    assert chunks.for_devices(2).batch_size == 2
+    assert len(chunks.for_devices(2)) == 2

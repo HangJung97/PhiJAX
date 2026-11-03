@@ -182,7 +182,7 @@ def _process_share(batch: Mapping[str, Any], strategy: Strategy) -> _ProcessShar
         This process's padded rows, their ids, and the validity of the unpadded rows.
     """
     row_count = next(np.shape(leaf)[0] for leaf in jax.tree.leaves(batch) if np.ndim(leaf) > 0)
-    local_devices = sum(device.process_index == strategy.process_index for device in strategy.devices)
+    local_devices = strategy.local_device_count
     # Round each process's share up to a whole number of rows per local device.
     share_rows = -(-row_count // (strategy.process_count * local_devices)) * local_devices
     start = strategy.process_index * share_rows

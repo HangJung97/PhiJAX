@@ -18,7 +18,10 @@ def _strategy(process_index: int) -> Strategy:
         Strategy stand-in exposing the process and device layout.
     """
     devices = tuple(SimpleNamespace(process_index=process) for process in (0, 0, 1, 1))
-    return cast(Strategy, SimpleNamespace(process_index=process_index, process_count=2, devices=devices))
+    return cast(
+        Strategy,
+        SimpleNamespace(process_index=process_index, process_count=2, devices=devices, local_device_count=2),
+    )
 
 
 def test_process_share_pads_rows_and_splits_them_evenly() -> None:
@@ -83,7 +86,7 @@ def test_gather_rows_restores_row_order_and_drops_invalid_rows(monkeypatch: pyte
 def test_process_share_pads_a_single_process_batch_to_its_device_count() -> None:
     """Verify one process with four devices pads six rows to eight and keeps every row."""
     devices = tuple(SimpleNamespace(process_index=0) for _ in range(4))
-    strategy = cast(Strategy, SimpleNamespace(process_index=0, process_count=1, devices=devices))
+    strategy = cast(Strategy, SimpleNamespace(process_index=0, process_count=1, devices=devices, local_device_count=4))
 
     share = prediction_loop_module._process_share({"inputs": np.arange(6, dtype=np.float32)[:, None]}, strategy)
 
