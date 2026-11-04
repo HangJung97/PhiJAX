@@ -27,6 +27,9 @@ folded with the current process index.
 OmegaConf resolver registration happen before composition. `task_wrapper` logs failures and always runs registered
 finalizers, including optional W&B shutdown.
 
+`pre_hydra_routine`, `extras`, `print_config_tree`, and `task_wrapper` require the `hydra` extra.
+`register_task_finalizer` does not, so resource owners such as loggers can call it in any project.
+
 ::: phijax.utils.pre_hydra_routine
 
 ::: phijax.utils.extras

@@ -1,10 +1,16 @@
 from collections.abc import Sequence
 from pathlib import Path
 
-from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.tree import Tree
+
+from phijax._optional import missing_extra_error
+
+try:
+    from omegaconf import DictConfig, OmegaConf
+except ModuleNotFoundError as error:
+    raise missing_extra_error("hydra", error) from error
 
 from phijax.utils.pylogger import get_colorlogger
 

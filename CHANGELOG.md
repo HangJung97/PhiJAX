@@ -35,6 +35,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `Trainer.predict()` runs across several JAX processes. Each process predicts an equal share of every prediction
   batch, and the outputs are gathered so every process returns the complete predictions in batch order. With several
   devices, prediction chunks no longer need to be divisible by the device count; they are padded instead.
+- The `all` extra installs every optional feature: `hydra`, `io`, `tensorboard`, and `wandb`. Combine it with at most
+  one accelerator extra, such as `phijax[all,cuda13]`.
 
 ### Breaking changes
 
@@ -79,6 +81,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   longer needs to divide by the device count, and with several processes the pool counts once instead of once per
   process. The loss is unchanged. `Strategy.place_batch()` takes a `replicated` argument naming the batches to
   replicate; the Trainer passes it only when a batch uses `"all"`.
+
+- `hydra-core`, `omegaconf`, and `rootutils` move to the `hydra` extra, and `h5py`, `mat73`, and `scipy` to the `io`
+  extra. Install `phijax[hydra,io]` for `phijax.integrations`, the Hydra entrypoint utilities, and MATLAB or HDF5
+  files. Without an extra, these features raise `ModuleNotFoundError` naming the extra to install. Training, NPZ
+  files, and prediction artifacts need neither. See the
+  [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#optional-hydra-and-io-extras).
 
 ### Changed
 

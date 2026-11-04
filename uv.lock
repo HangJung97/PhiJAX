@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -1777,27 +1777,41 @@ source = { editable = "." }
 dependencies = [
     { name = "colorlog" },
     { name = "flax" },
-    { name = "h5py" },
-    { name = "hydra-core" },
     { name = "jax" },
-    { name = "mat73" },
     { name = "numpy" },
-    { name = "omegaconf" },
     { name = "optax" },
     { name = "orbax-checkpoint" },
     { name = "pyyaml" },
     { name = "rich" },
-    { name = "rootutils" },
-    { name = "scipy" },
     { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "h5py" },
+    { name = "hydra-core" },
+    { name = "mat73" },
+    { name = "omegaconf" },
+    { name = "rootutils" },
+    { name = "scipy" },
+    { name = "tensorboard" },
+    { name = "wandb" },
+]
 cuda12 = [
     { name = "jax", extra = ["cuda12"], marker = "extra == 'extra-6-phijax-cuda12' or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
 ]
 cuda13 = [
     { name = "jax", extra = ["cuda13"], marker = "extra == 'extra-6-phijax-cuda13' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu')" },
+]
+hydra = [
+    { name = "hydra-core" },
+    { name = "omegaconf" },
+    { name = "rootutils" },
+]
+io = [
+    { name = "h5py" },
+    { name = "mat73" },
+    { name = "scipy" },
 ]
 tensorboard = [
     { name = "tensorboard" },
@@ -1815,6 +1829,7 @@ all = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
+    { name = "phijax", extra = ["hydra", "io"] },
     { name = "pre-commit" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1823,6 +1838,7 @@ all = [
 ]
 dev = [
     { name = "docformatter" },
+    { name = "phijax", extra = ["hydra", "io"] },
     { name = "pre-commit" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1840,6 +1856,7 @@ lint = [
     { name = "ruff" },
 ]
 test = [
+    { name = "phijax", extra = ["hydra", "io"] },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
@@ -1848,26 +1865,27 @@ test = [
 requires-dist = [
     { name = "colorlog", specifier = ">=6.10,<7" },
     { name = "flax", specifier = "==0.12.12" },
-    { name = "h5py", specifier = ">=3.16,<4" },
-    { name = "hydra-core", specifier = "==1.3.8" },
+    { name = "h5py", marker = "extra == 'io'", specifier = ">=3.16,<4" },
+    { name = "hydra-core", marker = "extra == 'hydra'", specifier = "==1.3.8" },
     { name = "jax", specifier = "==0.12.0.1" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda12'", specifier = "==0.12.0.1" },
     { name = "jax", extras = ["cuda13"], marker = "extra == 'cuda13'", specifier = "==0.12.0.1" },
     { name = "jax", extras = ["tpu"], marker = "extra == 'tpu'", specifier = "==0.12.0.1" },
-    { name = "mat73", specifier = ">=0.65,<1" },
+    { name = "mat73", marker = "extra == 'io'", specifier = ">=0.65,<1" },
     { name = "numpy", specifier = ">=2.4,<3" },
-    { name = "omegaconf", specifier = "==2.3.1" },
+    { name = "omegaconf", marker = "extra == 'hydra'", specifier = "==2.3.1" },
     { name = "optax", specifier = "==0.2.8" },
     { name = "orbax-checkpoint", specifier = "==0.12.8" },
+    { name = "phijax", extras = ["hydra", "io", "tensorboard", "wandb"], marker = "extra == 'all'" },
     { name = "pyyaml", specifier = ">=6.0.3,<7" },
     { name = "rich", specifier = ">=15,<16" },
-    { name = "rootutils", specifier = ">=1.0.7,<2" },
-    { name = "scipy", specifier = ">=1.17,<2" },
+    { name = "rootutils", marker = "extra == 'hydra'", specifier = ">=1.0.7,<2" },
+    { name = "scipy", marker = "extra == 'io'", specifier = ">=1.17,<2" },
     { name = "tensorboard", marker = "extra == 'tensorboard'", specifier = ">=2.20,<3" },
     { name = "tqdm", specifier = ">=4.67,<5" },
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.31,<0.32" },
 ]
-provides-extras = ["cuda12", "cuda13", "tpu", "tensorboard", "wandb"]
+provides-extras = ["cuda12", "cuda13", "tpu", "hydra", "io", "tensorboard", "wandb", "all"]
 
 [package.metadata.requires-dev]
 all = [
@@ -1875,6 +1893,7 @@ all = [
     { name = "mkdocs", specifier = ">=1.6,<2" },
     { name = "mkdocs-material", specifier = ">=9,<10" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1,<2" },
+    { name = "phijax", extras = ["hydra", "io"] },
     { name = "pre-commit", specifier = ">=4.0.1,<5" },
     { name = "pyright", specifier = ">=1.1.405,<2" },
     { name = "pytest", specifier = ">=9,<10" },
@@ -1883,6 +1902,7 @@ all = [
 ]
 dev = [
     { name = "docformatter", specifier = ">=1.7.5,<2" },
+    { name = "phijax", extras = ["hydra", "io"] },
     { name = "pre-commit", specifier = ">=4.0.1,<5" },
     { name = "pyright", specifier = ">=1.1.405,<2" },
     { name = "pytest", specifier = ">=9,<10" },
@@ -1900,6 +1920,7 @@ lint = [
     { name = "ruff", specifier = ">=0.17,<0.18" },
 ]
 test = [
+    { name = "phijax", extras = ["hydra", "io"] },
     { name = "pytest", specifier = ">=9,<10" },
     { name = "pytest-cov", specifier = ">=7,<8" },
 ]

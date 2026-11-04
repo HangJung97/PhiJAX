@@ -1,13 +1,15 @@
 from collections.abc import Mapping
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-import h5py
-import mat73
 import numpy as np
 from numpy.typing import NDArray
-from scipy.io import loadmat
-from scipy.io.matlab import mat_struct
+
+from phijax._optional import missing_extra_error
+
+if TYPE_CHECKING:
+    import h5py
 
 ArrayFormat = Literal["auto", "npz", "mat", "hdf5"]
 
@@ -21,7 +23,25 @@ _SUFFIX_FORMATS: Mapping[str, ArrayFormat] = {
 _SUPPORTED_FORMATS = frozenset({"auto", "npz", "mat", "hdf5"})
 
 
-def _materialize_hdf5(node: h5py.Dataset | h5py.Group) -> Any:
+def _import_io(name: str) -> Any:
+    """Import a MATLAB or HDF5 package from the optional `io` extra.
+
+    Args:
+        name: Module name, such as `h5py`, `mat73`, or `scipy.io`.
+
+    Returns:
+        The imported module.
+
+    Raises:
+        ModuleNotFoundError: If the `io` extra is not installed.
+    """
+    try:
+        return import_module(name)
+    except ModuleNotFoundError as error:
+        raise missing_extra_error("io", error) from error
+
+
+def _materialize_hdf5(node: "h5py.Dataset | h5py.Group") -> Any:
     """Materialize one HDF5 node as NumPy arrays and nested dictionaries.
 
     Args:
@@ -30,9 +50,9 @@ def _materialize_hdf5(node: h5py.Dataset | h5py.Group) -> Any:
     Returns:
         A copied NumPy array for a dataset or a recursively materialized dictionary for a group.
     """
-    if isinstance(node, h5py.Dataset):
+    if isinstance(node, _import_io("h5py").Dataset):
         return np.asarray(node[()])
-    return {name: _materialize_hdf5(child) for name, child in node.items()}
+    return {name: _materialize_hdf5(child) for name, child in cast("h5py.Group", node).items()}
 
 
 def _load_hdf5(path: Path) -> dict[str, Any]:
@@ -44,7 +64,7 @@ def _load_hdf5(path: Path) -> dict[str, Any]:
     Returns:
         Nested dictionary containing eagerly materialized arrays.
     """
-    with h5py.File(path, "r") as handle:
+    with _import_io("h5py").File(path, "r") as handle:
         return {name: _materialize_hdf5(node) for name, node in handle.items()}
 
 
@@ -60,11 +80,12 @@ def _load_mat(path: Path) -> dict[str, Any]:
     Returns:
         Dictionary containing user-defined MATLAB variables.
     """
+    scipy_io = _import_io("scipy.io")
     try:
-        contents = loadmat(path, squeeze_me=True, struct_as_record=False)
+        contents = scipy_io.loadmat(path, squeeze_me=True, struct_as_record=False)
     except (NotImplementedError, ValueError):
-        if h5py.is_hdf5(path):
-            decoded = mat73.loadmat(path)
+        if _import_io("h5py").is_hdf5(path):
+            decoded = _import_io("mat73").loadmat(path)
             if decoded is None:
                 raise ValueError(f"MATLAB v7.3 decoder returned no fields for `{path}`.") from None
             return decoded
@@ -83,7 +104,7 @@ def _mat_struct_to_dict(value: Any) -> Any:
     Returns:
         A dictionary for a struct, an object array with converted elements for a cell or struct array, or `value`.
     """
-    if isinstance(value, mat_struct):
+    if isinstance(value, _import_io("scipy.io.matlab").mat_struct):
         # SciPy stores each field as an instance attribute, plus a private `_fieldnames` list.
         return {name: _mat_struct_to_dict(field) for name, field in vars(value).items() if name != "_fieldnames"}
     if isinstance(value, np.ndarray) and value.dtype == object:
@@ -128,7 +149,7 @@ def _resolve_format(path: Path, file_format: ArrayFormat) -> ArrayFormat:
     suffix_format = _SUFFIX_FORMATS.get(path.suffix.lower())
     if suffix_format is not None:
         return suffix_format
-    if h5py.is_hdf5(path):
+    if _import_io("h5py").is_hdf5(path):
         return "hdf5"
     supported_suffixes = ", ".join(sorted(_SUFFIX_FORMATS))
     raise ValueError(f"Cannot infer the format of `{path}`. Supported file suffixes: {supported_suffixes}.")
@@ -151,6 +172,7 @@ def load_arrays(path: str | Path, *, file_format: ArrayFormat = "auto") -> dict[
 
     Raises:
         FileNotFoundError: If `path` is not an existing file.
+        ModuleNotFoundError: If a MATLAB or HDF5 file is read without the optional `io` extra.
         ValueError: If the requested format is invalid or automatic detection fails.
     """
     resolved_path = Path(path).expanduser().resolve()

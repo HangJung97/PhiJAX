@@ -1,6 +1,5 @@
+import sys
 from typing import Any
-
-from omegaconf import OmegaConf
 
 
 def to_plain_container(value: Any, *, resolve: bool = True) -> Any:
@@ -13,6 +12,8 @@ def to_plain_container(value: Any, *, resolve: bool = True) -> Any:
     Returns:
         Plain Python containers for OmegaConf inputs, otherwise `value` unchanged.
     """
-    if OmegaConf.is_config(value):
-        return OmegaConf.to_container(value, resolve=resolve)
+    # A config object can only exist after `omegaconf` was imported, so the optional `hydra` extra is never loaded here.
+    omegaconf = sys.modules.get("omegaconf")
+    if omegaconf is not None and omegaconf.OmegaConf.is_config(value):
+        return omegaconf.OmegaConf.to_container(value, resolve=resolve)
     return value
