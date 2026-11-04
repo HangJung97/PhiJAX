@@ -97,6 +97,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   [multi-process runs](https://hangjung97.github.io/PhiJAX/api/data/#multi-process-runs).
 - `ModelCheckpoint` always saves the last completed step when a fit stops on `SIGTERM`, as on preemption, even without
   `save_on_exception=True`.
+- `phijax`, `phijax.data`, `phijax.evaluation`, and `phijax.utils` import their public names on first use, so
+  `import phijax` no longer loads JAX. NumPy-only modules, such as `phijax.data.pools` and `phijax.evaluation`, load
+  without JAX.
 
 ### Fixed
 
