@@ -130,3 +130,7 @@ def test_single_process_fit_and_prediction_use_per_device_sizes(tmp_path: Path) 
     assert reference["mesh_size"] == 1
     for actual, expected in zip(full_pool["parameters"], reference["parameters"], strict=True):
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+
+    # Exact NTK on rows split over four devices runs without gathering rows and matches one device.
+    assert results["ntk_layout"]["all_gathers"] == 0
+    assert results["ntk_layout"]["max_difference"] < 1e-5

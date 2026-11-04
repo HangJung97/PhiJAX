@@ -68,8 +68,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   A prediction pool with an auxiliary array named `valid_predict_mask` raises `ValueError`; previously a `mask` field
   was silently replaced by the padding mask.
 
-- Training batch sizes and prediction chunk sizes count rows per device, as in Lightning: `NamedBatchSource` batch
-  sizes and the `ChunkedPredictionSource` chunk size. The Trainer scales built-in sources with their new
+- Training batch sizes, NTK diagnostic sizes, and prediction chunk sizes count rows per device, as in Lightning:
+  `NamedBatchSource` batch sizes, `ExactNTKBalancer` `kernel_size`, and the `ChunkedPredictionSource` chunk size. The
+  Trainer scales built-in sources with their new
   `for_devices()` method, so sizes no longer need to divide by the device count. Single-device runs are unchanged; to
   keep the same global batch on `n` devices, divide each size by `n`. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#per-device-batch-sizes).
@@ -152,6 +153,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `kernel_chunk_size=1` silently kept only as many rows as the alphabetically first batch, and other settings raised
   an error. `BasePhiModule.stream_batch_keys()` and `CompositeObjective.stream_batch_keys()` report the batches of
   each stream; a stream reading batches of different sizes raises `ValueError`.
+- `ExactNTKBalancer` evaluates each device's own diagnostic rows in parallel. Before, the default
+  `kernel_chunk_size=1` made XLA gather every diagnostic row onto every device, so each device computed the whole
+  diagnostic batch.
 
 ## [0.2.0b5] - 2026-09-11
 

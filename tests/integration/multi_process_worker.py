@@ -28,6 +28,7 @@ from phijax.equations import base_data_fidelity
 from phijax.models import build_mlp
 from phijax.objectives import CompositeObjective
 from phijax.training import OrbaxCheckpointIO, create_strategy
+from phijax.training.precision import PrecisionPolicy
 
 
 class _LineDataModule(PhiDataModule):
@@ -243,6 +244,37 @@ def main(output: Path) -> None:
     (output / f"process_{jax.process_index()}.json").write_text(json.dumps(results))
 
 
+def _ntk_layout_check() -> dict[str, Any]:
+    """Compile an exact-NTK update on rows split over every device and compare it with one device.
+
+    Returns:
+        All-gather count of the compiled update and the largest NTK difference from a one-device evaluation.
+    """
+    strategy = create_strategy("cpu", "auto")
+    blueprint = PhiModule(
+        partial(build_mlp, input_dim=1, output_dim=1, hidden=(16,)),
+        CompositeObjective.from_equations({"data": base_data_fidelity}),
+    )
+    module, model_state = blueprint.prepare_model(
+        key=jax.random.key(0), input_mean=None, input_std=None, precision=PrecisionPolicy.from_name("32-true")
+    )
+    balancer = ExactNTKBalancer(module.loss_names, update_every_n_steps=1, kernel_size=8)
+    inputs = np.linspace(-1.0, 1.0, 8 * len(strategy.devices), dtype=np.float32)[:, None]
+    host_batches = {"data": {"inputs": inputs, "targets": np.sin(3.0 * inputs)}}
+    update = balancer.make_update(module)
+    sharded = (strategy.place_state(model_state), strategy.place_batch(host_batches))
+    state = strategy.place_state(balancer.initialize())
+    compiled = update.lower(*sharded, state).compile()
+    one_device = jax.devices()[0]
+    reference = update(
+        jax.device_put(model_state, one_device), jax.device_put(host_batches, one_device), balancer.initialize()
+    )
+    return {
+        "all_gathers": compiled.as_text().count("all-gather("),
+        "max_difference": float(np.max(np.abs(np.asarray(compiled(*sharded, state).traces) - reference.traces))),
+    }
+
+
 def main_single_process(output: Path) -> None:
     """Fit and predict in one process over all local devices and write the results as JSON.
 
@@ -254,6 +286,7 @@ def main_single_process(output: Path) -> None:
         # `all` batches are deterministic, so four devices must reproduce one device.
         "full_pool": _fit(output / "full_pool", 3, full_pool=True),
         "full_pool_one_device": _fit(output / "full_pool_one_device", 3, full_pool=True, devices=1),
+        "ntk_layout": _ntk_layout_check(),
     }
     (output / "single_process.json").write_text(json.dumps(results))
 
