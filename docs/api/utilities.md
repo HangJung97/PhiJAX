@@ -24,8 +24,16 @@ folded with the current process index.
 ## Configuration and task lifecycle
 
 `pre_hydra_routine` must run before a decorated Hydra entrypoint so project-root discovery, environment defaults, and
-OmegaConf resolver registration happen before composition. `task_wrapper` logs failures and always runs registered
-finalizers, including optional W&B shutdown.
+OmegaConf resolver registration happen before composition. Pass the entrypoint's `__file__`, so `PROJECT_ROOT` is the
+project that owns the entrypoint, wherever PhiJAX is installed:
+
+```python
+def main() -> None:
+    pre_hydra_routine(__file__)
+    hydra_main()  # The function decorated with `@hydra.main(...)`.
+```
+
+`task_wrapper` logs failures and always runs registered finalizers, including optional W&B shutdown.
 
 `pre_hydra_routine`, `extras`, `print_config_tree`, and `task_wrapper` require the `hydra` extra.
 `register_task_finalizer` does not, so resource owners such as loggers can call it in any project.

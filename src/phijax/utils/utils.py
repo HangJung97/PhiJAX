@@ -3,6 +3,7 @@ from collections.abc import Callable
 from functools import wraps
 from importlib import import_module
 from importlib.util import find_spec
+from pathlib import Path
 
 from phijax._optional import missing_extra_error
 
@@ -38,12 +39,19 @@ def _finish_active_wandb(status: str) -> None:
         wandb.run.finish(exit_code=0 if status == "success" else 1)
 
 
-def pre_hydra_routine() -> None:
+def pre_hydra_routine(search_from: str | Path = ".") -> None:
     """Configure repository paths and environment variables before Hydra starts.
 
-    The repository root is discovered from this source file using `pyproject.toml`, exported as `PROJECT_ROOT`, and used
-    to load an optional repository-level `.env` file. PhiJAX's process-global OmegaConf resolvers are registered before
-    Hydra composes a config. The working directory and Python import path are unchanged.
+    The project root is the closest directory at or above `search_from` that contains `pyproject.toml`. It is exported
+    as `PROJECT_ROOT` and used to load an optional project-level `.env` file. PhiJAX's process-global OmegaConf
+    resolvers are registered before Hydra composes a config. The working directory and Python import path are unchanged.
+
+    Args:
+        search_from: File or directory where the search starts. Entrypoints should pass their own `__file__`, so the
+            root does not depend on the working directory or on where PhiJAX is installed.
+
+    Raises:
+        FileNotFoundError: If `search_from` does not exist or no directory at or above it contains `pyproject.toml`.
     """
     try:
         import rootutils
@@ -51,7 +59,7 @@ def pre_hydra_routine() -> None:
         raise missing_extra_error("hydra", error) from error
 
     rootutils.setup_root(
-        __file__,
+        search_from,
         indicator="pyproject.toml",
         project_root_env_var=True,
         dotenv=True,

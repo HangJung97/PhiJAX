@@ -167,6 +167,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `ExactNTKBalancer` evaluates each device's own diagnostic rows in parallel. Before, the default
   `kernel_chunk_size=1` made XLA gather every diagnostic row onto every device, so each device computed the whole
   diagnostic batch.
+- `pre_hydra_routine()` takes a `search_from` path, and entrypoints should pass their own `__file__`. It used to
+  search for the project root from PhiJAX's installed source file. That found the right root only when PhiJAX was
+  installed in a virtual environment inside the project. An editable PhiJAX checkout exported its own root, and an
+  environment outside the project raised `FileNotFoundError`. The default search now starts in the working directory.
 
 ## [0.2.0b5] - 2026-09-11
 

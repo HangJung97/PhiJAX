@@ -13,16 +13,79 @@ from phijax.training import WandbLogger
 from phijax.utils import register_task_finalizer, utils
 
 
-def test_pre_hydra_routine_sets_repository_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify pre-Hydra setup discovers PhiJAX and registers resolvers without changing directories."""
+@pytest.fixture
+def downstream_project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Create a downstream project with a nested entrypoint and an unset `PROJECT_ROOT`.
+
+    Args:
+        monkeypatch: Fixture restoring the environment and replacing resolver registration.
+        tmp_path: Directory holding the synthetic project.
+
+    Returns:
+        Project root containing `pyproject.toml`, `.env`, and `src/app/train.py`.
+    """
+    project = tmp_path / "project"
+    (project / "src" / "app").mkdir(parents=True)
+    (project / "pyproject.toml").write_text("[project]\nname = 'app'\n")
+    (project / ".env").write_text("PHIJAX_TEST_DOTENV=loaded\n")
+    (project / "src" / "app" / "train.py").write_text("")
     monkeypatch.delenv("PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("PHIJAX_TEST_DOTENV", raising=False)
+    monkeypatch.setattr(utils, "register_omegaconf_resolvers", Mock())
+    return project
+
+
+def test_pre_hydra_routine_finds_the_caller_project_root(
+    downstream_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify that the root is found from the entrypoint file, not from the PhiJAX install or working directory.
+
+    Args:
+        downstream_project: Synthetic project whose entrypoint calls the routine.
+        monkeypatch: Fixture replacing resolver registration with a recorder.
+    """
     register_resolvers = Mock()
     monkeypatch.setattr(utils, "register_omegaconf_resolvers", register_resolvers)
     working_directory = Path.cwd()
-    utils.pre_hydra_routine()
-    assert Path(os.environ["PROJECT_ROOT"]) == Path(__file__).parents[3]
+
+    utils.pre_hydra_routine(downstream_project / "src" / "app" / "train.py")
+
+    assert Path(os.environ["PROJECT_ROOT"]) == downstream_project.resolve()
+    assert os.environ["PHIJAX_TEST_DOTENV"] == "loaded"
     assert Path.cwd() == working_directory
     register_resolvers.assert_called_once_with()
+
+
+def test_pre_hydra_routine_searches_from_the_working_directory(
+    downstream_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify that the default search starts in the working directory, including its subdirectories.
+
+    Args:
+        downstream_project: Synthetic project used as the working directory tree.
+        monkeypatch: Fixture changing the working directory for this test only.
+    """
+    monkeypatch.chdir(downstream_project / "src")
+
+    utils.pre_hydra_routine()
+
+    assert Path(os.environ["PROJECT_ROOT"]) == downstream_project.resolve()
+
+
+def test_pre_hydra_routine_rejects_a_path_without_project_root(downstream_project: Path, tmp_path: Path) -> None:
+    """Verify that a search outside any project fails instead of exporting an unrelated root.
+
+    Args:
+        downstream_project: Synthetic project that the search must not reach.
+        tmp_path: Directory whose `outside` child has no `pyproject.toml` at or above it.
+    """
+    del downstream_project
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="Project root directory not found"):
+        utils.pre_hydra_routine(outside)
+    assert "PROJECT_ROOT" not in os.environ
 
 
 def test_extras_prints_config_and_can_disable_warnings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
