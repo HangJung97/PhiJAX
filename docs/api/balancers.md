@@ -82,24 +82,21 @@ balancer = GradNormBalancer(
 
 Exact NTK balancing computes the squared parameter-Jacobian norm at each point. It averages these values for each
 residual stream and normalizes the loss weights from those means. Named streams are evaluated one at a time.
-`kernel_chunk_size=1` minimizes peak memory; `None` vectorizes over all samples.
-
-With several devices, the default `kernel_chunk_size=1` loops over the diagnostic rows, and XLA gathers every row onto
-every device before the loop, so each device computes the whole diagnostic batch. `kernel_chunk_size=None` keeps each
-device on its own rows and runs them in parallel, at the memory cost of vectorizing those rows at once. Use it on
-several devices when the diagnostic rows fit in memory.
+`kernel_chunk_size` sets how many rows each device differentiates at once: `1` minimizes peak memory, and `None`
+vectorizes over all of them. With several devices, each device evaluates only its own diagnostic rows, so the devices
+work in parallel with either setting.
 
 Each `train/ntk/<loss_name>` value is the resulting mean for one named residual or output stream. Each scheduled update
 evaluates the current model on diagnostic batches drawn from the training source.
 
 ### Choose the diagnostic samples
 
-`kernel_size` sets how many rows each objective batch contributes to the NTK estimate. Unlike training batch sizes,
-an integer `kernel_size` is the number of rows per process, split over its devices:
+`kernel_size` sets how many rows each objective batch contributes to the NTK estimate. Like training batch sizes, an
+integer `kernel_size` counts rows per device, so four devices trace four times as many rows:
 
 | `kernel_size`                      | Diagnostic rows                                              |
 | ---------------------------------- | ------------------------------------------------------------ |
-| `256`                              | 256 random rows from every objective batch                   |
+| `256`                              | 256 random rows per device from every objective batch        |
 | `"all"`                            | Every row of every finite pool                               |
 | `{"pde": 1024, "boundary": "all"}` | Set per objective batch key; the mapping must name every key |
 

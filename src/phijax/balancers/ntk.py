@@ -83,6 +83,25 @@ def _pointwise_ntk_trace(
     return exact_ntk_trace(stream_fn, model_state)
 
 
+def _device_blocks(batches: NamedBatches, devices: int) -> NamedBatches:
+    """Rearrange rows split evenly over devices into `[rows_per_device, devices, ...]`.
+
+    Device `d` holds rows `d * rows_per_device` to `(d + 1) * rows_per_device`, so the reshape keeps every row on its
+    device and the swapped axis order lets a sequential map advance all devices together.
+
+    Args:
+        batches: Named batches whose leading axis holds `devices` contiguous blocks of rows.
+        devices: Number of devices that split the leading axis.
+
+    Returns:
+        Batches with a leading row-block axis and a second device axis.
+    """
+    return jax.tree.map(
+        lambda leaf: jnp.swapaxes(leaf.reshape(devices, leaf.shape[0] // devices, *leaf.shape[1:]), 0, 1),
+        batches,
+    )
+
+
 def _validate_kernel_chunk_size(kernel_chunk_size: int | None) -> int | None:
     """Validate a static kernel-sample chunk size.
 
@@ -299,8 +318,9 @@ class ExactNTKBalancer:
             ntk_batches: Fixed-shape named batches used only for NTK estimation. Each stream is evaluated over the
                 batches named by `module.stream_batch_keys(name)`, which must share one leading row count.
             state: Previous balancer state.
-            kernel_chunk_size: Positive number of kernel samples differentiated in parallel. `1` evaluates samples
-                sequentially for minimum peak memory; `None` uses a full :func:`jax.vmap`.
+            kernel_chunk_size: Positive number of kernel samples differentiated in parallel on each device. `1`
+                evaluates samples sequentially for minimum peak memory; `None` uses a full :func:`jax.vmap`. With
+                several devices, each device evaluates its own rows, so devices run in parallel either way.
 
         Returns:
             Updated weights and mean diagonal-NTK values in :attr:`loss_names` order.
@@ -323,16 +343,37 @@ class ExactNTKBalancer:
                     "give them the same `kernel_size`."
                 )
             pointwise_trace = partial(_pointwise_ntk_trace, module, name, model_state)
+            (row_count,) = row_counts
+            rows_per_device = self._rows_per_device(keys)
+            devices = row_count // rows_per_device if rows_per_device and row_count % rows_per_device == 0 else 1
             if kernel_chunk_size is None:
                 pointwise_diagonal = jax.vmap(pointwise_trace)(stream_batches)
+            elif devices > 1:
+                # A sequential loop over rows split across devices makes XLA gather every row onto every device.
+                # Each device holds one contiguous block of `rows_per_device` rows, so loop over the block index and
+                # vectorize over the device axis: every device differentiates only its own rows, in parallel.
+                blocks = _device_blocks(stream_batches, devices)
+                pointwise_diagonal = jax.lax.map(jax.vmap(pointwise_trace), blocks, batch_size=kernel_chunk_size)
             else:
-                pointwise_diagonal = jax.lax.map(
-                    pointwise_trace,
-                    stream_batches,
-                    batch_size=kernel_chunk_size,
-                )
+                pointwise_diagonal = jax.lax.map(pointwise_trace, stream_batches, batch_size=kernel_chunk_size)
             traces.append(jnp.mean(pointwise_diagonal, dtype=jnp.float32))
         return self.update_from_traces(jnp.stack(traces), state)
+
+    def _rows_per_device(self, keys: Sequence[str]) -> int | None:
+        """Return the per-device diagnostic row count shared by the batches of one stream.
+
+        Args:
+            keys: Batch keys read by the stream.
+
+        Returns:
+            The common integer `kernel_size` of `keys`, or `None` when it is `all` or differs between them.
+        """
+        if isinstance(self.kernel_size, Mapping):
+            sizes = {self.kernel_size.get(key, "all") for key in keys}
+        else:
+            sizes = {self.kernel_size}
+        size = sizes.pop() if len(sizes) == 1 else "all"
+        return size if isinstance(size, int) else None
 
     def make_update(
         self,

@@ -34,7 +34,7 @@ uses 256.
 | Training batch size (`NamedBatchSource`)     | Rows per device               | Not required                   |
 | Prediction chunk (`ChunkedPredictionSource`) | Rows per device in each chunk | Not required                   |
 | `"all"`                                      | Whole pool on every device    | Not required                   |
-| `ExactNTKBalancer(kernel_size=...)`          | Diagnostic rows per process   | Required                       |
+| `ExactNTKBalancer(kernel_size=...)`          | Diagnostic rows per device    | Not required                   |
 
 An `"all"` batch is replicated: every device evaluates the whole pool, and with several processes the pool counts once
 instead of once per process. Its loss is the same as on one device. Each device repeats that work, which is cheap
@@ -42,7 +42,7 @@ for the small boundary and initial-condition sets `"all"` usually serves.
 
 The Trainer scales the built-in sources with their `for_devices()` method. A custom batch source without
 `for_devices()` is used unchanged, so its batches are the rows of the whole process and must divide by the device
-count. See [exact NTK weighting](balancers.md#exact-ntk-weighting) for running NTK on several devices.
+count.
 
 ## Run on several machines
 

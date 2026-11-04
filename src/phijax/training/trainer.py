@@ -689,6 +689,9 @@ class Trainer:
         batch_sizes = update_plan.batch_sizes
         if batch_sizes is not None:
             full_pools = _full_pool_names(batch_sizes)
+            # Diagnostic sizes are per device, like training batch sizes; `all` keeps the whole pool.
+            devices = self.strategy.local_device_count
+            local_sizes = {name: size if size == "all" else size * devices for name, size in batch_sizes.items()}
             sample = getattr(batches, "sample", None)
             if not callable(sample):
                 raise TypeError("Adaptive-balancer diagnostic batches require a training source with `sample()`.")
@@ -703,7 +706,7 @@ class Trainer:
                     Diagnostic batches placed on the Trainer's device.
                 """
                 # Keys depend only on `balancer_key` and the global step, so resumed fits draw the same batches.
-                return self.prepare_batch(sample(jax.random.fold_in(balancer_key, step), batch_sizes), full_pools)
+                return self.prepare_batch(sample(jax.random.fold_in(balancer_key, step), local_sizes), full_pools)
 
             if update_plan.resample:
                 sample_batches = draw

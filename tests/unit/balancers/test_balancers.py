@@ -303,3 +303,25 @@ def test_ntk_update_rejects_a_stream_whose_batches_differ_in_size() -> None:
 
     with pytest.raises(ValueError, match=r"stream `a` reads batches \['a', 'b'\] with different row counts \[3, 4\]"):
         balancer.update(module, {"weight": jnp.asarray(0.5)}, batches, balancer.initialize())
+
+
+def test_device_blocks_keep_each_device_rows_in_one_column() -> None:
+    """Verify rows split over devices become `[rows_per_device, devices]`, so column `d` holds device `d`'s rows."""
+    from phijax.balancers.ntk import _device_blocks
+
+    batches = {"pde": {"inputs": jnp.arange(6.0)[:, None]}}
+
+    blocks = _device_blocks(batches, devices=3)
+
+    np.testing.assert_array_equal(blocks["pde"]["inputs"][..., 0], [[0.0, 2.0, 4.0], [1.0, 3.0, 5.0]])
+
+
+def test_rows_per_device_uses_the_common_integer_kernel_size() -> None:
+    """Verify per-device rows come from a shared integer `kernel_size`, and `all` or mixed sizes disable blocking."""
+    mapped = ExactNTKBalancer(("a", "b"), update_every_n_steps=1, kernel_size={"pde": 8, "edge": "all", "wall": 4})
+    uniform = ExactNTKBalancer(("a",), update_every_n_steps=1, kernel_size=16)
+
+    assert uniform._rows_per_device(("pde",)) == 16
+    assert mapped._rows_per_device(("pde",)) == 8
+    assert mapped._rows_per_device(("edge",)) is None
+    assert mapped._rows_per_device(("pde", "wall")) is None
