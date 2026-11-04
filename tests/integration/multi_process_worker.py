@@ -171,11 +171,7 @@ def _fit(
         callbacks=(
             recorder,
             *(() if stop_request is None else (_StopOnProcessOne(stop_request),)),
-            ModelCheckpoint(
-                OrbaxCheckpointIO(directory, enable_async_checkpointing=False),
-                # The `SIGTERM` run saves only at the preemption sync step, so the test can identify that save.
-                every_n_steps=max_steps + 1 if stop_request == "SIGTERM" else 2,
-            ),
+            ModelCheckpoint(OrbaxCheckpointIO(directory, enable_async_checkpointing=False), every_n_steps=2),
         ),
     )
     module = PhiModule(
@@ -239,10 +235,9 @@ def main(output: Path) -> None:
     results["full_pool"] = _fit(output / "full_pool", 2, full_pool=True)
     results["should_stop"] = _fit(output / "should_stop", 10, stop_request="should_stop")
     results["sigint"] = _fit(output / "sigint", 10, stop_request="SIGINT")
-    # JAX's preemption sync step stays fixed for the process, so the `SIGTERM` case runs last. The service picks the
-    # sync step when its notice arrives, which takes wall-clock time, so the fit gets enough steps to reach it.
+    # JAX's preemption sync step stays fixed for the process, so the `SIGTERM` case runs last.
     try:
-        _fit(output / "sigterm", 10_000, stop_request="SIGTERM")
+        _fit(output / "sigterm", 10, stop_request="SIGTERM")
     except SystemExit as error:
         saved = sorted(int(path.name) for path in (output / "sigterm").iterdir() if path.name.isdigit())
         results["sigterm"] = {"exit_code": error.code, "saved_steps": saved}

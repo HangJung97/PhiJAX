@@ -106,7 +106,6 @@ A request on one process is enough, as in Lightning DDP. After each step, one sm
 `should_stop` and `SIGINT` across processes; single-process runs skip it. `SIGTERM` is left to JAX's preemption
 service, which tells every process and picks a shared sync step that PhiJAX reads with
 `multihost_utils.reached_preemption_sync_point()`. `ModelCheckpoint` saves that step even without `save_on_exception`.
-The sync step follows the signal once JAX has notified every process, so with fast steps it can be many steps later.
 
 ## Testing
 
