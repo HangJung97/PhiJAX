@@ -92,10 +92,12 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
         assert result["should_stop"]["step"] == result["sigint"]["step"] == 2
         assert result["should_stop"]["stopped_early"]
         assert result["sigint"]["interrupted"]
-    # `SIGTERM` goes through JAX's preemption service: every process saves the agreed step and exits with 143.
+    # `SIGTERM` goes through JAX's preemption service: every process saves the agreed step and exits with 143. The
+    # sync step depends on when the notice arrives, so it is any step from the signal at step 2 onward.
     assert results[0]["sigterm"] == results[1]["sigterm"]
     assert results[0]["sigterm"]["exit_code"] == 143
-    assert results[0]["sigterm"]["saved_steps"][-1] > 2
+    (sync_step,) = results[0]["sigterm"]["saved_steps"]
+    assert sync_step >= 2
 
 
 @pytest.mark.slow
