@@ -2,8 +2,14 @@ from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 import optax
-from hydra.utils import instantiate
-from omegaconf import DictConfig, OmegaConf
+
+from phijax._optional import missing_extra_error
+
+try:
+    from hydra.utils import instantiate
+    from omegaconf import DictConfig, OmegaConf
+except ModuleNotFoundError as error:
+    raise missing_extra_error("hydra", error) from error
 
 from phijax.balancers import LossBalancer
 from phijax.callbacks import Callback

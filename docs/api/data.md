@@ -139,7 +139,8 @@ See [device strategies](strategies.md).
 
 ## Array IO and declarative pools
 
-`load_arrays` supports NPZ, MATLAB, and HDF5 files. SciPy reads classic MATLAB files. `mat73` restores MATLAB's logical
+`load_arrays` supports NPZ, MATLAB, and HDF5 files. NPZ needs only NumPy. MATLAB and HDF5 files require the `io` extra,
+`pip install "phijax[io]"`. SciPy reads classic MATLAB files. `mat73` restores MATLAB's logical
 array order from v7.3 HDF5 files, while generic HDF5 input keeps its stored order. `get_array` accepts slash-delimited
 nested keys. Use declarative pool construction for direct field mapping. Subclass `PhiDataModule` for custom generation
 or sampling.

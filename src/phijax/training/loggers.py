@@ -10,8 +10,8 @@ from typing import Any
 import numpy as np
 import yaml
 
+from phijax.utils.finalizers import register_task_finalizer
 from phijax.utils.pylogger import get_colorlogger
-from phijax.utils.utils import register_task_finalizer
 
 
 class ExperimentLogger:

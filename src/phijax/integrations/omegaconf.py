@@ -5,7 +5,13 @@ import operator
 from collections.abc import Callable
 from typing import Any
 
-from omegaconf import OmegaConf
+from phijax._optional import missing_extra_error
+
+try:
+    from omegaconf import OmegaConf
+except ModuleNotFoundError as error:
+    raise missing_extra_error("hydra", error) from error
+
 
 log = logging.getLogger(__name__)
 

@@ -78,6 +78,25 @@ python -m pip install "phijax[tpu]"
 TPU support is experimental. Device discovery and placement follow JAX, but PhiJAX does not run real TPU jobs in its
 ordinary CI. Do not combine `tpu` with `cuda12` or `cuda13`, and validate the intended topology before a long run.
 
+## Optional features
+
+Hydra configuration and MATLAB or HDF5 files need optional extras:
+
+| Extra   | Installs                               | Needed for                                                                 |
+| ------- | -------------------------------------- | -------------------------------------------------------------------------- |
+| `hydra` | `hydra-core`, `omegaconf`, `rootutils` | `phijax.integrations`, `task_wrapper()`, `extras()`, `pre_hydra_routine()` |
+| `io`    | `h5py`, `mat73`, `scipy`               | `.mat` and HDF5 files in `load_arrays()`, `save_mat=True` artifacts        |
+
+```bash
+uv add "phijax[hydra,io]"
+# Or with pip in the activated venv
+python -m pip install "phijax[hydra,io]"
+```
+
+Without the extra, these features raise `ModuleNotFoundError` naming the extra to install. Training, NPZ files, and
+prediction artifacts need neither. The [Hydra template](https://github.com/HangJung97/phijax-hydra-template) installs
+both.
+
 ## Optional experiment loggers
 
 TensorBoard and Weights & Biases remain optional:
@@ -91,17 +110,19 @@ python -m pip install "phijax[tensorboard]"
 python -m pip install "phijax[wandb]"
 ```
 
-Extras can be combined:
+Extras can be combined. `all` installs every optional feature: `hydra`, `io`, `tensorboard`, and `wandb`. It contains
+no accelerator, so add at most one:
 
 ```bash
-uv add "phijax[cuda13,wandb,tensorboard]"
+uv add "phijax[all,cuda13]"
 # Or with pip in the activated venv
-python -m pip install "phijax[cuda13,wandb,tensorboard]"
+python -m pip install "phijax[all,cuda13]"
 ```
 
 ## Development installation
 
-Clone the repository and install all testing and documentation tools with `uv`:
+Clone the repository and install all testing and documentation tools with `uv`. The `all` dependency group holds
+repository tools and is separate from the `all` extra. Its test tools include the `hydra` and `io` extras:
 
 ```bash
 git clone https://github.com/HangJung97/PhiJAX.git

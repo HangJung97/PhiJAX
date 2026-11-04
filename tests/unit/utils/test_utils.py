@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import InterpolationKeyError
 
 from phijax.training import WandbLogger
-from phijax.utils import utils
+from phijax.utils import register_task_finalizer, utils
 
 
 def test_pre_hydra_routine_sets_repository_root(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -160,7 +160,7 @@ def test_task_wrapper_marks_system_exit_as_interrupted(tmp_path: Path) -> None:
             SystemExit: Always, using the standard `SIGTERM` exit status.
         """
         del cfg
-        utils.register_task_finalizer(statuses.append)
+        register_task_finalizer(statuses.append)
         raise SystemExit(143)
 
     with pytest.raises(SystemExit) as exception:

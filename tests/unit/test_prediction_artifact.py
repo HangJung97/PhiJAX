@@ -253,7 +253,7 @@ def test_prediction_artifact_failed_write_keeps_the_previous_files(
         file.write(b"partial")
         raise OSError("disk full")
 
-    target = "phijax.data.artifacts.savemat" if save_mat else "numpy.savez_compressed"
+    target = "scipy.io.savemat" if save_mat else "numpy.savez_compressed"
     monkeypatch.setattr(target, fail_after_partial_write)
     with pytest.raises(OSError, match="disk full"):
         save_prediction_artifact(path, np.zeros((2, 1)), pool, save_mat=True)

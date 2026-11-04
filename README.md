@@ -66,6 +66,12 @@ pip install "phijax[cuda12]"
 pip install "phijax[cuda13]"
 ```
 
+Hydra configuration and MATLAB or HDF5 files use the `hydra` and `io` extras:
+
+```bash
+pip install "phijax[hydra,io]"
+```
+
 Optional experiment loggers are installed separately:
 
 ```bash
@@ -73,10 +79,10 @@ pip install "phijax[tensorboard]"
 pip install "phijax[wandb]"
 ```
 
-Extras can be combined when an environment needs GPU support and both logging integrations:
+Extras can be combined. `all` installs every optional feature, without an accelerator:
 
 ```bash
-pip install "phijax[cuda13,wandb,tensorboard]"
+pip install "phijax[all,cuda13]"
 ```
 
 Replace `cuda13` with `cuda12` for a CUDA 12 environment; do not install both CUDA extras together.

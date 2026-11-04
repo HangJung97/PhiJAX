@@ -179,6 +179,18 @@ in Lightning. Runs on one device are unchanged.
 
 To keep the same global batch on `n` devices, divide each integer size by `n`. The `"all"` policy keeps its meaning.
 
+## Optional Hydra and IO extras
+
+From PhiJAX 0.2.0b6, Hydra and MATLAB or HDF5 support are optional extras. Add them to projects that use these features:
+
+| Feature                                                                    | Install         |
+| -------------------------------------------------------------------------- | --------------- |
+| `phijax.integrations`, `task_wrapper()`, `extras()`, `pre_hydra_routine()` | `phijax[hydra]` |
+| `.mat` and HDF5 files in `load_arrays()`, `save_mat=True` artifacts        | `phijax[io]`    |
+
+Hydra-based projects, such as those built from the template, usually need `phijax[hydra,io]`. Without the extra, these
+features raise `ModuleNotFoundError` naming the extra to install.
+
 ## Adaptive balancing
 
 Adaptive balancers now own their update cadence and diagnostic settings:

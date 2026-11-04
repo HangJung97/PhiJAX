@@ -1,7 +1,8 @@
 # Configuration integrations
 
 PhiJAX does not require a particular configuration layout. `phijax.integrations.hydra` can build typed runtime objects
-from project-owned Hydra configs. `phijax.integrations.omegaconf` provides reusable resolvers.
+from project-owned Hydra configs. `phijax.integrations.omegaconf` provides reusable resolvers. Both require the
+`hydra` extra: `pip install "phijax[hydra]"`.
 
 This page documents the integration functions provided by the package. For a complete config tree, CLI entrypoints,
 and experiment composition, use the

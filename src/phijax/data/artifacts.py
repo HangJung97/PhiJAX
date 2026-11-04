@@ -3,14 +3,15 @@ import re
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, BinaryIO, cast
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.io import savemat
 
+from phijax.data.io import _import_io
 from phijax.data.pools import HostPool, reconstruct_predictions
 
 _RESERVED_ARTIFACT_NAMES = frozenset(
@@ -119,6 +120,7 @@ def save_prediction_artifact(
 
     Raises:
         KeyError: If `mat_field_names` refers to an array that is not exported.
+        ModuleNotFoundError: If `save_mat` is set without the optional `io` extra.
         ValueError: If the destination suffix, predictions, targets, output scales, or MATLAB names are invalid, or if
             `pool.flat_index` repeats an index.
     """
@@ -145,8 +147,10 @@ def save_prediction_artifact(
     dense_targets = reconstruct_predictions(flat_targets, pool)
     dense_inputs = reconstruct_predictions(np.asarray(pool.inputs), pool)
     validity_mask = _dense_validity_mask(pool)
-    matlab_arrays = None
+    write_mat: Callable[[BinaryIO], None] | None = None
     if save_mat:
+        # Import before writing anything, so a missing `io` extra leaves no partial artifact behind.
+        savemat = _import_io("scipy.io").savemat
         matlab_arrays = to_matlab_prediction_arrays(
             _matlab_prediction_arrays(
                 dense_predictions,
@@ -158,6 +162,7 @@ def save_prediction_artifact(
             ),
             field_names=mat_field_names,
         )
+        write_mat = partial(savemat, mdict=matlab_arrays, do_compression=True, oned_as="row")
 
     npz_arrays = {
         "prediction": dense_predictions,
@@ -173,11 +178,8 @@ def save_prediction_artifact(
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_atomically(path, lambda file: cast(Any, np.savez_compressed)(file, **npz_arrays))
-    if matlab_arrays is not None:
-        _write_atomically(
-            path.with_suffix(".mat"),
-            lambda file: savemat(file, matlab_arrays, do_compression=True, oned_as="row"),
-        )
+    if write_mat is not None:
+        _write_atomically(path.with_suffix(".mat"), write_mat)
     return path
 
 

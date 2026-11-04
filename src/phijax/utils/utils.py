@@ -1,37 +1,22 @@
 import warnings
 from collections.abc import Callable
-from contextvars import ContextVar
 from functools import wraps
 from importlib import import_module
 from importlib.util import find_spec
 
-from omegaconf import DictConfig, OmegaConf
+from phijax._optional import missing_extra_error
+
+try:
+    from omegaconf import DictConfig, OmegaConf
+except ModuleNotFoundError as error:
+    raise missing_extra_error("hydra", error) from error
 
 from phijax.integrations.omegaconf import register_omegaconf_resolvers
+from phijax.utils.finalizers import _task_finalizers
 from phijax.utils.pylogger import get_colorlogger
 from phijax.utils.rich_utils import print_config_tree
 
 log = get_colorlogger(__name__)
-
-type TaskFinalizer = Callable[[str], None]
-
-_task_finalizers: ContextVar[list[TaskFinalizer] | None] = ContextVar("phijax_task_finalizers", default=None)
-
-
-def register_task_finalizer(finalizer: TaskFinalizer) -> bool:
-    """Register an idempotent resource finalizer with the active task wrapper.
-
-    Args:
-        finalizer: Callable accepting the terminal status `success`, `interrupted`, or `failed`.
-
-    Returns:
-        Whether an active :func:`task_wrapper` accepted the finalizer.
-    """
-    finalizers = _task_finalizers.get()
-    if finalizers is None:
-        return False
-    finalizers.append(finalizer)
-    return True
 
 
 def _finish_active_wandb(status: str) -> None:
@@ -60,7 +45,10 @@ def pre_hydra_routine() -> None:
     to load an optional repository-level `.env` file. PhiJAX's process-global OmegaConf resolvers are registered before
     Hydra composes a config. The working directory and Python import path are unchanged.
     """
-    import rootutils
+    try:
+        import rootutils
+    except ModuleNotFoundError as error:
+        raise missing_extra_error("hydra", error) from error
 
     rootutils.setup_root(
         __file__,
@@ -97,7 +85,8 @@ def task_wrapper[TaskReturn](task_func: Callable[[DictConfig], TaskReturn]) -> C
 
     Lifecycle owners finalize stage-local resources normally. Longer-lived resources with idempotent cleanup, such as
     trainer checkpoint services and remote experiment loggers, may register a failure-safe finalizer through
-    :func:`register_task_finalizer`; the wrapper invokes those finalizers in last-created-first-closed order.
+    :func:`phijax.utils.register_task_finalizer`. The wrapper invokes those finalizers in last-created-first-closed
+    order.
 
     Args:
         task_func: Task callable accepting the composed configuration as its only argument.
