@@ -83,8 +83,8 @@ Trainer.predict
 |   +-- precision cast and device placement
 |   +-- Callback.on_predict_batch_start(context)
 |   +-- BasePhiModule.on_predict_batch_start(state, context)
-|   +-- BasePhiModule.predict_step(state, batch)
-|   +-- remove padded values selected by `mask`
+|   +-- BasePhiModule.predict_step(state, batch)    compiled once per predict() call
+|   +-- remove padded values selected by `valid_predict_mask`
 |   +-- Callback.on_predict_batch_end(context)
 |   +-- BasePhiModule.on_predict_batch_end(state, context)
 |   +-- optional device-to-host collection
@@ -100,7 +100,8 @@ Trainer.predict
 +-- optional DataModule.teardown("predict")
 ```
 
-Prediction hooks only observe state. Override `predict_step()` to transform model outputs. Batch-end hooks receive
+Prediction hooks only observe state. Override `predict_step()` to transform model outputs. It runs inside `jax.jit`,
+compiled once for the fixed chunk shape, so it must be traceable. Batch-end hooks receive
 valid, unpadded outputs. Epoch-end and predict-end hooks receive the joined host array when
 `return_predictions=True`. If a DataModule has no prediction source, `Trainer.predict()` returns `None` and skips the
 prediction hooks.

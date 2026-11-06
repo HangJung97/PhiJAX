@@ -168,6 +168,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `NamedBatchSource` draws a step's batches in one compiled call instead of one dispatch per array operation. On a
   GPU, this makes the quickstart about 3.8 times faster; batches are unchanged bit for bit. Custom
   `BatchSampler.sample()` implementations must be traceable by `jax.jit`.
+- `Trainer.predict()` compiles `predict_step()` once per call instead of running it eagerly for every chunk, which
+  makes prediction several times faster on CPU and much faster on GPU. Custom `predict_step()` overrides must be
+  traceable by `jax.jit`.
 
 ### Fixed
 

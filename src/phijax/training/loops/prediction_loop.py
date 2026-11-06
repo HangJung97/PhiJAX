@@ -42,6 +42,9 @@ class _PredictionLoop:
         Callbacks run before matching module hooks. Batch-end hooks receive each valid, unpadded output, while epoch-end
         and predict-end hooks receive the final concatenated host array when collection is enabled.
 
+        `module.predict_step` is compiled once per call with :func:`jax.jit`. Batches share one padded shape, so every
+        batch reuses the same compiled function; hooks and padding removal run outside it.
+
         With several devices, every batch is padded so its rows divide over all devices, and each process predicts an
         equal share. The outputs are gathered so every process receives the complete batch output as a host array in
         the original row order, for any batch size.
@@ -85,6 +88,7 @@ class _PredictionLoop:
         batch_count = 0
         # Pad and gather whenever batches are split over devices, so any batch size divides evenly.
         multi_device = len(trainer.strategy.devices) > 1
+        predict_step = jax.jit(module.predict_step)
         try:
             lifecycle.setup()
             for callback in trainer.callbacks:
@@ -100,7 +104,7 @@ class _PredictionLoop:
                 for callback in trainer.callbacks:
                     callback.on_predict_batch_start(context)
                 module.on_predict_batch_start(model_state, context)
-                prediction = module.predict_step(model_state, placed_batch)
+                prediction = predict_step(model_state, placed_batch)
                 if share is not None:
                     prediction = _gather_rows(prediction, trainer.strategy.place_batch(share.rows), share.valid)
                 elif (valid_rows := placed_batch.get("valid_predict_mask")) is not None:
