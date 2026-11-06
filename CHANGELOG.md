@@ -48,6 +48,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `prediction_pool()` returns the pool named `predict`, chunked by `batch_sizes["predict"]`. A DataModule that only
   builds pools overrides only `setup()`.
 - `ChunkedPredictionSource(pool, "all")` predicts the whole pool in one chunk, split over the devices.
+- `HostPool.from_grid(inputs, targets, mask=...)` builds a pool from dense `[*grid, features]` arrays and records the
+  grid, so `reconstruct_predictions()` returns `[*grid, outputs]` with `NaN` outside the optional mask.
 
 ### Breaking changes
 
@@ -127,6 +129,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   that pool. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#datamodule-defaults).
 
+- `build_array_pools()`, `create_sampler()`, and `SamplerName` are removed, and `phijax.data.samplers.sample_pool()`
+  is private. Build pools with NumPy and `HostPool.from_grid()`, and construct samplers directly. See the
+  [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#grid-pools-and-samplers).
+
 ### Changed
 
 - Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's
@@ -158,8 +164,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `ModelCheckpoint` deletes a displaced checkpoint only after the next checkpoint write has committed, so an
   interrupted asynchronous write never removes the only valid checkpoint.
 - `OrbaxCheckpointIO.delete` now ignores steps that are not stored.
-- `build_array_pools` now raises for a field stored in a different axis order from its declared `axes`, instead of
-  silently reshaping it. Single-value coordinates, such as one time slice, now load.
 - A full resume and prediction from a checkpoint now use the input statistics the model was trained with. Previously
   they were recomputed from the current DataModule, which silently changed the model if the data had changed.
   Transfer learning with `weights_only=True` still uses the current DataModule's statistics.
@@ -172,8 +176,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   give correct residuals.
 - Fidelity and boundary equations now raise `ValueError` for out-of-range `output_indices` or `target_indices`
   instead of producing NaN residuals.
-- Pools built by `build_array_pools` now name every output channel, so prediction artifacts can be saved for
-  vector-valued targets (`v_0`, `v_1`, ...) and for pools without targets.
 - A resumed fit now draws the same exact-NTK diagnostic batches as an uninterrupted run. Previously the batches
   depended on the step the fit resumed from.
 - A failing `on_exception`, logger finalization, or teardown hook no longer replaces the original training or

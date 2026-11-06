@@ -63,9 +63,15 @@ every process prepare the same files.
 
 ## Host pools
 
-`inputs` is a rank-two NumPy array. Omit `targets` for an automatically created zero-width target array. `aux` and
-`metadata` default to immutable empty mappings. When omitted, `reference_shape` becomes `(sample_count,)` and
-`flat_index` becomes `arange(sample_count)`. Array-valued `aux` fields share the sample axis.
+A pool is a set of rows. `inputs` is a rank-two NumPy array. Omit `targets` for an automatically created zero-width
+target array. `aux` and `metadata` default to immutable empty mappings. When omitted, `reference_shape` becomes
+`(sample_count,)` and `flat_index` becomes `arange(sample_count)`. Array-valued `aux` fields share the sample axis.
+
+[`HostPool.from_grid()`](#phijax.data.HostPool.from_grid) builds a pool from dense grid arrays shaped
+`[*grid, features]`. An optional Boolean `mask` with shape `grid` keeps only part of the grid, such as a masked
+physical domain. The pool records the grid in `reference_shape` and the kept positions in `flat_index`, so
+[`reconstruct_predictions()`](#phijax.data.reconstruct_predictions) returns `[*grid, outputs]` with `NaN` outside the
+mask.
 
 ::: phijax.data.HostPool
 
@@ -89,11 +95,13 @@ may use application-specific field names.
 
 ## Samplers
 
-| Name             | Source                           | Typical PINN use                         |
-| ---------------- | -------------------------------- | ---------------------------------------- |
-| `random_rows`    | Finite aligned pool              | Initial, boundary, or supervised samples |
-| `uniform_domain` | Continuous rectangular bounds    | Fresh PDE collocation coordinates        |
-| `space_time`     | Fixed spatial mesh + fresh times | Time-dependent PDE collocation           |
+| Sampler                | Source                           | Typical PINN use                         |
+| ---------------------- | -------------------------------- | ---------------------------------------- |
+| `RandomRowSampler`     | Finite aligned pool              | Initial, boundary, or supervised samples |
+| `UniformDomainSampler` | Continuous rectangular bounds    | Fresh PDE collocation coordinates        |
+| `SpaceTimeSampler`     | Fixed spatial mesh + fresh times | Time-dependent PDE collocation           |
+
+Construct samplers directly in `train_batch_source()`.
 
 `prepare(device)` moves persistent arrays once. `sample(key, batch_size)` remains explicitly keyed and returns a fixed
 leading dimension.
@@ -105,10 +113,6 @@ leading dimension.
 ::: phijax.data.UniformDomainSampler
 
 ::: phijax.data.SpaceTimeSampler
-
-::: phijax.data.create_sampler
-
-::: phijax.data.samplers.sample_pool
 
 ## Batch sources
 
@@ -153,19 +157,16 @@ See [device strategies](strategies.md).
 
 ::: phijax.data.ChunkedPredictionSource
 
-## Array IO and declarative pools
+## Array IO
 
 `load_arrays` supports NPZ, MATLAB, and HDF5 files. NPZ needs only NumPy. MATLAB and HDF5 files require the `io` extra,
 `pip install "phijax[io]"`. SciPy reads classic MATLAB files. `mat73` restores MATLAB's logical
 array order from v7.3 HDF5 files, while generic HDF5 input keeps its stored order. `get_array` accepts slash-delimited
-nested keys. Use declarative pool construction for direct field mapping. Subclass `PhiDataModule` for custom generation
-or sampling.
+nested keys. Build pools from the loaded arrays with NumPy and `HostPool` or `HostPool.from_grid()`.
 
 ::: phijax.data.load_arrays
 
 ::: phijax.data.get_array
-
-::: phijax.data.build_array_pools
 
 ## Host transforms
 

@@ -250,6 +250,23 @@ The Trainer now keeps the stage bookkeeping:
 A DataModule with a pool named `predict` and no `prediction_pool()` override now excludes that pool from the default
 `normalization_pools()`. Override `normalization_pools()` to keep the old selection.
 
+## Grid pools and samplers
+
+From PhiJAX 0.2.0b6, pools are built with NumPy and `HostPool`. The declarative builder and the sampler-name factory
+are removed:
+
+| PhiJAX 0.2.0b5                                | PhiJAX 0.2.0b6                                                               |
+| --------------------------------------------- | ---------------------------------------------------------------------------- |
+| `build_array_pools(arrays, schema)`           | `load_arrays()` and NumPy, then `HostPool(...)` or `HostPool.from_grid(...)` |
+| Hand-set `reference_shape` and `flat_index`   | `HostPool.from_grid(inputs, targets, mask=mask)`                             |
+| `create_sampler("random_rows", pool)`         | `RandomRowSampler(pool.fields())`                                            |
+| `create_sampler("uniform_domain", pool, ...)` | `UniformDomainSampler(bounds, templates)`                                    |
+| `create_sampler("space_time", pool, ...)`     | `SpaceTimeSampler(pool.fields(), time_bounds=(t0, t1))`                      |
+| `sample_pool(key, fields, size)`              | `RandomRowSampler(fields).sample(key, size)`                                 |
+
+`create_sampler()` inferred bounds from a pool. Pass them explicitly instead, for example
+`np.stack((pool.inputs.min(axis=0), pool.inputs.max(axis=0)), axis=-1)`.
+
 ## Optional Hydra and IO extras
 
 From PhiJAX 0.2.0b6, Hydra and MATLAB or HDF5 support are optional extras. Add them to projects that use these features:

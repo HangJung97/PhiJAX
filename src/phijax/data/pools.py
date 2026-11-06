@@ -112,6 +112,82 @@ class HostPool:
         object.__setattr__(self, "metadata", _immutable_mapping(metadata))
         object.__setattr__(self, "reference_shape", tuple(int(value) for value in resolved_shape))
 
+    @classmethod
+    def from_grid(
+        cls,
+        inputs: NDArray[Any],
+        targets: NDArray[Any] | None = None,
+        *,
+        mask: NDArray[Any] | None = None,
+        aux: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> "HostPool":
+        """Build a pool from dense grid arrays, keeping the grid so predictions can be put back on it.
+
+        Every array starts with the same grid axes. Rows are taken in C order, and only where `mask` is `True`.
+        The pool records the grid as `reference_shape` and the selected positions as `flat_index`, so
+        :func:`reconstruct_predictions` returns `[*grid, outputs]` with `NaN` outside the mask.
+
+        Args:
+            inputs: Coordinates with shape `[*grid, input_features]`.
+            targets: Optional targets with shape `[*grid, output_features]`.
+            mask: Optional Boolean array with shape `grid` that selects the pool rows.
+            aux: Optional fields. Arrays have shape `[*grid, ...]`; other values are kept unchanged.
+            metadata: Optional structural metadata.
+
+        Returns:
+            Pool with one row per selected grid point.
+
+        Raises:
+            ValueError: If `inputs` has rank below two, a field's leading axes differ from the grid, `targets` is not
+                one rank above the grid, `mask` is not a Boolean array with the grid shape, or `mask` selects no rows.
+        """
+        dense_inputs = np.asarray(inputs)
+        if dense_inputs.ndim < 2:
+            raise ValueError("Grid `inputs` must have shape `[*grid, input_features]` with at least one grid axis.")
+        grid = dense_inputs.shape[:-1]
+        if mask is None:
+            flat_index = np.arange(int(np.prod(grid)), dtype=np.int64)
+        else:
+            dense_mask = np.asarray(mask)
+            if dense_mask.dtype != np.bool_ or dense_mask.shape != grid:
+                raise ValueError(f"Grid `mask` must be a Boolean array with the grid shape {grid}.")
+            flat_index = np.flatnonzero(dense_mask)
+            if flat_index.size == 0:
+                raise ValueError("Grid `mask` selects no rows.")
+
+        def rows(name: str, values: Any) -> NDArray[Any]:
+            """Flatten one dense field to the selected rows.
+
+            Args:
+                name: Field name used in error messages.
+                values: Dense field whose leading axes match the grid.
+
+            Returns:
+                Selected rows with the field's trailing axes.
+
+            Raises:
+                ValueError: If the field's leading axes differ from the grid.
+            """
+            array = np.asarray(values)
+            if array.shape[: len(grid)] != grid:
+                raise ValueError(f"Grid field `{name}` has shape {array.shape}; its leading axes must be {grid}.")
+            return array.reshape(-1, *array.shape[len(grid) :])[flat_index]
+
+        if targets is not None and np.ndim(targets) != len(grid) + 1:
+            raise ValueError("Grid `targets` must have shape `[*grid, output_features]`.")
+        return cls(
+            inputs=rows("inputs", dense_inputs),
+            targets=None if targets is None else rows("targets", targets),
+            aux={
+                name: rows(name, value) if isinstance(value, (np.ndarray, list)) else value
+                for name, value in (aux or {}).items()
+            },
+            metadata=metadata,
+            reference_shape=grid,
+            flat_index=flat_index,
+        )
+
     def fields(self) -> Mapping[str, NDArray[Any]]:
         """Collect dense sample-wise fields for one device transfer.
 
