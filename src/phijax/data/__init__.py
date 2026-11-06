@@ -10,7 +10,6 @@ if TYPE_CHECKING:
         to_matlab_prediction_arrays,
     )
     from phijax.data.batching import BatchSize, DevicePool
-    from phijax.data.builders import build_array_pools
     from phijax.data.datamodule import DataStage, PhiDataModule
     from phijax.data.io import ArrayFormat, get_array, load_arrays
     from phijax.data.pools import HostPool, input_statistics, reconstruct_predictions
@@ -19,7 +18,6 @@ if TYPE_CHECKING:
         RandomRowSampler,
         SpaceTimeSampler,
         UniformDomainSampler,
-        create_sampler,
     )
     from phijax.data.sources import (
         ChunkedPredictionSource,
@@ -47,8 +45,6 @@ __getattr__, __dir__ = lazy_exports(
         "SpaceTimeSampler": "phijax.data.samplers",
         "TrainingBatchSource": "phijax.data.sources",
         "UniformDomainSampler": "phijax.data.samplers",
-        "build_array_pools": "phijax.data.builders",
-        "create_sampler": "phijax.data.samplers",
         "get_array": "phijax.data.io",
         "input_statistics": "phijax.data.pools",
         "load_arrays": "phijax.data.io",
@@ -79,8 +75,6 @@ __all__ = [
     "SpaceTimeSampler",
     "TrainingBatchSource",
     "UniformDomainSampler",
-    "build_array_pools",
-    "create_sampler",
     "get_array",
     "input_statistics",
     "load_arrays",

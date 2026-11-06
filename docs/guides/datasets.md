@@ -11,7 +11,7 @@ This follows two principles:
 - framework code should not need to understand an application's files, geometry, targets, or boundary extraction; and
 - application APIs should expose experiment choices rather than the mechanics of a universal data schema.
 
-`phijax.data` provides immutable pools, array IO, optional pool builders, device placement, samplers, and prediction
+`phijax.data` provides immutable pools, array IO, grid pools, device placement, samplers, and prediction
 chunking. An application DataModule uses only the pieces it needs.
 
 ## The `PhiDataModule` contract
@@ -51,7 +51,7 @@ Override a source hook for custom sampling, such as continuously generated collo
 
 The Trainer calls `prepare_data()`, `setup(stage)`, and `teardown(stage)` once per `fit()` or `predict()` call.
 
-Use NumPy in `prepare_data()` and host-pool builders so they do not initialize JAX. DataModules create host-backed
+Use NumPy in `prepare_data()` and pool construction so they do not initialize JAX. DataModules create host-backed
 samplers and prediction chunks. The Trainer prepares sampler state on the selected device and places or shards each
 batch before compiled execution.
 
@@ -80,9 +80,9 @@ You can derive `minimum`, `maximum`, `mean`, and `std` from training data once a
 generic transforms do not replace physical nondimensionalization. Keep characteristic physical scales explicit in the
 application DataModule.
 
-## `HostPool` fields
+## Pools
 
-Every pool is an immutable `HostPool`:
+A pool is an immutable `HostPool`: a set of rows that share one leading sample axis.
 
 | Field             | Required shape or meaning                                              |
 | ----------------- | ---------------------------------------------------------------------- |
@@ -94,6 +94,34 @@ Every pool is an immutable `HostPool`:
 | `flat_index`      | Optional reconstruction indices; omission uses `arange(sample_count)`  |
 
 `HostPool` copies and freezes its arrays. Every NumPy array in `aux` must share the leading input row count.
+
+### Grid pools
+
+Prediction usually runs on a grid, and its outputs should come back on that grid. `HostPool.from_grid()` takes dense
+arrays shaped `[*grid, features]` and remembers the grid, so `reconstruct_predictions()` can put predictions back:
+
+```python
+import numpy as np
+
+from phijax.data import HostPool, reconstruct_predictions
+
+t, x = np.meshgrid(np.linspace(0, 1, 101), np.linspace(-1, 1, 256), indexing="ij")
+inputs = np.stack((t, x), axis=-1)  # [101, 256, 2]
+pool = HostPool.from_grid(inputs, targets=reference[..., None])  # 25_856 rows
+
+dense = reconstruct_predictions(predictions, pool)  # [101, 256, outputs]
+```
+
+Pass a Boolean `mask` with the grid shape for a domain that does not fill the grid, such as a vessel or a ventricle.
+The pool keeps only the rows where `mask` is `True`, in C order, and reconstruction fills the other grid points with
+`NaN`:
+
+```python
+pool = HostPool.from_grid(inputs, targets, mask=inside_domain, aux={"weight": weights})
+```
+
+Every array starts with the grid axes. Non-array `aux` values, such as a Python scalar, are kept unchanged. Use the
+plain `HostPool(...)` constructor for scattered rows that do not come from a grid, such as boundary points.
 
 Batch-stream names are part of the application API. Every objective `batch_key` must be handled by
 `train_batch_source()` and have a batch-size policy. A stream may select a finite pool or generate coordinates from a
@@ -220,33 +248,60 @@ every batch to the host because doing so synchronizes accelerator execution.
 
 Applications backed by NPZ, MATLAB, or HDF5 artifacts can call these helpers from `setup()`:
 
-- `load_arrays()` loads `.npz`, classic `.mat`, HDF5-backed `.mat`, `.h5`, `.hdf`, and `.hdf5` artifacts;
-- `get_array()` selects nested fields with slash-delimited keys; and
-- `build_array_pools()` assembles coordinate grids, slices, source fields, constants, auxiliary fields, and finite
-  uniformly sampled pools.
+- `load_arrays()` loads `.npz`, classic `.mat`, HDF5-backed `.mat`, `.h5`, `.hdf`, and `.hdf5` artifacts; and
+- `get_array()` selects nested fields with slash-delimited keys.
 
-These are construction utilities, not a framework DataModule. The application still chooses the file keys, pool names,
-objective mappings, and samplers.
+Build pools from the loaded arrays with NumPy. The application chooses the file keys, pool names, and coordinate order:
 
-An application may use `build_array_pools()` internally while exposing only meaningful choices such as `data_path`,
-`pde_sampling`, `pde_size`, and `batch_size` through its constructor or project settings.
+```python
+def setup(self, stage):
+    arrays = load_arrays(self.data_path)
+    u = get_array(arrays, "usol")  # [time, position]
+    t, x = np.meshgrid(get_array(arrays, "t").ravel(), get_array(arrays, "x").ravel(), indexing="ij")
+    self.pools = {"predict": HostPool.from_grid(np.stack((t, x), axis=-1), u[..., None])}
+```
 
 ## Sampler choices
 
 PhiJAX provides three immutable explicit-key samplers:
 
-| Class                  | Explicit name    | Behavior                                                                |
-| ---------------------- | ---------------- | ----------------------------------------------------------------------- |
-| `RandomRowSampler`     | `random_rows`    | Select aligned rows from a finite pool; supports the exact `all` policy |
-| `UniformDomainSampler` | `uniform_domain` | Generate fresh continuous coordinates from bounds                       |
-| `SpaceTimeSampler`     | `space_time`     | Combine fixed spatial rows with freshly generated temporal coordinates  |
+| Class                  | Behavior                                                                |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `RandomRowSampler`     | Select aligned rows from a finite pool; supports the exact `all` policy |
+| `UniformDomainSampler` | Generate fresh continuous coordinates from bounds                       |
+| `SpaceTimeSampler`     | Combine fixed spatial rows with freshly generated temporal coordinates  |
 
 The data package separates three tasks. `phijax.data.samplers` selects or generates a batch.
 `phijax.data.sources` supplies named batches during training or prediction. `phijax.data.batching` defines shared
 batch-size and prediction-layout rules. Public names are re-exported from `phijax.data`.
 
-An application may construct these classes directly or expose a short-name option and call `create_sampler()`. Sampler
-configuration is application policy; it is not required in every data config.
+Construct these classes directly in `train_batch_source()`. Which sampler serves each batch key is an application
+choice.
+
+### Custom samplers
+
+For another sampling rule, subclass `BatchSampler` and implement `sample(key, batch_size)`. Then override
+`train_batch_source()` to pair each batch key with its sampler:
+
+```python
+class UniformSampler(BatchSampler):
+    def __init__(self, low, high):
+        self.low, self.high = jnp.asarray(low), jnp.asarray(high)
+
+    def sample(self, key, batch_size):
+        inputs = jax.random.uniform(key, (batch_size, self.low.size), minval=self.low, maxval=self.high)
+        return {"inputs": inputs}
+
+
+class HeatDataModule(PhiDataModule):
+    def train_batch_source(self, batch_keys, key):
+        samplers = {"pde": UniformSampler([0.0, 0.0], [1.0, 1.0])}
+        samplers.update({name: RandomRowSampler(self.pools[name].fields()) for name in ("initial", "boundary")})
+        return NamedBatchSource(samplers, self.batch_sizes, key)
+```
+
+The sampler only draws one batch from a key. `NamedBatchSource` derives that key from the global step, so a resumed run
+draws the same batches. It also scales batch sizes per device and serves the diagnostic batches of adaptive balancers.
 
 `NamedBatchSource` starts with host-backed sampler definitions. Before fitting, the Trainer moves persistent candidate
 arrays, bounds, templates, and the root key to the Strategy's root device. Sampling then stays on the device. The

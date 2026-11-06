@@ -136,22 +136,20 @@ class HeatDataModule(PhiDataModule):
 
             pde_t = np.linspace(0.0, 1.0, self.pde_shape[0], dtype=np.float32)
             pde_x = np.linspace(0.0, 1.0, self.pde_shape[1], dtype=np.float32)
-            pde_inputs = np.stack(np.meshgrid(pde_t, pde_x, indexing="ij"), axis=-1).reshape(-1, 2)
+            pde_inputs = np.stack(np.meshgrid(pde_t, pde_x, indexing="ij"), axis=-1)
             self.pools = {
-                "initial": _pool(initial_inputs, initial_targets),
-                "boundary": _pool(
-                    boundary_inputs,
-                    np.zeros((boundary_inputs.shape[0], 1), dtype=np.float32),
-                ),
-                "pde": _pool(pde_inputs),
+                "initial": HostPool(initial_inputs, initial_targets),
+                "boundary": HostPool(boundary_inputs, np.zeros((len(boundary_inputs), 1), dtype=np.float32)),
+                "pde": HostPool.from_grid(pde_inputs),
             }
             return
         if stage == "predict":
             times = np.linspace(0.0, 1.0, self.predict_shape[0], dtype=np.float32)
             positions = np.linspace(0.0, 1.0, self.predict_shape[1], dtype=np.float32)
-            inputs = np.stack(np.meshgrid(times, positions, indexing="ij"), axis=-1).reshape(-1, 2)
-            targets = (np.exp(-0.1 * np.pi**2 * inputs[:, :1]) * np.sin(np.pi * inputs[:, 1:2])).astype(np.float32)
-            self.pools = {"predict": _pool(inputs, targets, reference_shape=self.predict_shape)}
+            # Coordinates have shape `[time, position, 2]`; the pool keeps this grid for reconstruction.
+            inputs = np.stack(np.meshgrid(times, positions, indexing="ij"), axis=-1)
+            targets = np.exp(-0.1 * np.pi**2 * inputs[..., :1]) * np.sin(np.pi * inputs[..., 1:])
+            self.pools = {"predict": HostPool.from_grid(inputs, targets.astype(np.float32))}
             return
         raise ValueError(f"Unsupported stage: {stage}")
 
@@ -162,30 +160,6 @@ class HeatDataModule(PhiDataModule):
             Per-coordinate mean and safely positive standard deviation arrays.
         """
         return input_statistics(self.normalization_pools())
-
-
-def _pool(
-    inputs: np.ndarray,
-    targets: np.ndarray | None = None,
-    *,
-    reference_shape: tuple[int, ...] | None = None,
-) -> HostPool:
-    """Create one immutable heat-equation host pool.
-
-    Args:
-        inputs: Rank-two coordinate array.
-        targets: Optional rank-two target array with the same row count.
-        reference_shape: Optional dense reconstruction shape.
-
-    Returns:
-        Pool with coordinate and reconstruction metadata.
-    """
-    return HostPool(
-        inputs=inputs,
-        targets=targets,
-        metadata={"coordinate_names": ("t", "x")},
-        reference_shape=reference_shape,
-    )
 
 
 def run_quickstart(

@@ -36,7 +36,7 @@ def test_host_data_and_evaluation_modules_load_no_jax() -> None:
     """Verify that NumPy-only data construction and evaluation stay independent of JAX."""
     loaded = set(
         _modules_loaded_by(
-            "import phijax.data.pools, phijax.data.builders, phijax.data.artifacts, phijax.data.transforms\n"
+            "import phijax.data.pools, phijax.data.io, phijax.data.artifacts, phijax.data.transforms\n"
             "from phijax.evaluation import RegressionEvaluator, regression_metrics"
         )
     )

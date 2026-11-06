@@ -1,4 +1,5 @@
 import warnings
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,10 +13,8 @@ from phijax.data import (
     RandomRowSampler,
     SpaceTimeSampler,
     UniformDomainSampler,
-    create_sampler,
     reconstruct_predictions,
 )
-from phijax.data.samplers import sample_pool
 
 
 def _pool() -> HostPool:
@@ -108,6 +107,79 @@ def test_host_pool_recursively_freezes_nested_metadata() -> None:
         nested["scales"][0] = -1.0
 
 
+def _grid_inputs(*shape: int) -> np.ndarray:
+    """Build dense integer-valued coordinates for a grid.
+
+    Args:
+        *shape: Grid axis lengths.
+
+    Returns:
+        Coordinates with shape `[*shape, len(shape)]`.
+    """
+    axes = [np.arange(size, dtype=np.float32) for size in shape]
+    return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+
+
+def test_host_pool_from_grid_flattens_a_full_grid_in_c_order() -> None:
+    """Verify a full grid keeps every row in C order and records the grid for reconstruction."""
+    inputs = _grid_inputs(2, 3)
+    targets = inputs.sum(axis=-1, keepdims=True)
+    pool = HostPool.from_grid(inputs, targets, aux={"weight": np.ones((2, 3)), "scale": 2.0}, metadata={"name": "g"})
+
+    np.testing.assert_array_equal(pool.inputs, inputs.reshape(6, 2))
+    np.testing.assert_array_equal(pool.targets, targets.reshape(6, 1))
+    np.testing.assert_array_equal(pool.flat_index, np.arange(6))
+    assert pool.aux["weight"].shape == (6,)
+    assert pool.aux["scale"] == 2.0
+    assert pool.metadata["name"] == "g"
+    assert pool.reference_shape == (2, 3)
+    np.testing.assert_array_equal(reconstruct_predictions(pool.targets, pool), targets)
+
+
+@pytest.mark.parametrize("shape", [(3, 4), (1, 4), (3, 1, 2)], ids=["2d", "singleton-axis", "3d"])
+def test_host_pool_from_grid_masks_rows_and_reconstructs_with_nan_outside(shape: tuple[int, ...]) -> None:
+    """Verify a mask selects C-order rows, and reconstruction restores the grid with `NaN` outside the mask.
+
+    Args:
+        shape: Grid shape, including singleton axes.
+    """
+    inputs = _grid_inputs(*shape)
+    mask = (np.arange(int(np.prod(shape))) % 2 == 0).reshape(shape)
+    pool = HostPool.from_grid(inputs, inputs[..., :1], mask=mask)
+
+    np.testing.assert_array_equal(pool.flat_index, np.flatnonzero(mask))
+    np.testing.assert_array_equal(pool.inputs, inputs[mask])
+    dense = reconstruct_predictions(pool.targets, pool)
+    assert dense.shape == (*shape, 1)
+    np.testing.assert_array_equal(dense[mask], inputs[mask][:, :1])
+    assert bool(np.all(np.isnan(dense[~mask])))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"inputs": np.zeros(3)}, "at least one grid axis"),
+        ({"targets": np.zeros((3, 4))}, r"\[\*grid, output_features\]"),
+        ({"targets": np.zeros((4, 3, 1))}, "Grid field `targets`"),
+        ({"aux": {"weight": np.zeros((3, 5))}}, "Grid field `weight`"),
+        ({"mask": np.ones((3, 4), dtype=np.int8)}, "Boolean array"),
+        ({"mask": np.ones((4, 3), dtype=bool)}, "Boolean array"),
+        ({"mask": np.zeros((3, 4), dtype=bool)}, "selects no rows"),
+    ],
+    ids=["rank-one", "targets-rank", "targets-shape", "aux-shape", "mask-dtype", "mask-shape", "empty-mask"],
+)
+def test_host_pool_from_grid_rejects_inconsistent_grids(kwargs: dict[str, Any], match: str) -> None:
+    """Verify each malformed grid argument raises an error naming it.
+
+    Args:
+        kwargs: Arguments that replace the valid `[3, 4]` grid defaults.
+        match: Expected error message pattern.
+    """
+    arguments = {"inputs": _grid_inputs(3, 4), **kwargs}
+    with pytest.raises(ValueError, match=match):
+        HostPool.from_grid(**arguments)
+
+
 def test_reconstruct_predictions_rejects_duplicate_flat_indices() -> None:
     """Verify reconstruction refuses indices that would overwrite each other on the dense grid."""
     pool = HostPool(inputs=np.zeros((2, 1), dtype=np.float32), reference_shape=(2,), flat_index=np.asarray([0, 0]))
@@ -119,8 +191,8 @@ def test_reconstruct_predictions_rejects_duplicate_flat_indices() -> None:
 def test_device_sampling_is_reproducible_and_fixed_shape() -> None:
     """Verify that identical explicit keys produce identical fixed-shape batches."""
     pool = {name: jnp.asarray(value) for name, value in _pool().fields().items()}
-    first = sample_pool(jax.random.key(2), pool, 7)
-    second = sample_pool(jax.random.key(2), pool, 7)
+    first = RandomRowSampler(pool).sample(jax.random.key(2), 7)
+    second = RandomRowSampler(pool).sample(jax.random.key(2), 7)
     assert first["inputs"].shape == (7, 3)
     np.testing.assert_array_equal(first["inputs"], second["inputs"])
 
@@ -265,20 +337,13 @@ def test_uniform_domain_sampler_uses_named_pool_bounds_and_constant_templates() 
         inputs=np.asarray([[0.0, -2.0], [1.0, 2.0]], dtype=np.float32),
         targets=np.empty((2, 0), dtype=np.float32),
         aux={"coefficient": np.full((2, 1), 0.25, dtype=np.float32)},
-        metadata={
-            "coordinate_names": ("t", "x"),
-            "sampling_bounds": (("t", 0.0, 1.0), ("x", -2.0, 2.0)),
-        },
+        metadata={"coordinate_names": ("t", "x"), "sampling_bounds": ((0.0, 1.0), (-2.0, 2.0))},
         reference_shape=(2,),
         flat_index=np.arange(2),
     )
 
-    sampler = create_sampler(
-        "uniform_domain",
-        pool,
-        options={"sort_axis": 0, "constant_fields": ["targets", "coefficient"]},
-    )
-    assert isinstance(sampler, UniformDomainSampler)
+    templates = {"targets": np.empty((0,), dtype=np.float32), "coefficient": pool.aux["coefficient"][0]}
+    sampler = UniformDomainSampler(pool.metadata["sampling_bounds"], templates, sort_axis=0)
     batch = sampler.sample(jax.random.key(3), 32)
 
     assert batch["inputs"].shape == (32, 2)
@@ -290,8 +355,7 @@ def test_uniform_domain_sampler_uses_named_pool_bounds_and_constant_templates() 
 
 def test_uniform_domain_sampler_resolves_float64_requests_without_warnings() -> None:
     """Verify float64 pool inputs yield float32 coordinates without JAX truncation warnings when x64 is disabled."""
-    pool = HostPool(inputs=np.asarray([[0.0], [1.0]], dtype=np.float64))
-    sampler = create_sampler("uniform_domain", pool, options={"bounds": [[0.0, 1.0]]})
+    sampler = UniformDomainSampler([[0.0, 1.0]], {}, dtype=np.float64)
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -306,15 +370,11 @@ def test_space_time_sampler_replaces_time_and_preserves_spatial_rows() -> None:
         inputs=np.asarray([[0.0, -1.0], [0.0, 0.5], [0.0, 2.0]], dtype=np.float32),
         targets=np.empty((3, 0), dtype=np.float32),
         aux={},
-        metadata={
-            "coordinate_names": ("t", "x"),
-            "sampling_bounds": (("t", 2.0, 3.0), ("x", -1.0, 2.0)),
-        },
+        metadata={"coordinate_names": ("t", "x")},
         reference_shape=(3,),
         flat_index=np.arange(3),
     )
-    sampler = create_sampler("space_time", pool)
-    assert isinstance(sampler, SpaceTimeSampler)
+    sampler = SpaceTimeSampler(pool.fields(), time_bounds=(2.0, 3.0))
 
     batch = sampler.sample(jax.random.key(7), 12)
 
@@ -323,21 +383,12 @@ def test_space_time_sampler_replaces_time_and_preserves_spatial_rows() -> None:
     assert bool(jnp.all(jnp.diff(batch["inputs"][:, 0]) >= 0.0))
 
 
-def test_sampler_names_and_generated_field_semantics_are_validated() -> None:
-    """Verify short-name selection rejects unknown policies and varying generated templates."""
-    with pytest.raises(ValueError, match="Unknown sampler name"):
-        create_sampler("unknown", _pool())
-    with pytest.raises(ValueError, match="time_axis"):
-        create_sampler("space_time", _pool(), options={"time_axis": None})
-    with pytest.raises(ValueError, match="varies by row"):
-        create_sampler(
-            "uniform_domain",
-            _pool(),
-            options={
-                "bounds": [[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
-                "constant_fields": ["targets"],
-            },
-        )
+def test_generated_samplers_validate_templates_and_targets() -> None:
+    """Verify generated coordinates reject an `inputs` template and space-time sampling rejects time-bound targets."""
+    with pytest.raises(ValueError, match="cannot define `inputs`"):
+        UniformDomainSampler([[0.0, 1.0]], {"inputs": np.zeros(1)})
+    with pytest.raises(ValueError, match="cannot reuse targets"):
+        SpaceTimeSampler(_pool().fields(), time_bounds=(0.0, 1.0))
 
 
 def test_batch_sources_scale_per_device_sizes() -> None:

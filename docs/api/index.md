@@ -58,7 +58,7 @@ Package-specific public aliases include:
 from phijax import DataModule, ModelFactory, PhiModule, Trainer
 from phijax.balancers import BalancerUpdatePlan, ExactNTKBalancer, GradNormBalancer, StaticLossBalancer
 from phijax.callbacks import EarlyStopping, ModelCheckpoint, ProgressBar, RichModelSummary, RichProgressBar
-from phijax.data import HostPool, NamedBatchSource, PhiDataModule, create_sampler
+from phijax.data import HostPool, NamedBatchSource, PhiDataModule, UniformDomainSampler
 from phijax.evaluation import EvaluationResult, RegressionEvaluator
 from phijax.equations import burgers_1d, polar_navier_stokes, residual_equation
 from phijax.models import MLP, ModifiedMLP, PirateNet, build_mlp, build_modified_mlp, build_pirate_net

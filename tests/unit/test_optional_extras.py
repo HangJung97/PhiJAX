@@ -104,7 +104,7 @@ def test_host_data_modules_import_without_the_io_extra() -> None:
     """Verify that importing data construction and NPZ IO loads no MATLAB or HDF5 package."""
     results = _run_without(
         _IO_PACKAGES,
-        "from phijax.data import build_array_pools, load_arrays, save_prediction_artifact\n"
+        "from phijax.data import HostPool, load_arrays, save_prediction_artifact\n"
         "results['loaded'] = repr(sorted({'h5py', 'mat73', 'scipy'} & set(sys.modules)))",
     )
 

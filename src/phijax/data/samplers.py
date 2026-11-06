@@ -1,17 +1,14 @@
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from phijax.data.batching import DevicePool
-from phijax.data.pools import HostPool
 from phijax.types import JaxDevice
-
-type SamplerName = Literal["random_rows", "uniform_domain", "space_time"]
 
 
 class BatchSampler(ABC):
@@ -105,7 +102,7 @@ class RandomRowSampler(BatchSampler):
             Random aligned pool fields, optionally sorted by one input coordinate.
         """
         return _sort_batch(
-            sample_pool(key, self.pool, batch_size, replace=self.replace),
+            _sample_rows(key, self.pool, batch_size, replace=self.replace),
             self.sort_axis,
         )
 
@@ -261,7 +258,7 @@ class SpaceTimeSampler(BatchSampler):
             Aligned pool fields with fresh uniformly generated time coordinates.
         """
         mesh_key, time_key = jax.random.split(key)
-        batch = sample_pool(mesh_key, self.pool, batch_size, replace=self.replace)
+        batch = _sample_rows(mesh_key, self.pool, batch_size, replace=self.replace)
         lower, upper = self.time_bounds
         times = jax.random.uniform(
             time_key,
@@ -274,68 +271,7 @@ class SpaceTimeSampler(BatchSampler):
         return _sort_batch(batch, self.sort_axis)
 
 
-def create_sampler(
-    name: SamplerName | str,
-    pool: HostPool,
-    *,
-    options: Mapping[str, Any] | None = None,
-) -> BatchSampler:
-    """Create a built-in sampler from an explicit stable name.
-
-    Sampler selection intentionally avoids Hydra `_target_` values. The surrounding DataModule resolves the short
-    names `random_rows`, `uniform_domain`, and `space_time` while retaining typed constructors internally.
-
-    Args:
-        name: Built-in sampler name.
-        pool: Immutable host pool supplying finite rows, field templates, or inferred coordinate bounds.
-        options: Sampler-specific options such as `replace`, `sort_axis`, `bounds`, `constant_fields`, `time_bounds`,
-            or `time_axis`.
-
-    Returns:
-        Configured immutable batch sampler.
-
-    Raises:
-        TypeError: If an option has an unsupported container or scalar type.
-        ValueError: If the name, bounds, templates, or sampler options are invalid.
-    """
-    settings = dict(options or {})
-    if name == "random_rows":
-        replace = _pop_bool(settings, "replace", True)
-        sort_axis = _pop_optional_int(settings, "sort_axis", None)
-        _reject_options(name, settings)
-        return RandomRowSampler(pool.fields(), replace=replace, sort_axis=sort_axis)
-    if name == "uniform_domain":
-        bounds = _resolve_pool_bounds(pool, settings.pop("bounds", None))
-        sort_axis = _pop_optional_int(settings, "sort_axis", None)
-        constant_fields = _pop_names(settings, "constant_fields")
-        _reject_options(name, settings)
-        templates = _constant_templates(pool, constant_fields)
-        return UniformDomainSampler(
-            bounds,
-            templates,
-            dtype=pool.inputs.dtype,
-            sort_axis=sort_axis,
-        )
-    if name == "space_time":
-        time_axis = _pop_optional_int(settings, "time_axis", 0)
-        if time_axis is None:
-            raise ValueError("`time_axis` cannot be `None` for the `space_time` sampler.")
-        time_bounds = _resolve_time_bounds(pool, settings.pop("time_bounds", None), time_axis)
-        replace = _pop_bool(settings, "replace", True)
-        sort_axis = _pop_optional_int(settings, "sort_axis", time_axis)
-        _reject_options(name, settings)
-        return SpaceTimeSampler(
-            pool.fields(),
-            time_bounds=time_bounds,
-            time_axis=time_axis,
-            replace=replace,
-            sort_axis=sort_axis,
-        )
-    choices = ", ".join(("random_rows", "uniform_domain", "space_time"))
-    raise ValueError(f"Unknown sampler name `{name}`. Available samplers: {choices}.")
-
-
-def sample_pool(
+def _sample_rows(
     key: jax.Array,
     pool: Mapping[str, Any],
     batch_size: int,
@@ -432,187 +368,9 @@ def _sort_batch(batch: DevicePool, sort_axis: int | None) -> DevicePool:
     return {name: values[indices] for name, values in batch.items()}
 
 
-def _pop_bool(settings: dict[str, Any], name: str, default: bool) -> bool:
-    """Remove and validate one Boolean sampler option.
-
-    Args:
-        settings: Mutable unresolved option mapping.
-        name: Option name.
-        default: Default used when the option is absent.
-
-    Returns:
-        Resolved Boolean option.
-
-    Raises:
-        TypeError: If the configured value is not Boolean.
-    """
-    value = settings.pop(name, default)
-    if not isinstance(value, bool):
-        raise TypeError(f"Sampler option `{name}` must be Boolean.")
-    return value
-
-
-def _pop_optional_int(settings: dict[str, Any], name: str, default: int | None) -> int | None:
-    """Remove and validate one optional integer sampler option.
-
-    Args:
-        settings: Mutable unresolved option mapping.
-        name: Option name.
-        default: Default used when the option is absent.
-
-    Returns:
-        Resolved integer or `None`.
-
-    Raises:
-        TypeError: If the configured value is not an integer or `None`.
-    """
-    value = settings.pop(name, default)
-    if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
-        raise TypeError(f"Sampler option `{name}` must be an integer or `None`.")
-    return value
-
-
-def _pop_names(settings: dict[str, Any], name: str) -> tuple[str, ...]:
-    """Remove and validate one sequence of unique field names.
-
-    Args:
-        settings: Mutable unresolved option mapping.
-        name: Option name.
-
-    Returns:
-        Ordered unique non-empty field names, or an empty tuple when the option is absent.
-
-    Raises:
-        TypeError: If the configured value is not a non-string sequence.
-        ValueError: If a field name is empty or repeated.
-    """
-    value = settings.pop(name, ())
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise TypeError(f"Sampler option `{name}` must be a sequence of field names.")
-    names = tuple(value)
-    if any(not isinstance(field_name, str) or not field_name.strip() for field_name in names):
-        raise ValueError(f"Sampler option `{name}` must contain non-empty strings.")
-    if len(set(names)) != len(names):
-        raise ValueError(f"Sampler option `{name}` must not contain duplicate field names.")
-    return names
-
-
-def _reject_options(name: str, settings: Mapping[str, Any]) -> None:
-    """Reject unused sampler options to catch configuration mistakes.
-
-    Args:
-        name: Selected sampler name.
-        settings: Remaining option mapping.
-
-    Raises:
-        ValueError: If unsupported options remain.
-    """
-    if settings:
-        unknown = ", ".join(sorted(settings))
-        raise ValueError(f"Sampler `{name}` received unsupported options: {unknown}.")
-
-
-def _resolve_pool_bounds(pool: HostPool, configured: Any) -> np.ndarray:
-    """Resolve uniform-box bounds explicitly or from pool metadata.
-
-    Args:
-        pool: Host pool supplying coordinate names and optional `sampling_bounds` metadata.
-        configured: Optional mapping by coordinate name or array with shape `[input_features, 2]`.
-
-    Returns:
-        Floating bounds array in model-input column order.
-
-    Raises:
-        TypeError: If configured bounds use an unsupported container.
-        ValueError: If bounds are absent, incomplete, or have the wrong shape.
-    """
-    coordinate_names = tuple(str(value) for value in pool.metadata.get("coordinate_names", ()))
-    bounds = configured
-    if bounds is None:
-        metadata_bounds = pool.metadata.get("sampling_bounds")
-        if metadata_bounds is not None:
-            bounds = {str(axis): (lower, upper) for axis, lower, upper in metadata_bounds}
-    if isinstance(bounds, Mapping):
-        if len(coordinate_names) != pool.inputs.shape[1]:
-            raise ValueError("Named bounds require pool `coordinate_names` metadata aligned with input columns.")
-        missing = tuple(name for name in coordinate_names if name not in bounds)
-        if missing:
-            raise ValueError(f"Uniform-domain bounds are missing coordinates: {missing}.")
-        values = np.asarray([bounds[name] for name in coordinate_names], dtype=pool.inputs.dtype)
-    elif isinstance(bounds, Sequence) and not isinstance(bounds, (str, bytes)):
-        values = np.asarray(bounds, dtype=pool.inputs.dtype)
-    else:
-        raise TypeError("Uniform-domain `bounds` must be a coordinate mapping or interval sequence.")
-    if values.shape != (pool.inputs.shape[1], 2):
-        raise ValueError("Uniform-domain bounds must align with every pool input column.")
-    return values
-
-
-def _resolve_time_bounds(pool: HostPool, configured: Any, time_axis: int) -> tuple[float, float]:
-    """Resolve temporal bounds explicitly or from pool metadata.
-
-    Args:
-        pool: Host pool supplying optional coordinate and bound metadata.
-        configured: Optional two-value temporal interval.
-        time_axis: Input column interpreted as time.
-
-    Returns:
-        Increasing temporal interval.
-
-    Raises:
-        TypeError: If the interval is not a non-string sequence.
-        ValueError: If temporal bounds cannot be inferred or are invalid.
-    """
-    bounds = configured
-    if bounds is None:
-        coordinate_names = tuple(str(value) for value in pool.metadata.get("coordinate_names", ()))
-        metadata_bounds = pool.metadata.get("sampling_bounds")
-        if metadata_bounds is not None and len(coordinate_names) == pool.inputs.shape[1]:
-            named_bounds = {str(axis): (lower, upper) for axis, lower, upper in metadata_bounds}
-            bounds = named_bounds.get(coordinate_names[time_axis])
-    if not isinstance(bounds, Sequence) or isinstance(bounds, (str, bytes)):
-        raise TypeError("Space-time `time_bounds` must be a two-value sequence.")
-    values = tuple(float(value) for value in bounds)
-    if len(values) != 2:
-        raise ValueError("Space-time `time_bounds` must contain exactly two values.")
-    return cast(tuple[float, float], values)
-
-
-def _constant_templates(
-    pool: HostPool,
-    field_names: Sequence[str],
-) -> dict[str, np.ndarray]:
-    """Extract selected non-input fields that remain constant for generated coordinates.
-
-    Args:
-        pool: Host pool acting as a generated-field template.
-        field_names: Explicit non-input fields included in generated batches.
-
-    Returns:
-        Host scalar or feature templates without a sample dimension.
-
-    Raises:
-        KeyError: If a requested field is absent.
-        ValueError: If `inputs` is requested or a selected field varies across pool rows.
-    """
-    fields = pool.fields()
-    templates: dict[str, np.ndarray] = {}
-    for name in field_names:
-        if name == "inputs":
-            raise ValueError("Uniform-domain `constant_fields` cannot contain `inputs`.")
-        values = fields[name]
-        if values.shape[0] > 1 and not np.array_equal(values, np.broadcast_to(values[0], values.shape)):
-            raise ValueError(f"Uniform-domain field `{name}` varies by row and cannot be paired with generated inputs.")
-        templates[name] = np.asarray(values[0])
-    return templates
-
-
 __all__ = [
     "BatchSampler",
     "RandomRowSampler",
-    "SamplerName",
     "SpaceTimeSampler",
     "UniformDomainSampler",
-    "create_sampler",
-    "sample_pool",
 ]
