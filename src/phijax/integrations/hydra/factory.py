@@ -127,7 +127,7 @@ def to_hyperparameters(config: DictConfig, *, resolve: bool = False) -> dict[str
     """Convert a composed Hydra config into logger-ready plain containers.
 
     The Trainer owns the actual rank-safe logger call when the returned mapping is passed to
-    :meth:`phijax.Trainer.fit` or :meth:`phijax.Trainer.fit_state`.
+    :meth:`phijax.Trainer.fit`.
 
     Args:
         config: Composed root Hydra configuration.

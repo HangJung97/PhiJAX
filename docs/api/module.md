@@ -47,7 +47,7 @@ initialized [`InitializedModel`](models/index.md#phijax.models.InitializedModel)
 [`Objective`](objectives.md#phijax.objectives.Objective).
 
 The objective supplies ordered `loss_names` and `batch_keys`. The Trainer uses them to create default static loss
-weights and request matching batches from the DataModule. During fitting, `prepare_model()` creates a shallow bound
+weights and request matching batches from the DataModule. During fitting, `configure_model()` creates a shallow bound
 copy containing the pure model application and model summary function. The resulting bound module is available as
 `result.module`.
 
@@ -100,8 +100,9 @@ class HeatModule(BasePhiModule):
         return self.objective.losses(self.model_apply, model_state, batches)
 ```
 
-A fully bound custom module uses [`Trainer.fit_state()`](trainer.md#phijax.training.Trainer.fit_state) with an explicit
-`TrainingPlan` and `TrainState`. Keep optimizer and loss-balancer selection outside the module.
+To train a custom module with [`Trainer.fit()`](trainer.md#phijax.training.Trainer.fit), override `configure_model()`
+to build its model and return the bound module with its model state. Keep optimizer and loss-balancer selection
+outside the module.
 
 ## Lifecycle and hooks
 
@@ -132,7 +133,7 @@ See [Trainer and module hooks](hooks.md) for the complete fit, prediction, inter
       members:
         - loss_names
         - batch_keys
-        - prepare_model
+        - configure_model
         - summarize_model
         - on_train_batch_end
 

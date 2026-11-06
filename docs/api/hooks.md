@@ -7,13 +7,13 @@ traced arrays or change a compiled PyTree's structure between steps.
 For every matching event, callbacks run in declaration order before the `BasePhiModule` hook. This follows Lightning's
 default ordering and gives application code a predictable final extension point.
 
-`fit()` first prepares the DataModule, initializes and binds the model, and resolves state and a training plan.
-`fit_state()` accepts those resolved objects directly. Both then dispatch the same lifecycle below.
+`fit()` first prepares the DataModule, builds and binds the model with `configure_model()`, creates or restores the
+state, and compiles the train step. It then dispatches the lifecycle below.
 
 ## Fit lifecycle
 
 ```text
-Trainer.fit / Trainer.fit_state
+Trainer.fit
 |
 +-- Callback.setup()                         declaration order
 +-- BasePhiModule.setup()

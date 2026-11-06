@@ -60,8 +60,7 @@ filesystem operations remain outside it.
 
 `max_steps` is the global optimizer step at which training stops, as in Lightning. A fit resumed from step `N` runs
 `max_steps - N` updates. When the restored step already reaches `max_steps`, the fit runs its start and end hooks
-without training. A custom step passed through `fit_state()` must increment `TrainState.step` exactly once per
-completed update.
+without training.
 
 ### Deterministic GPU execution
 
@@ -112,21 +111,21 @@ backend and display options.
 
 ## Common and advanced workflows
 
-Use `fit()` and `predict()` for normal application code. The Trainer initializes and binds the model, constructs the
-training plan, creates state, and obtains batches from the DataModule.
+The Trainer has two tasks, as Lightning's does: `fit()` and `predict()`. `fit()` builds and binds the model, compiles
+one train step, creates or restores the state, and obtains batches from the DataModule.
 
 To predict later from a saved run, pass the module blueprint and the checkpoint:
 `trainer.predict(module, ckpt_path=..., datamodule=data_module)`. The Trainer builds the model with the input
 statistics and periods stored in the checkpoint and restores only the model state, so prediction needs no optimizer,
 balancer, or fit-stage data.
 
-Use `fit_state()` when an integration supplies a bound `BasePhiModule`, explicit `TrainState`, custom `TrainingPlan`,
-or custom batch source. Supporting methods such as `initialize_state()`, `compile_train_step()`,
-`prepare_batch_source()`, and `prepare_batch()` expose the same runtime policies without creating another training
-loop.
+A custom `BasePhiModule` takes part in both tasks by overriding
+[`configure_model()`](module.md#phijax.core.BasePhiModule.configure_model), which builds its model and returns its
+model state. `prepare_batch_source()` and `prepare_batch()` expose the Trainer's placement and precision policies to
+integrations.
 
-Checkpoint-enabled applications can use `ckpt_path="last"` with `fit()`, call `latest_checkpoint()` explicitly, or
-load model parameters into an existing state with `load_weights()`.
+Checkpoint-enabled applications resume with `fit(..., ckpt_path="last")`, and transfer weights with
+`fit(..., ckpt_path=..., weights_only=True)`.
 
 ## Metrics and status
 
@@ -167,13 +166,8 @@ created and only on global rank zero.
         - callback_metrics
         - fit
         - predict
-        - fit_state
-        - initialize_state
-        - compile_train_step
         - prepare_batch_source
         - prepare_batch
-        - load_weights
-        - latest_checkpoint
         - callback_state_dict
         - load_callback_state_dict
         - print_environment_info

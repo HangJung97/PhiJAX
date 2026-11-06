@@ -27,7 +27,7 @@ predictions = trainer.predict(result, datamodule=data_module)
 2. Initialize and bind the model factory.
 3. Create equal static loss weights unless a balancer is supplied.
 4. Split independent runtime, sampling, and balancer PRNG streams.
-5. Infer objective batch keys and build the compiled training plan.
+5. Infer objective batch keys and compile one train step.
 6. Initialize or restore `TrainState`.
 7. Run host-side sampling around one JIT-compiled update per step.
 
@@ -104,25 +104,11 @@ No optimizer, balancer, or seed is needed, and the DataModule's fit stage is not
 0.2.0b5 and earlier store no statistics or periods; for them, the Trainer takes both from the fit stage of
 `datamodule` and warns.
 
-## Use the explicit state API
+## Train a custom module
 
-Use [`Trainer.fit_state()`](../api/trainer.md#phijax.training.Trainer.fit_state) when an application supplies a bound
-[`BasePhiModule`](../api/module.md#phijax.core.BasePhiModule), explicit
-[`TrainState`](../api/training.md#phijax.training.TrainState), custom
-[`TrainingPlan`](../api/training.md#phijax.training.TrainingPlan), or custom batch source.
-
-```python
-result = trainer.fit_state(
-    bound_module,
-    training_plan,
-    initial_state,
-    datamodule=data_module,
-)
-predictions = trainer.predict(result, datamodule=data_module)
-```
-
-A custom compiled step must increment `TrainState.step` exactly once. The Trainer uses a matching host counter for
-batch indices, callbacks, logging, adaptive-balancer updates, and checkpoints.
+A custom [`BasePhiModule`](../api/module.md#phijax.core.BasePhiModule) trains with the same `fit()` call. Override
+[`configure_model()`](../api/module.md#phijax.core.BasePhiModule.configure_model) to build the model; the Trainer then
+creates the state, compiles the train step from `training_step()`, and runs the same lifecycle.
 
 ## Understand the execution boundary
 

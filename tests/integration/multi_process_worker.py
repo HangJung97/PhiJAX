@@ -258,7 +258,7 @@ def _ntk_layout_check() -> dict[str, Any]:
         partial(build_mlp, input_dim=1, output_dim=1, hidden=(16,)),
         CompositeObjective.from_equations({"data": base_data_fidelity}),
     )
-    module, model_state = blueprint.prepare_model(
+    module, model_state = blueprint.configure_model(
         key=jax.random.key(0), input_mean=None, input_std=None, precision=PrecisionPolicy.from_name("32-true")
     )
     balancer = ExactNTKBalancer(module.loss_names, update_every_n_steps=1, kernel_size=8)

@@ -1,6 +1,5 @@
 from phijax.core import BasePhiModule, PhiModule, PhiModuleContext
 from phijax.metrics import TrainingOutput
-from phijax.training.assembly import build_training_plan
 from phijax.training.checkpointing import (
     LegacyCheckpointError,
     OrbaxCheckpointIO,
@@ -16,7 +15,6 @@ from phijax.training.loggers import (
     TensorBoardLogger,
     WandbLogger,
 )
-from phijax.training.plans import TrainingPlan
 from phijax.training.precision import (
     MatmulPrecision,
     PrecisionAlias,
@@ -26,8 +24,7 @@ from phijax.training.precision import (
     configure_precision,
 )
 from phijax.training.results import FitResult
-from phijax.training.state import TrainState, initialize_train_state
-from phijax.training.steps import make_train_step
+from phijax.training.state import TrainState
 from phijax.training.strategies import (
     Accelerator,
     DataParallelStrategy,
@@ -66,15 +63,11 @@ __all__ = [
     "TrainState",
     "Trainer",
     "TrainingOutput",
-    "TrainingPlan",
     "WandbLogger",
-    "build_training_plan",
     "configure_precision",
     "create_strategy",
     "initialize_distributed",
-    "initialize_train_state",
     "load_input_statistics",
     "load_model_state",
-    "make_train_step",
     "restore_checkpoint",
 ]

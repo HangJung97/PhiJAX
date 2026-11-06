@@ -117,7 +117,6 @@ def test_top_level_api_exposes_beta_runtime_contracts() -> None:
         "PhiModule",
         "TrainState",
         "Trainer",
-        "TrainingPlan",
         "hessian_diagonal",
         "value_and_jacobian",
     }

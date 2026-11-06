@@ -11,8 +11,6 @@ if TYPE_CHECKING:
     from phijax.metrics import TrainingOutput
     from phijax.models import InitializedModel, ModelFactory
     from phijax.training import FitResult, Trainer
-    from phijax.training.assembly import build_training_plan
-    from phijax.training.plans import TrainingPlan
     from phijax.training.state import TrainState
     from phijax.types import InputStatistics
 
@@ -36,8 +34,6 @@ __getattr__, __dir__ = lazy_exports(
         "TrainState": "phijax.training.state",
         "Trainer": "phijax.training",
         "TrainingOutput": "phijax.metrics",
-        "TrainingPlan": "phijax.training.plans",
-        "build_training_plan": "phijax.training.assembly",
         "hessian_diagonal": "phijax.derivatives",
         "value_and_jacobian": "phijax.derivatives",
     },
@@ -57,9 +53,7 @@ __all__ = [
     "TrainState",
     "Trainer",
     "TrainingOutput",
-    "TrainingPlan",
     "__version__",
-    "build_training_plan",
     "hessian_diagonal",
     "value_and_jacobian",
 ]

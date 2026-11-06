@@ -12,11 +12,10 @@ equation residuals
 ResidualTerm ----> named scalar losses ----> LossBalancer ----> total loss
        |
        v
-CompositeObjective ----> bound PhiModule ----> TrainingPlan ----> Trainer.fit_state()
+CompositeObjective ----> PhiModule ----> Trainer.fit() ----> compiled train step
 ```
 
-For the common API, `Trainer.fit()` creates the `TrainingPlan` internally. The diagram shows the resolved numerical
-path that advanced users can construct directly with `fit_state()`.
+`Trainer.fit()` builds the model, binds the module, and compiles one train step from the module and balancer.
 
 The pieces have distinct responsibilities:
 
@@ -27,7 +26,6 @@ The pieces have distinct responsibilities:
 | `CompositeObjective` | Combine independent initial, boundary, data, and PDE terms                    |
 | `PhiModule`          | Describe a model factory and its unweighted objective                         |
 | `LossBalancer`       | Combine named losses and expose weight diagnostics                            |
-| `TrainingPlan`       | Advanced contract binding a compiled update to its required batches           |
 | `Trainer`            | Run lifecycle hooks, place batches, restore checkpoints, log, and clean up    |
 
 The optimizer and balancer remain outside `PhiModule`. You can change either one without creating a new module or

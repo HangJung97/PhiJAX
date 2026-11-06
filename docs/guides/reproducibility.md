@@ -57,7 +57,7 @@ Keeping these streams separate means that changing collocation sampling does not
 It also keeps adaptive-balancer diagnostics independent from ordinary training batches.
 
 The standard PhiJAX architectures are deterministic unless an application explicitly implements stochastic model
-execution. Advanced training plans can carry that behavior through `TrainState.rng_key`.
+execution. A custom module can carry that behavior through `TrainState.rng_key`.
 
 ## Deterministic batch sampling
 
@@ -129,23 +129,6 @@ parameters after changing:
 
 Floating-point kernels may use different reduction orders across platforms. Compare metrics within appropriate
 tolerances when validating CPU, GPU, and TPU runs.
-
-## Explicit state API
-
-`fit_state()` accepts a fully initialized `TrainState`. Use `initialize_train_state()` to create the three persistent
-streams from one key, or provide `sampling_key` and `balancer_key` explicitly when an integration already owns the
-split:
-
-```python
-state = initialize_train_state(
-    model_state,
-    optimizer,
-    balancer.initialize(),
-    runtime_key,
-    sampling_key=sampling_key,
-    balancer_key=balancer_key,
-)
-```
 
 Do not reuse one key for unrelated random operations. Split or fold keys at the point where a new independent stream
 is required.

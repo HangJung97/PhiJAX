@@ -21,7 +21,7 @@ framework package. Hydra and OmegaConf are supported integrations, not assumptio
 - `src/phijax/balancers/` contains functional static and NTK loss balancers.
 - `src/phijax/callbacks/` contains shared lifecycle contracts and training, prediction, and postprocessing callbacks.
 - `src/phijax/training/` contains the central state and reusable compiled steps.
-- `src/phijax/integrations/hydra/` owns optional Hydra instantiation and training-plan assembly.
+- `src/phijax/integrations/hydra/` owns optional Hydra instantiation of project-owned configs.
 - `src/phijax/integrations/omegaconf.py` contains reusable resolver registration.
 - `tests/unit/` holds focused tests; `tests/integration/` exercises framework-wide runtime workflows.
 - `phijax-hydra-template` owns runnable entrypoints, Hydra configs, and the Burgers example.

@@ -24,8 +24,7 @@ model:
     kernel_chunk_size: 1
 ```
 
-The project passes `model.balancer` to `instantiate_balancer()`. Use `Trainer.fit()` for ordinary training or the core
-`build_training_plan()` function when an advanced `fit_state()` workflow needs an explicit plan.
+The project passes `model.balancer` to `instantiate_balancer()` and then to `Trainer.fit()`.
 
 ::: phijax.integrations.hydra.instantiate_data_module
 

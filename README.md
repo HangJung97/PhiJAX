@@ -161,9 +161,9 @@ Prediction is skipped cleanly when a DataModule has no prediction source.
 
 ## Core APIs
 
-- `Trainer.fit()` assembles the common application workflow; `fit_state()` exposes explicit state and plan control.
+- `Trainer.fit()` builds, restores, and trains a module; custom modules override `configure_model()`.
 - `Trainer.predict()` consumes a `FitResult`, or a module blueprint with `ckpt_path` to predict from a checkpoint.
-- `TrainingPlan` and `TrainState` remain public advanced contracts for custom compiled execution.
+- `TrainState` holds the functional training state that checkpoints store.
 - `BasePhiModule` and `PhiModule` provide overridable fit and prediction hooks without owning optimizers or balancers.
 - `PhiDataModule` owns host data and explicit-key batch sources. The Trainer owns device placement.
 - `ModelFactory` and `InitializedModel` let any JAX architecture expose a pure apply callable, state, and summary.
