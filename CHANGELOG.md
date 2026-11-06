@@ -165,6 +165,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `Trainer.fit(..., ckpt_path="last")` warns and starts from fresh state when no checkpoint has been saved yet, as in
   Lightning, instead of raising `FileNotFoundError`. One Hydra config can then pass `ckpt_path=last` for both the first
   run and every resume. An explicit checkpoint path, and `predict(..., ckpt_path="last")`, still raise.
+- `NamedBatchSource` draws a step's batches in one compiled call instead of one dispatch per array operation. On a
+  GPU, this makes the quickstart about 3.8 times faster; batches are unchanged bit for bit. Custom
+  `BatchSampler.sample()` implementations must be traceable by `jax.jit`.
 
 ### Fixed
 

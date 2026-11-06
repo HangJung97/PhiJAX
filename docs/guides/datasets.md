@@ -303,6 +303,10 @@ class HeatDataModule(PhiDataModule):
 The sampler only draws one batch from a key. `NamedBatchSource` derives that key from the global step, so a resumed run
 draws the same batches. It also scales batch sizes per device and serves the diagnostic batches of adaptive balancers.
 
+`NamedBatchSource` draws every sampler of a step in one compiled call, so `sample()` runs inside `jax.jit`. Use JAX
+operations on arrays, and branch in Python only on `batch_size` or other values fixed at construction. Converting an
+array to a Python value, as `int(...)` or `.item()` do, fails under tracing.
+
 `NamedBatchSource` starts with host-backed sampler definitions. Before fitting, the Trainer moves persistent candidate
 arrays, bounds, templates, and the root key to the Strategy's root device. Sampling then stays on the device. The
 Trainer applies final precision conversion and data-parallel sharding to each batch.
