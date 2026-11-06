@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from phijax.equations import free_slip_boundary, phase_wrapped_fidelity, polar_navier_stokes
+from phijax.equations import free_slip_boundary, phase_wrapped_fidelity, polar_navier_stokes, residual_equation
 from phijax.objectives import CompositeObjective, ResidualTerm
 from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
 
@@ -79,6 +79,7 @@ def _batches() -> dict[str, dict[str, jax.Array]]:
 def test_residual_term_reduces_groups_and_dispatches_ntk_streams() -> None:
     """Verify grouped arrays share one scalar loss and an equation can expose a separate output stream."""
 
+    @residual_equation(names=("grouped",), default_ntk_stream="output")
     def grouped_residuals(
         model_apply: ModelApply,
         model_state: Any,
@@ -101,8 +102,8 @@ def test_residual_term_reduces_groups_and_dispatches_ntk_streams() -> None:
         reference = batch["values"]
         return ((3.0 * reference,),) if stream == "output" else ((reference, 2.0 * reference),)
 
-    term = ResidualTerm(grouped_residuals, batch_key="data", names=("grouped",), ntk_stream="output")
-    residual_term = ResidualTerm(grouped_residuals, batch_key="data", names=("grouped",))
+    term = ResidualTerm(grouped_residuals, batch_key="data", names=("grouped",))
+    residual_term = ResidualTerm(grouped_residuals, batch_key="data", names=("grouped",), ntk_stream="residual")
     batches = {"data": {"values": jnp.ones((2, 1), dtype=jnp.float32)}}
     losses = term.losses(lambda state, point: point, None, batches)
     stream = term.residual_stream("grouped", lambda state, point: point, None, batches)
@@ -222,6 +223,8 @@ def test_residual_term_validates_configuration_and_equation_groups() -> None:
         ResidualTerm(object(), batch_key="data", names=("loss",))  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="ntk_stream"):
         ResidualTerm(one_group, batch_key="data", names=("loss",), ntk_stream="invalid")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="default_ntk_stream='output'"):
+        ResidualTerm(one_group, batch_key="data", names=("loss",), ntk_stream="output")
     with pytest.raises(ValueError, match="does not define residual names"):
         ResidualTerm(residual_fn=one_group, batch_key="data")
 
@@ -230,3 +233,67 @@ def test_residual_term_validates_configuration_and_equation_groups() -> None:
         term.losses(lambda state, point: point, None, {"data": {}})
     with pytest.raises(KeyError, match="Unknown objective stream"):
         term.residual_stream("missing", lambda state, point: point, None, {"data": {}})
+
+
+def _returning(output: Any) -> Any:
+    """Build an equation that returns a fixed residual output.
+
+    Args:
+        output: Value returned by the equation.
+
+    Returns:
+        Equation callable ignoring its model, state, batch, and stream.
+    """
+
+    def equation(model_apply: ModelApply, model_state: Any, batch: ArrayMapping, *, stream: ResidualStream) -> Any:
+        """Return the fixed residual output.
+
+        Args:
+            model_apply: Unused model application callable.
+            model_state: Unused model state.
+            batch: Unused batch.
+            stream: Unused requested stream.
+
+        Returns:
+            The fixed residual output.
+        """
+        del model_apply, model_state, batch, stream
+        return output
+
+    return equation
+
+
+@pytest.mark.parametrize(
+    ("output", "names", "expected_losses"),
+    [
+        (jnp.asarray([1.0, 3.0]), ("a",), {"a": 5.0}),
+        ((jnp.asarray([1.0, 3.0]), jnp.asarray([[2.0], [2.0]])), ("a", "b"), {"a": 5.0, "b": 4.0}),
+        ((jnp.asarray([2.0]), (jnp.asarray([1.0]), jnp.asarray([3.0]))), ("a", "b"), {"a": 4.0, "b": 10.0}),
+    ],
+    ids=["bare-array", "tuple-of-arrays", "array-and-group"],
+)
+def test_residual_term_accepts_bare_arrays_as_single_residual_groups(
+    output: Any, names: tuple[str, ...], expected_losses: dict[str, float]
+) -> None:
+    """Verify a bare array is one loss, and a tuple entry is one loss whether it is an array or a residual group.
+
+    Args:
+        output: Equation output under test.
+        names: Loss names aligned with the output entries.
+        expected_losses: Mean-squared loss for each name.
+    """
+    term = ResidualTerm(_returning(output), batch_key="data", names=names)
+
+    losses = term.losses(lambda state, point: point, None, {"data": {}})
+    stream = term.residual_stream(names[0], lambda state, point: point, None, {"data": {}})
+
+    assert {name: float(value) for name, value in losses.items()} == pytest.approx(expected_losses)
+    assert stream.ndim == 2
+
+
+def test_residual_term_rejects_outputs_that_are_not_arrays_or_tuples() -> None:
+    """Verify a list or mapping output fails with the accepted return forms in the error."""
+    for output in ([jnp.ones(2)], {"a": jnp.ones(2)}):
+        term = ResidualTerm(_returning(output), batch_key="data", names=("a",))
+        with pytest.raises(TypeError, match="an array, or a tuple of arrays and residual tuples"):
+            term.losses(lambda state, point: point, None, {"data": {}})

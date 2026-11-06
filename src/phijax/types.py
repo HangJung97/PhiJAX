@@ -10,6 +10,8 @@ type ModelApply = Callable[[Any, jax.Array], jax.Array]
 type ResidualStream = Literal["residual", "output"]
 type ResidualGroup = tuple[jax.Array, ...]
 type ResidualGroups = tuple[ResidualGroup, ...]
+# What an equation may return: one array, or a tuple whose entries are arrays or residual groups.
+type ResidualOutput = jax.Array | tuple[jax.Array | ResidualGroup, ...]
 # Hashable normalized form stored in models, modules, and training state: sorted `(axis, period)` pairs.
 type ResolvedInputPeriods = tuple[tuple[int, float], ...]
 # Physical period of each periodic input axis, keyed by axis index, or already normalized pairs.
@@ -115,7 +117,7 @@ class ResidualFunction(Protocol):
         batch: ArrayMapping,
         *,
         stream: ResidualStream = "residual",
-    ) -> ResidualGroups:
+    ) -> ResidualOutput:
         """Evaluate residual groups or an explicitly supported alternative stream.
 
         Args:
@@ -125,7 +127,8 @@ class ResidualFunction(Protocol):
             stream: Stream representation requested by the objective.
 
         Returns:
-            Residual groups aligned with the owning objective term's loss names.
+            One residual array for a single loss, or a tuple with one entry per loss name. An entry is an array, or a
+            tuple of arrays whose mean-squared values are summed into that loss.
         """
         ...
 
@@ -141,6 +144,7 @@ __all__ = [
     "ResidualFunction",
     "ResidualGroup",
     "ResidualGroups",
+    "ResidualOutput",
     "ResidualStream",
     "ResolvedInputPeriods",
     "as_input_periods",

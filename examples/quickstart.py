@@ -18,7 +18,7 @@ from phijax.evaluation import regression_metrics
 from phijax.models import build_mlp
 from phijax.objectives import CompositeObjective
 from phijax.training import Accelerator, PrecisionName
-from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
+from phijax.types import ArrayMapping, ModelApply, ResidualStream
 
 
 @residual_equation(names=("heat",))
@@ -29,7 +29,7 @@ def heat_equation(
     *,
     diffusivity: float = 0.1,
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> jax.Array:
     """Evaluate `du/dt - diffusivity * d2u/dx2 = 0`.
 
     Args:
@@ -37,53 +37,47 @@ def heat_equation(
         model_state: Differentiable model parameter PyTree.
         batch: Arrays containing rank-two `[t, x]` coordinates under `inputs`.
         diffusivity: Positive heat-diffusion coefficient.
-        stream: Requested equation representation; only `residual` is supported.
+        stream: Requested equation representation. The objective requests only `residual` from this equation.
 
     Returns:
-        One residual group with shape `[samples, 1]`.
+        Residuals with shape `[samples]`.
 
     Raises:
-        ValueError: If the stream, diffusivity, or input shape is invalid.
+        ValueError: If the diffusivity or input shape is invalid.
     """
-    if stream != "residual":
-        raise ValueError("The heat equation supports only the `residual` stream.")
     if diffusivity <= 0.0:
         raise ValueError("`diffusivity` must be positive.")
     inputs = batch["inputs"]
     if inputs.ndim != 2 or inputs.shape[-1] != 2:
         raise ValueError("Heat-equation inputs must have shape `[samples, 2]` with columns `[t, x]`.")
 
-    def scalar_prediction(state: Any, time: jax.Array, position: jax.Array) -> jax.Array:
-        """Select the scalar temperature prediction at one coordinate.
+    def solutions(t: jax.Array, x: jax.Array) -> jax.Array:
+        """Evaluate the scalar temperature at one coordinate.
 
         Args:
-            state: Differentiable model parameter PyTree.
-            time: Scalar time coordinate.
-            position: Scalar spatial coordinate.
+            t: Scalar time coordinate.
+            x: Scalar spatial coordinate.
 
         Returns:
-            Scalar network prediction.
+            Model output 0 at the point `[t, x]`.
         """
-        return model_apply(state, jnp.stack((time, position)))[0]
+        return model_apply(model_state, jnp.stack((t, x)))[0]
 
-    value_and_time_derivative = value_and_jacobian(scalar_prediction, (1,))
-    second_spatial_derivative = hessian_diagonal(scalar_prediction, 2)
-
-    def point_residual(point: jax.Array) -> jax.Array:
+    def residual(t: jax.Array, x: jax.Array) -> jax.Array:
         """Evaluate the heat equation at one coordinate.
 
         Args:
-            point: Coordinate vector ordered as `[t, x]`.
+            t: Scalar time coordinate.
+            x: Scalar spatial coordinate.
 
         Returns:
             Scalar residual `du/dt - diffusivity * d2u/dx2`.
         """
-        _, (du_dt,) = value_and_time_derivative(model_state, point[0], point[1])
-        (d2u_dx2,) = second_spatial_derivative(model_state, point[0], point[1])
-        return du_dt - jnp.asarray(diffusivity, dtype=du_dt.dtype) * d2u_dx2
+        _, (du_dt,) = value_and_jacobian(solutions, 0)(t, x)
+        (d2u_dx2,) = hessian_diagonal(solutions, 1)(t, x)
+        return du_dt - diffusivity * d2u_dx2
 
-    residuals = jax.vmap(point_residual)(inputs)[:, None]
-    return ((residuals,),)
+    return jax.vmap(residual)(inputs[:, 0], inputs[:, 1])  # [samples]
 
 
 class HeatDataModule(PhiDataModule):

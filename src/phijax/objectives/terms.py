@@ -5,7 +5,15 @@ import jax
 import jax.numpy as jnp
 
 from phijax.equations.metadata import get_default_ntk_stream, get_residual_names
-from phijax.types import ModelApply, NamedBatches, ResidualFunction, ResidualGroup, ResidualGroups, ResidualStream
+from phijax.types import (
+    ModelApply,
+    NamedBatches,
+    ResidualFunction,
+    ResidualGroup,
+    ResidualGroups,
+    ResidualOutput,
+    ResidualStream,
+)
 
 
 class ResidualTerm:
@@ -37,17 +45,26 @@ class ResidualTerm:
                 omitted, names are formed as `batch_key/local_name` from metadata attached to `residual_fn` by
                 :func:`phijax.equations.residual_equation`.
             ntk_stream: Optional stream override. When omitted, the equation metadata selects `"residual"` or
-                `"output"`.
+                `"output"`. `"output"` requires an equation that declares it with `default_ntk_stream="output"`.
 
         Raises:
             TypeError: If `residual_fn` is not callable.
-            ValueError: If names, inferred equation metadata, `batch_key`, or `ntk_stream` are invalid.
+            ValueError: If names, inferred equation metadata, `batch_key`, or `ntk_stream` are invalid, or if
+                `ntk_stream` requests `"output"` from an equation that does not declare it.
         """
         if not callable(residual_fn):
             raise TypeError("`residual_fn` must be callable.")
-        resolved_stream = get_default_ntk_stream(residual_fn) if ntk_stream is None else ntk_stream
+        declared_stream = get_default_ntk_stream(residual_fn)
+        resolved_stream = declared_stream if ntk_stream is None else ntk_stream
         if resolved_stream not in ("residual", "output"):
             raise ValueError("`ntk_stream` must be either 'residual' or 'output'.")
+        # Only equations declaring `default_ntk_stream="output"` handle that stream, so residual-only equations can
+        # ignore `stream` instead of validating it themselves.
+        if resolved_stream == "output" and declared_stream != "output":
+            raise ValueError(
+                "`ntk_stream='output'` requires an equation decorated with "
+                "`residual_equation(..., default_ntk_stream='output')`."
+            )
         resolved_batch_key = _validate_name(batch_key)
         if names is None:
             resolved_names = tuple(f"{resolved_batch_key}/{name}" for name in get_residual_names(residual_fn))
@@ -136,22 +153,29 @@ class ResidualTerm:
         return _validate_residual_groups(groups, expected_count=len(self.loss_names))
 
 
-def _validate_residual_groups(groups: ResidualGroups, *, expected_count: int) -> ResidualGroups:
-    """Validate the static structure returned by an equation callable.
+def _validate_residual_groups(groups: ResidualOutput, *, expected_count: int) -> ResidualGroups:
+    """Normalize and validate the static structure returned by an equation callable.
+
+    A single array is one group with one residual. In a tuple, an array entry is a group with one residual.
 
     Args:
-        groups: Candidate nested residual groups.
+        groups: One residual array, or a tuple of residual arrays and residual groups.
         expected_count: Number of scalar loss names owned by the term.
 
     Returns:
-        Unchanged validated residual groups.
+        Validated residual groups, with every group as a tuple of arrays.
 
     Raises:
-        TypeError: If groups or their entries are not tuples.
+        TypeError: If the output is neither an array nor a tuple of arrays and residual tuples.
         ValueError: If the group count, group contents, or residual ranks are invalid.
     """
-    if not isinstance(groups, tuple) or any(not isinstance(group, tuple) for group in groups):
-        raise TypeError("`residual_fn` must return a tuple of non-empty residual tuples.")
+    if isinstance(groups, tuple):
+        entries: tuple[Any, ...] = groups
+    elif hasattr(groups, "ndim"):
+        entries = (groups,)
+    else:
+        raise TypeError("`residual_fn` must return an array, or a tuple of arrays and residual tuples.")
+    groups = tuple(entry if isinstance(entry, tuple) else (entry,) for entry in entries)
     if len(groups) != expected_count:
         raise ValueError(f"`residual_fn` returned {len(groups)} groups for {expected_count} configured loss names.")
     if any(not group for group in groups):

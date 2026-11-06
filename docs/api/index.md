@@ -33,6 +33,7 @@ The installed release is available as `phijax.__version__`.
 | `ModelApply`           | Explicit-state single-point model callable                            |
 | `ResidualGroup`        | Residual arrays reduced into one scalar loss                          |
 | `ResidualGroups`       | Residual groups aligned with static equation names                    |
+| `ResidualOutput`       | Equation return value: one array, or a tuple of arrays and groups     |
 | `ResidualStream`       | Literal `"residual"` or `"output"`                                    |
 | `ModelSummaryFunction` | Callable rendering an explicit model state                            |
 | `ResidualFunction`     | Configured equation callable consumed by an objective term            |

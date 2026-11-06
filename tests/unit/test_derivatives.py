@@ -114,3 +114,54 @@ def test_selective_derivatives_reject_nonscalar_selected_arguments() -> None:
 
     with pytest.raises(ValueError, match="scalar"):
         differentiated(jnp.ones(2, dtype=jnp.float32))
+
+
+def test_selective_derivatives_pass_gradients_to_a_closed_over_model_state() -> None:
+    """Verify derivatives of `u(x, y)` that closes over the model state, as equations write it, keep state gradients."""
+
+    def model_apply(scale: jax.Array, point: jax.Array) -> jax.Array:
+        """Apply the polynomial model to one stacked point.
+
+        Args:
+            scale: Scalar differentiable model parameter.
+            point: Coordinates `[x, y]`.
+
+        Returns:
+            Polynomial output vector.
+        """
+        return _vector_function(scale, point[0], point[1])
+
+    x = jnp.asarray(3.0, dtype=jnp.float32)
+    y = jnp.asarray(4.0, dtype=jnp.float32)
+
+    def derivatives(scale: jax.Array) -> jax.Array:
+        """Evaluate output 1 and its selected derivatives with the state closed over.
+
+        Args:
+            scale: Scalar differentiable model parameter.
+
+        Returns:
+            Stacked `[u, du_dx, du_dy, d2u_dy2]`.
+        """
+
+        def u(x_coord: jax.Array, y_coord: jax.Array) -> jax.Array:
+            """Evaluate model output 1 at one point.
+
+            Args:
+                x_coord: Scalar first coordinate.
+                y_coord: Scalar second coordinate.
+
+            Returns:
+                Scalar output `scale * x * y + y**3`.
+            """
+            return model_apply(scale, jnp.stack((x_coord, y_coord)))[1]
+
+        value, (du_dx, du_dy) = value_and_jacobian(u, (0, 1))(x, y)
+        (d2u_dy2,) = hessian_diagonal(u, 1)(x, y)
+        return jnp.stack((value, du_dx, du_dy, d2u_dy2))
+
+    scale = jnp.asarray(2.0, dtype=jnp.float32)
+    np.testing.assert_allclose(derivatives(scale), [88.0, 8.0, 54.0, 24.0])
+    # u = scale * x * y + y**3, du_dx = scale * y, and du_dy = scale * x + 3 * y**2 depend on `scale`, so the gradient
+    # of their sum is x * y + y + x.
+    np.testing.assert_allclose(jax.grad(lambda state: jnp.sum(derivatives(state)))(scale), 19.0)
