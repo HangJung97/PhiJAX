@@ -114,6 +114,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   counts to its Trainer's `max_steps`. Remove `total=...` from constructors and `total: ${trainer.max_steps}` from
   Hydra callback configs.
 
+- `TrainerContext.callback_states` is removed. `ModelCheckpoint` reads callback states from its connected Trainer
+  when it saves, so the field was never needed.
+
 ### Changed
 
 - Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's
