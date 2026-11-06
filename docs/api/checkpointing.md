@@ -105,7 +105,8 @@ Training accepts `ckpt_path=None` for fresh initialization. Standalone predictio
 explicit `step` chooses an exact committed step; `None` selects the latest.
 
 `Trainer.fit(..., ckpt_path=...)` restores the full state by default. Set `weights_only=True` to load only model
-weights, or set `ckpt_path="last"` to use the latest checkpoint from the configured callback.
+weights, or set `ckpt_path="last"` to use the latest checkpoint from the configured callback; while none exists, `fit()`
+warns and starts fresh. Prediction needs weights, so `predict(..., ckpt_path="last")` raises instead.
 `Trainer.predict(module, ckpt_path=...)` builds the module's model with the checkpoint's input statistics and periods
 and restores only its model state. Use `restore_checkpoint()` directly only when managing state outside the Trainer.
 

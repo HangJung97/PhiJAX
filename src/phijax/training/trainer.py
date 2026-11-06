@@ -747,19 +747,22 @@ class Trainer:
         self,
         ckpt_path: str | Path,
         step: int | None,
-    ) -> Generator[tuple[CheckpointIO, int], None, None]:
+        *,
+        allow_missing: bool = False,
+    ) -> Generator[tuple[CheckpointIO, int | None], None, None]:
         """Open the backend of an explicit checkpoint root or of the configured callback, and close it afterwards.
 
         Args:
             ckpt_path: Explicit checkpoint root, or `"last"` for the configured `ModelCheckpoint` backend.
             step: Exact checkpoint step, or `None` for the latest committed step.
+            allow_missing: Whether a backend without committed checkpoints yields `None` instead of raising.
 
         Yields:
-            Open backend and the resolved checkpoint step.
+            Open backend and the resolved checkpoint step, or `None` when `allow_missing` finds no checkpoint.
 
         Raises:
             ValueError: If `ckpt_path` is empty, `step` is invalid, or `"last"` has no configured `ModelCheckpoint`.
-            FileNotFoundError: If the backend contains no committed checkpoint.
+            FileNotFoundError: If the backend contains no committed checkpoint and `allow_missing` is false.
         """
         if ckpt_path == "last":
             if self.checkpoint_callback is None:
@@ -774,7 +777,7 @@ class Trainer:
         try:
             checkpoint_io.open()
             resolved_step = checkpoint_io.latest_step if step is None else step
-            if resolved_step is None:
+            if resolved_step is None and not allow_missing:
                 raise FileNotFoundError(f"No committed checkpoint exists below `{ckpt_path}`.")
             yield checkpoint_io, resolved_step
         finally:
@@ -791,6 +794,9 @@ class Trainer:
     ) -> tuple[TrainState, Mapping[str, Mapping[str, Any]] | None]:
         """Restore an explicit checkpoint path or the configured callback's latest state.
 
+        As in Lightning, `"last"` without a committed checkpoint warns and returns `state`, so one configuration can
+        start a run and also resume it after preemption.
+
         Args:
             state: Fresh state or restore template.
             ckpt_path: Explicit checkpoint root, `"last"`, or `None`.
@@ -804,7 +810,7 @@ class Trainer:
 
         Raises:
             ValueError: If restore options are inconsistent or checkpointing is unavailable.
-            FileNotFoundError: If the selected backend has no committed checkpoint.
+            FileNotFoundError: If an explicit checkpoint root has no committed checkpoint.
         """
         if ckpt_path is None:
             if weights_only or ckpt_step is not None:
@@ -812,7 +818,16 @@ class Trainer:
             return state, None
         if ckpt_path == "last" and ckpt_step is not None:
             raise ValueError("`ckpt_path='last'` cannot be combined with an explicit `ckpt_step`.")
-        with self._checkpoint_backend(ckpt_path, ckpt_step) as (checkpoint_io, step):
+        with self._checkpoint_backend(ckpt_path, ckpt_step, allow_missing=ckpt_path == "last") as (checkpoint_io, step):
+            if step is None:
+                if self.strategy.is_global_zero:
+                    warnings.warn(
+                        "`ckpt_path='last'` is set, but no checkpoint has been saved yet, so `fit()` starts from fresh "
+                        "state.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                return state, None
             if weights_only:
                 return replace(state, model_state=checkpoint_io.restore_model_state(state.model_state, step)), None
             restored = checkpoint_io.restore(state, step)

@@ -65,7 +65,9 @@ See [Loss balancers](balancers.md) for update timing, diagnostic batches, and lo
 ## Resume or load weights
 
 Pass an explicit checkpoint path to restore a complete training state. Add `ckpt_step` to select one saved step. With
-a configured `ModelCheckpoint`, `ckpt_path="last"` selects its latest checkpoint.
+a configured `ModelCheckpoint`, `ckpt_path="last"` selects its latest checkpoint. Before the first checkpoint exists,
+`"last"` warns and starts from fresh state, as in Lightning, so one configuration both starts a run and resumes it
+after preemption or a SLURM requeue. An explicit path without checkpoints still raises `FileNotFoundError`.
 
 ```python
 result = trainer.fit(
