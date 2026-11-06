@@ -40,8 +40,9 @@ JAX_PLATFORMS=cpu python examples/quickstart.py
 
 For the remaining commands, pip users can replace `uv run --no-sync python` with `python` in the activated venv.
 
-The environment variable makes the entire process strictly CPU-only. `--accelerator cpu` selects CPU for Trainer-owned
-state and batches, but does not change the default backend used by arrays created before `Trainer.fit()`.
+The environment variable makes the entire process strictly CPU-only. `--accelerator cpu` runs `Trainer.fit()` and
+`Trainer.predict()` on the CPU, but JAX still initializes a visible GPU. See
+[accelerator and JAX environment variables](../api/strategies.md#accelerator-and-jax-environment-variables).
 
 The final line reports the completed optimizer steps, fitting time, relative L2 error, and maximum absolute error on
 an ordered grid. The demo computes both errors with PhiJAX's `regression_metrics()` function. Values may vary across

@@ -232,6 +232,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   from Adam to SGD.
 - `Trainer(precision="64-true")` enables JAX x64 itself. Before, it raised `ValueError` unless the caller had run
   `configure_precision()` first, so a Hydra config with `precision: 64-true` could not train.
+- `fit()` and `predict()` run with the strategy's root device as the JAX default device, so arrays JAX creates
+  implicitly during a task land on the Trainer's device. Previously `accelerator="cpu"` on a GPU machine split
+  placement across two devices and copied data every step.
 
 ## [0.2.0b5] - 2026-09-11
 

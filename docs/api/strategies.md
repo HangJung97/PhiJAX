@@ -15,6 +15,21 @@ rows of the batch, the gradients are averaged over all devices, and every copy o
 The mesh is one-dimensional and built with `jax.make_mesh` and `AxisType.Auto`, so `jax.jit` inserts the gradient
 all-reduce. Multi-process support is experimental and does not provide full Lightning DDP parity.
 
+## Accelerator and JAX environment variables
+
+`fit()` and `predict()` run with the strategy's root device as the JAX default device. State and batches are placed
+explicitly, and arrays that JAX creates implicitly during the task, such as a Python number turned into an array, land
+on the same device. `accelerator` therefore decides placement for the whole task:
+
+| Setting             | Effect                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| `accelerator`       | Device of the state, batches, and implicitly created arrays during `fit()` and `predict()` |
+| `JAX_PLATFORMS=cpu` | Hides every other platform, so `accelerator="gpu"` raises instead of training              |
+
+`accelerator="cpu"` on a GPU machine trains entirely on the CPU, but JAX still starts the CUDA backend, which holds
+about 100 MB of GPU memory. Also set `JAX_PLATFORMS=cpu` to skip GPU initialization. The Trainer's startup banner,
+`GPU available: ..., used: ...`, shows which device a run actually uses.
+
 ## Run on several GPUs of one machine
 
 Select more than one device. No distributed setup is needed:
