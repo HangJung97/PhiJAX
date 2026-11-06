@@ -9,49 +9,62 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0b6] - 2026-11-06
+
 ### Added
 
 - `ModelCheckpoint` accepts `monitor="step"` to rank checkpoints by training step.
+  ([#51](https://github.com/HangJung97/PhiJAX/pull/51))
 - The terminal checkpoint from `save_last` or `save_on_exception` is replaced by the next one, including across
-  resumed fits, instead of accumulating.
+  resumed fits, instead of accumulating. ([#51](https://github.com/HangJung97/PhiJAX/pull/51))
 - `TrainState.input_statistics` stores the model's input normalization statistics as `InputStatistics`, so checkpoints
-  keep the normalization a model was trained with.
+  keep the normalization a model was trained with. ([#53](https://github.com/HangJung97/PhiJAX/pull/53))
 - `load_input_statistics()` reads the statistics stored in a checkpoint. Return it from a DataModule's
   `input_statistics()` to start transfer learning from the source statistics.
+  ([#53](https://github.com/HangJung97/PhiJAX/pull/53))
 - `BasePhiModule.input_statistics`, `input_periods`, and `bind_inputs()` let the Trainer rebind a module to restored
-  statistics and periods.
+  statistics and periods. ([#57](https://github.com/HangJung97/PhiJAX/pull/57))
 - `PhiDataModule.input_periods()` declares physical periods of periodic input axes, and `TrainState.input_periods`
   stores them with checkpoints. Resume and prediction use the stored periods; transfer learning uses the target
   DataModule's; `periodic_features_kwargs['periods']` overrides both.
+  ([#57](https://github.com/HangJung97/PhiJAX/pull/57))
 - `ExactNTKBalancer(kernel_size=...)` accepts `"all"` to compute the NTK on every row of a finite pool, and a mapping
   that sets the sample count per objective batch key, such as `{"pde": 1024, "boundary": "all"}`.
+  ([#63](https://github.com/HangJung97/PhiJAX/pull/63))
 - `ExactNTKBalancer(resample=True)` draws new diagnostic batches for every update instead of once per fit. Custom
   balancers request the same behavior with `BalancerUpdatePlan(resample=True)`.
+  ([#63](https://github.com/HangJung97/PhiJAX/pull/63))
 - `Trainer.should_stop` lets callbacks request a clean stop, as in Lightning. Returning `True` from
-  `on_train_batch_end()` still works and sets the flag.
+  `on_train_batch_end()` still works and sets the flag. ([#64](https://github.com/HangJung97/PhiJAX/pull/64))
 - `EarlyStopping` accepts `check_finite` and `check_every_n_steps`, and stores its progress in checkpoints, so a
   resumed fit stops at the same step as an uninterrupted one. Progress stored for a different `monitor` or `mode` is
   skipped with a warning, and a changed `patience` keeps the configured value with a warning.
+  ([#64](https://github.com/HangJung97/PhiJAX/pull/64))
 - `Trainer.predict()` runs across several JAX processes. Each process predicts an equal share of every prediction
   batch, and the outputs are gathered so every process returns the complete predictions in batch order. With several
   devices, prediction chunks no longer need to be divisible by the device count; they are padded instead.
+  ([#76](https://github.com/HangJung97/PhiJAX/pull/76))
 - The `all` extra installs every optional feature: `hydra`, `io`, `tensorboard`, and `wandb`. Combine it with at most
-  one accelerator extra, such as `phijax[all,cuda13]`.
+  one accelerator extra, such as `phijax[all,cuda13]`. ([#86](https://github.com/HangJung97/PhiJAX/pull/86))
 - `load_model_state()` and `OrbaxCheckpointIO.restore_model_state()` restore only a checkpoint's model state, without
   an optimizer or balancer template. `OrbaxCheckpointIO.restore_input_periods()` reads the stored input periods.
+  ([#91](https://github.com/HangJung97/PhiJAX/pull/91))
 - `Trainer.predict(module, ckpt_path=...)` predicts with a module blueprint, as Lightning's `predict(model, ckpt_path)`
   does. The Trainer builds the model with the checkpoint's input statistics and periods and restores only the model
   state, so prediction needs no optimizer, balancer, seed, or fit-stage data. For schema-2 checkpoints, which store
   neither, it takes them from the DataModule's fit stage with a warning. Reading them directly raises
-  `LegacyCheckpointError`.
+  `LegacyCheckpointError`. ([#92](https://github.com/HangJung97/PhiJAX/pull/92))
 - `PhiDataModule(batch_sizes=...)` enables default `train_batch_source()` and `predict_batch_source()` hooks, and
   `prediction_pool()` returns the pool named `predict`, chunked by `batch_sizes["predict"]`. A DataModule that only
-  builds pools overrides only `setup()`.
+  builds pools overrides only `setup()`. ([#96](https://github.com/HangJung97/PhiJAX/pull/96))
 - `ChunkedPredictionSource(pool, "all")` predicts the whole pool in one chunk, split over the devices.
+  ([#96](https://github.com/HangJung97/PhiJAX/pull/96))
 - An equation with one loss may return its residual array directly, and a tuple entry may be an array instead of a
   one-array group, so `return residual` replaces `return ((residual[:, None],),)`.
+  ([#98](https://github.com/HangJung97/PhiJAX/pull/98))
 - `HostPool.from_grid(inputs, targets, mask=...)` builds a pool from dense `[*grid, features]` arrays and records the
   grid, so `reconstruct_predictions()` returns `[*grid, outputs]` with `NaN` outside the optional mask.
+  ([#97](https://github.com/HangJung97/PhiJAX/pull/97))
 
 ### Breaking changes
 
@@ -64,26 +77,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     - To keep the latest `k` checkpoints, replace `max_to_keep=k` with
       `ModelCheckpoint(..., monitor="step", mode="max", save_top_k=k)`. See the
       [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#checkpoint-retention).
+      ([#51](https://github.com/HangJung97/PhiJAX/pull/51))
 
 - `Trainer(max_steps=...)` is now the global optimizer step at which training stops, as in Lightning. A fit resumed
   from step `N` runs `max_steps - N` updates instead of `max_steps` more, and logs and progress bars follow the global
   step. Resume with `max_steps = N + extra` to train `extra` more steps. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#global-max_steps).
+  ([#62](https://github.com/HangJung97/PhiJAX/pull/62))
 
 - `EarlyStopping` follows Lightning's callback: it checks metrics in `on_train_metrics()`, so it sees module-logged and
   callback metrics, and stops once `wait_count >= patience` instead of `> patience`. `best` and `bad_checks` are
   renamed `best_score` and `wait_count`, and a NaN or infinite metric stops training immediately by default. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#early-stopping).
+  ([#64](https://github.com/HangJung97/PhiJAX/pull/64))
 
 - Periodic features use physical periods of the physical coordinate, so input normalization no longer affects periodic
   axes. `PeriodicFeatures` takes `periods={axis: T}` instead of `axes` and `frequencies`, model factories receive
   `input_periods`, and `bind_input_statistics()` is now `bind_inputs()`. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#periodic-features-in-physical-units).
+  ([#57](https://github.com/HangJung97/PhiJAX/pull/57))
 
 - `ChunkedPredictionSource` batches carry their padding mask as `valid_predict_mask` instead of `mask`, so a pool can
   keep its own `mask` field. Code reading `batch["mask"]` in `predict_step()` must read `batch["valid_predict_mask"]`.
   A prediction pool with an auxiliary array named `valid_predict_mask` raises `ValueError`; previously a `mask` field
-  was silently replaced by the padding mask.
+  was silently replaced by the padding mask. ([#72](https://github.com/HangJung97/PhiJAX/pull/72))
 
 - Training batch sizes, NTK diagnostic sizes, and prediction chunk sizes count rows per device, as in Lightning:
   `NamedBatchSource` batch sizes, `ExactNTKBalancer` `kernel_size`, and the `ChunkedPredictionSource` chunk size. The
@@ -91,25 +108,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `for_devices()` method, so sizes no longer need to divide by the device count. Single-device runs are unchanged; to
   keep the same global batch on `n` devices, divide each size by `n`. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#per-device-batch-sizes).
+  ([#79](https://github.com/HangJung97/PhiJAX/pull/79), [#81](https://github.com/HangJung97/PhiJAX/pull/81))
 
 - Training and NTK batches drawn with `"all"` are replicated on every device instead of split by rows, so a pool no
   longer needs to divide by the device count, and with several processes the pool counts once instead of once per
   process. The loss is unchanged. `Strategy.place_batch()` takes a `replicated` argument naming the batches to
-  replicate; the Trainer passes it only when a batch uses `"all"`.
+  replicate; the Trainer passes it only when a batch uses `"all"`. ([#79](https://github.com/HangJung97/PhiJAX/pull/79))
 
 - `hydra-core`, `omegaconf`, and `rootutils` move to the `hydra` extra, and `h5py`, `mat73`, and `scipy` to the `io`
   extra. Install `phijax[hydra,io]` for `phijax.integrations`, the Hydra entrypoint utilities, and MATLAB or HDF5
   files. Without an extra, these features raise `ModuleNotFoundError` naming the extra to install. Training, NPZ
   files, and prediction artifacts need neither. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#optional-hydra-and-io-extras).
+  ([#86](https://github.com/HangJung97/PhiJAX/pull/86))
 
 - `CheckpointIO.restore_weights()` and `OrbaxCheckpointIO.restore_weights()` are removed. Use
   `replace(state, model_state=checkpoint_io.restore_model_state(state.model_state))`, or `load_model_state()` outside a
   backend. Custom `CheckpointIO` backends implement `restore_model_state()`, `restore_input_statistics()`, and
-  `restore_input_periods()` instead.
+  `restore_input_periods()` instead. ([#91](https://github.com/HangJung97/PhiJAX/pull/91))
 
 - `Trainer.predict_state()` is removed. Use `predict(fit_result, ...)` in memory, or `predict(module, ckpt_path=...)`
-  from a checkpoint without building a state template.
+  from a checkpoint without building a state template. ([#92](https://github.com/HangJung97/PhiJAX/pull/92))
 
 - The Trainer has two public tasks, `fit()` and `predict()`, as in Lightning. `Trainer.fit_state()`,
   `initialize_state()`, `compile_train_step()`, `load_weights()`, `latest_checkpoint()`, `TrainingPlan`, and
@@ -117,130 +136,151 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   from `phijax.training`. A custom `BasePhiModule` trains with `fit()` by overriding the new `configure_model()` hook,
   which replaces `PhiModule.prepare_model()`. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#two-trainer-tasks).
+  ([#93](https://github.com/HangJung97/PhiJAX/pull/93))
 
 - `ProgressBar`, `TQDMProgressBar`, and `RichProgressBar` no longer take `total`. As in Lightning, a progress bar
   counts to its Trainer's `max_steps`. Remove `total=...` from constructors and `total: ${trainer.max_steps}` from
-  Hydra callback configs.
+  Hydra callback configs. ([#89](https://github.com/HangJung97/PhiJAX/pull/89))
 
 - `TrainerContext.callback_states` is removed. `ModelCheckpoint` reads callback states from its connected Trainer
-  when it saves, so the field was never needed.
+  when it saves, so the field was never needed. ([#95](https://github.com/HangJung97/PhiJAX/pull/95))
 
 - The Trainer owns the DataModule stage, as Lightning's data connector does. `PhiDataModule.prepare_stage()`,
   `teardown_stage()`, and `prepared_stage` are removed; call `setup()` and `teardown()` to inspect pools outside the
   Trainer. Because `prediction_pool()` now returns a pool named `predict`, the default `normalization_pools()` excludes
   that pool. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#datamodule-defaults).
+  ([#96](https://github.com/HangJung97/PhiJAX/pull/96))
 
 - `build_array_pools()`, `create_sampler()`, and `SamplerName` are removed, and `phijax.data.samplers.sample_pool()`
   is private. Build pools with NumPy and `HostPool.from_grid()`, and construct samplers directly. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#grid-pools-and-samplers).
+  ([#97](https://github.com/HangJung97/PhiJAX/pull/97))
 
 - `ResidualTerm(..., ntk_stream="output")` raises at construction unless the equation declares
   `residual_equation(..., default_ntk_stream="output")`. Residual-only equations no longer need to reject the
-  `"output"` stream themselves.
+  `"output"` stream themselves. ([#98](https://github.com/HangJung97/PhiJAX/pull/98))
 
 - Built-in equations return arrays instead of one-array groups, and are annotated as `ResidualOutput`. A direct call
   returns `residual` for one loss and a tuple of `[samples, 1]` arrays for each Navier--Stokes component, so index
   `result` or `result[i]` instead of `result[0][0]` or `result[i][0]`. `phase_wrapped_fidelity` still returns its
   `((cosine, sine),)` group. Objectives built with `ResidualTerm` are unaffected.
+  ([#99](https://github.com/HangJung97/PhiJAX/pull/99))
 
 - `phijax.metrics` moved to `phijax.core.outputs`, next to the module contract that returns `TrainingOutput`. Import
   `TrainingOutput` from `phijax` or `phijax.training` as before, or from `phijax.core`.
+  ([#103](https://github.com/HangJung97/PhiJAX/pull/103))
 
 ### Changed
 
 - Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's
   input statistics with a warning. PhiJAX 0.2.0b5 cannot read schema-3 checkpoints.
+  ([#53](https://github.com/HangJung97/PhiJAX/pull/53))
 - The Trainer runs `ModelCheckpoint` after all other callbacks, as in Lightning, so each checkpoint stores the state
-  every other callback reached at that step.
+  every other callback reached at that step. ([#64](https://github.com/HangJung97/PhiJAX/pull/64))
 - The first `Ctrl+C` or `SIGTERM` during fitting now lets the current step finish before interrupting, so the
   returned state and the `save_on_exception` checkpoint always match a completed step. A repeated signal still stops
-  immediately.
+  immediately. ([#67](https://github.com/HangJung97/PhiJAX/pull/67))
 - The Trainer calls `PhiDataModule.prepare_data()` only on global process zero. Other processes wait at the new
   `Strategy.barrier()` and then run `setup()`, so prepared files must be on storage every host can read.
   Single-process runs are unchanged. See
   [multi-process runs](https://hangjung97.github.io/PhiJAX/api/data/#multi-process-runs).
+  ([#69](https://github.com/HangJung97/PhiJAX/pull/69))
 - `ModelCheckpoint` always saves the last completed step when a fit stops on `SIGTERM`, as on preemption, even without
-  `save_on_exception=True`.
+  `save_on_exception=True`. ([#75](https://github.com/HangJung97/PhiJAX/pull/75))
 - `phijax`, `phijax.data`, `phijax.evaluation`, and `phijax.utils` import their public names on first use, so
   `import phijax` no longer loads JAX. NumPy-only modules, such as `phijax.data.pools` and `phijax.evaluation`, load
-  without JAX.
+  without JAX. ([#85](https://github.com/HangJung97/PhiJAX/pull/85))
 - `Trainer.fit(..., ckpt_path="last")` warns and starts from fresh state when no checkpoint has been saved yet, as in
   Lightning, instead of raising `FileNotFoundError`. One Hydra config can then pass `ckpt_path=last` for both the first
   run and every resume. An explicit checkpoint path, and `predict(..., ckpt_path="last")`, still raise.
+  ([#94](https://github.com/HangJung97/PhiJAX/pull/94))
 - `NamedBatchSource` draws a step's batches in one compiled call instead of one dispatch per array operation. On a
   GPU, this makes the quickstart about 3.8 times faster; batches are unchanged bit for bit. Custom
   `BatchSampler.sample()` implementations must be traceable by `jax.jit`.
+  ([#100](https://github.com/HangJung97/PhiJAX/pull/100))
 - `Trainer.predict()` compiles `predict_step()` once per call instead of running it eagerly for every chunk, which
   makes prediction several times faster on CPU and much faster on GPU. Custom `predict_step()` overrides must be
-  traceable by `jax.jit`.
+  traceable by `jax.jit`. ([#102](https://github.com/HangJung97/PhiJAX/pull/102))
+- Updated JAX to 0.12.0.1, Flax to 0.12.12, and Orbax Checkpoint to 0.12.9.
+  ([#43](https://github.com/HangJung97/PhiJAX/pull/43), [#78](https://github.com/HangJung97/PhiJAX/pull/78))
+- Updated `hydra-core` to 1.3.8, now in the `hydra` extra. ([#42](https://github.com/HangJung97/PhiJAX/pull/42))
+- Updated the optional W&B dependency to `>=0.31,<0.32`. ([#49](https://github.com/HangJung97/PhiJAX/pull/49))
 
 ### Fixed
 
 - Fixed a crash with `FileNotFoundError` when monitored top-k retention and Orbax `max_to_keep` deleted the same
   checkpoints. Ranking now always matches the stored checkpoints, and restored ranking state drops steps that are no
-  longer stored.
+  longer stored. ([#51](https://github.com/HangJung97/PhiJAX/pull/51))
 - Top-k displacement no longer deletes the checkpoint at `last_model_path`.
+  ([#51](https://github.com/HangJung97/PhiJAX/pull/51))
 - `ModelCheckpoint` deletes a displaced checkpoint only after the next checkpoint write has committed, so an
   interrupted asynchronous write never removes the only valid checkpoint.
+  ([#51](https://github.com/HangJung97/PhiJAX/pull/51))
 - `OrbaxCheckpointIO.delete` now ignores steps that are not stored.
+  ([#51](https://github.com/HangJung97/PhiJAX/pull/51))
 - A full resume and prediction from a checkpoint now use the input statistics the model was trained with. Previously
   they were recomputed from the current DataModule, which silently changed the model if the data had changed.
   Transfer learning with `weights_only=True` still uses the current DataModule's statistics.
+  ([#53](https://github.com/HangJung97/PhiJAX/pull/53))
 - Resuming with a different set of callbacks no longer raises. Following Lightning, added callbacks start fresh, and
   stored state for a removed stateful callback is skipped with a warning. Toggling stateless callbacks, such as the
-  progress bar or model summary, neither fails nor warns.
+  progress bar or model summary, neither fails nor warns. ([#54](https://github.com/HangJung97/PhiJAX/pull/54))
 - `OrbaxCheckpointIO` no longer makes Orbax log `Item "default" ... could not be restored` on every checkpoint
-  metadata read, such as each restore.
+  metadata read, such as each restore. ([#55](https://github.com/HangJung97/PhiJAX/pull/55))
 - `spherical_navier_stokes` now preserves the sign of `sin(th)` when clamping it, so polar angles outside `[0, pi]`
-  give correct residuals.
+  give correct residuals. ([#59](https://github.com/HangJung97/PhiJAX/pull/59))
 - Fidelity and boundary equations now raise `ValueError` for out-of-range `output_indices` or `target_indices`
-  instead of producing NaN residuals.
+  instead of producing NaN residuals. ([#60](https://github.com/HangJung97/PhiJAX/pull/60))
 - A resumed fit now draws the same exact-NTK diagnostic batches as an uninterrupted run. Previously the batches
-  depended on the step the fit resumed from.
+  depended on the step the fit resumed from. ([#63](https://github.com/HangJung97/PhiJAX/pull/63))
 - A failing `on_exception`, logger finalization, or teardown hook no longer replaces the original training or
   prediction error, and no longer skips the remaining cleanup. The failure is logged and attached to the original
-  error as a note.
+  error as a note. ([#66](https://github.com/HangJung97/PhiJAX/pull/66))
 - `ExactNTKBalancer` and `GradNormBalancer` keep their previous weights when an update sees an infinite NTK trace or
   gradient norm. Previously one infinite value turned the weights into `inf` or `nan` for the rest of training.
+  ([#68](https://github.com/HangJung97/PhiJAX/pull/68))
 - `save_prediction_artifact()` and `reconstruct_predictions()` reject a pool whose `flat_index` repeats an index.
   Previously the save kept only the last of the repeated rows and wrote an artifact that `load_prediction_artifact()`
   rejects. Artifact files are now written to a temporary file and renamed into place, so an interrupted save keeps
-  the previous file.
+  the previous file. ([#71](https://github.com/HangJung97/PhiJAX/pull/71))
 - `load_arrays()` returns classic (pre-v7.3) MATLAB structs as nested dictionaries, as it already did for v7.3 files,
   so nested keys such as `get_array(arrays, "results/velocity")` work. Previously such structs loaded as SciPy
-  `mat_struct` objects and nested keys raised `KeyError`.
+  `mat_struct` objects and nested keys raised `KeyError`. ([#73](https://github.com/HangJung97/PhiJAX/pull/73))
 - `HostPool` rejects auxiliary arrays named `inputs` or `targets`, which previously replaced the pool's own arrays in
   sampled batches, and reports 0-d auxiliary arrays with a clear `ValueError` instead of an `IndexError`. The
   `uniform_domain` sampler generates `float32` coordinates from `float64` pool inputs without JAX truncation warnings
-  unless 64-bit mode is enabled.
+  unless 64-bit mode is enabled. ([#74](https://github.com/HangJung97/PhiJAX/pull/74))
 - Multi-process `DataParallelStrategy` fits now run. Previously they failed before the first step because state and
   PRNG keys were placed with `jax.device_put` on devices of other processes. Each process now samples different rows
   through the new `Strategy.process_key()`, `devices` counts or indexes each process's local devices, and fitting
   raises `ValueError` when the starting state differs between processes. A stop requested by any process stops every
   process after the same step: `trainer.should_stop` and `SIGINT` are combined with the new
   `Strategy.reduce_boolean_decisions()`, and `SIGTERM` uses JAX's preemption sync step. A two-process CPU integration
-  test covers fitting, resuming, and each stop request.
+  test covers fitting, resuming, and each stop request. ([#75](https://github.com/HangJung97/PhiJAX/pull/75))
 - `ExactNTKBalancer` averages each term's NTK over all rows of the batches that term reads. With a `kernel_size`
   mapping of different sizes, every term was mapped over all diagnostic batches together: the default
   `kernel_chunk_size=1` silently kept only as many rows as the alphabetically first batch, and other settings raised
   an error. `BasePhiModule.stream_batch_keys()` and `CompositeObjective.stream_batch_keys()` report the batches of
   each stream; a stream reading batches of different sizes raises `ValueError`.
+  ([#80](https://github.com/HangJung97/PhiJAX/pull/80))
 - `ExactNTKBalancer` evaluates each device's own diagnostic rows in parallel. Before, the default
   `kernel_chunk_size=1` made XLA gather every diagnostic row onto every device, so each device computed the whole
-  diagnostic batch.
+  diagnostic batch. ([#81](https://github.com/HangJung97/PhiJAX/pull/81))
 - `pre_hydra_routine()` takes a `search_from` path, and entrypoints should pass their own `__file__`. It used to
   search for the project root from PhiJAX's installed source file. That found the right root only when PhiJAX was
   installed in a virtual environment inside the project. An editable PhiJAX checkout exported its own root, and an
   environment outside the project raised `FileNotFoundError`. The default search now starts in the working directory.
+  ([#87](https://github.com/HangJung97/PhiJAX/pull/87))
 - `Trainer.fit(..., weights_only=True)` reads only the model state. Before, it restored the whole state first, so it
   raised `ValueError` whenever the optimizer or balancer differed from the checkpoint's, for example after switching
-  from Adam to SGD.
+  from Adam to SGD. ([#91](https://github.com/HangJung97/PhiJAX/pull/91))
 - `Trainer(precision="64-true")` enables JAX x64 itself. Before, it raised `ValueError` unless the caller had run
   `configure_precision()` first, so a Hydra config with `precision: 64-true` could not train.
+  ([#89](https://github.com/HangJung97/PhiJAX/pull/89))
 - `fit()` and `predict()` run with the strategy's root device as the JAX default device, so arrays JAX creates
   implicitly during a task land on the Trainer's device. Previously `accelerator="cpu"` on a GPU machine split
-  placement across two devices and copied data every step.
+  placement across two devices and copied data every step. ([#101](https://github.com/HangJung97/PhiJAX/pull/101))
 
 ## [0.2.0b5] - 2026-09-11
 
@@ -386,4 +426,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [0.2.0b3]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b3
 [0.2.0b4]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b4
 [0.2.0b5]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b5
-[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b5...HEAD
+[0.2.0b6]: https://github.com/HangJung97/PhiJAX/releases/tag/v0.2.0b6
+[unreleased]: https://github.com/HangJung97/PhiJAX/compare/v0.2.0b6...HEAD
