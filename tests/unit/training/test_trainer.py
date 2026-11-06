@@ -50,7 +50,7 @@ from phijax.training import (
     build_training_plan,
 )
 from phijax.training.connectors.signal_connector import _SignalConnector
-from phijax.types import ArrayMapping, NamedBatches
+from phijax.types import ArrayMapping, InputStatistics, NamedBatches, ResolvedInputPeriods
 
 
 class _RecordingCallback(Callback):
@@ -747,19 +747,43 @@ class _MemoryCheckpointIO:
         self.restore_steps.append(step)
         return self.restored_state
 
-    def restore_weights(self, target: Any, step: int | None = None) -> TrainState:
-        """Record a weights-only restore and return the configured state.
+    def restore_model_state(self, target: Any, step: int | None = None) -> Any:
+        """Record a model-only restore and return the configured model state.
 
         Args:
-            target: Fresh target state.
+            target: Model-state template.
             step: Requested checkpoint step.
 
         Returns:
-            Configured restored state.
+            Model state of the configured restored state.
         """
         del target
         self.weight_steps.append(step)
-        return self.restored_state
+        return self.restored_state.model_state
+
+    def restore_input_statistics(self, step: int | None = None) -> InputStatistics | None:
+        """Return the input statistics of the configured restored state.
+
+        Args:
+            step: Requested checkpoint step.
+
+        Returns:
+            Configured input statistics.
+        """
+        del step
+        return self.restored_state.input_statistics
+
+    def restore_input_periods(self, step: int | None = None) -> ResolvedInputPeriods | None:
+        """Return the input periods of the configured restored state.
+
+        Args:
+            step: Requested checkpoint step.
+
+        Returns:
+            Configured input periods.
+        """
+        del step
+        return self.restored_state.input_periods
 
     def restore_callback_states(self, step: int | None = None) -> dict[str, Mapping[str, Any]]:
         """Return configured persistent callback state.
@@ -2841,7 +2865,9 @@ def test_trainer_routes_restore_and_close_through_model_checkpoint() -> None:
     assert requested_batch_steps == [4]
     assert checkpoint_io.weight_steps == [3]
     assert int(result.state.step) == 5
-    assert loaded is restored_state
+    # A weights-only load replaces only the model state and keeps the fresh run state.
+    assert loaded.model_state is restored_state.model_state
+    assert int(loaded.step) == 0
     assert checkpoint_io.closed is True
 
 

@@ -138,6 +138,21 @@ model_checkpoint:
     directory: ${paths.output_dir}/checkpoints
 ```
 
+### Model-only restore
+
+From PhiJAX 0.2.0b6, weights-only restores read only the model state, so the optimizer and balancer may differ from
+the checkpoint's. `CheckpointIO.restore_weights()` is replaced by `restore_model_state()`, which takes a model-state
+template instead of a full state.
+
+| PhiJAX 0.2.0b5 and earlier                | PhiJAX 0.2.0b6 and later                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `checkpoint_io.restore_weights(state)`    | `replace(state, model_state=checkpoint_io.restore_model_state(state.model_state))`         |
+| Custom `CheckpointIO.restore_weights()`   | Implement `restore_model_state()`, `restore_input_statistics()`, `restore_input_periods()` |
+| Weights-only fit with a changed optimizer | Works; only the model must match the checkpoint                                            |
+
+Outside the Trainer, `load_model_state(ckpt_path, state.model_state)` opens the checkpoint, restores the model
+state, and closes it.
+
 ### Global `max_steps`
 
 From PhiJAX 0.2.0b6, `Trainer(max_steps=...)` is the global optimizer step at which training stops, as in Lightning.

@@ -907,7 +907,7 @@ class Trainer:
             raise ValueError("`ckpt_path='last'` cannot be combined with an explicit `ckpt_step`.")
         with self._checkpoint_backend(ckpt_path, ckpt_step) as (checkpoint_io, step):
             if weights_only:
-                return checkpoint_io.restore_weights(state, step), None
+                return replace(state, model_state=checkpoint_io.restore_model_state(state.model_state, step)), None
             restored = checkpoint_io.restore(state, step)
             return restored, checkpoint_io.restore_callback_states(step) if restore_callbacks else None
 
@@ -927,7 +927,7 @@ class Trainer:
         if self.checkpoint_callback is None:
             raise ValueError("`load_weights()` requires a configured `ModelCheckpoint` callback.")
         with self._checkpoint_backend("last", step) as (checkpoint_io, resolved_step):
-            return checkpoint_io.restore_weights(state, resolved_step)
+            return replace(state, model_state=checkpoint_io.restore_model_state(state.model_state, resolved_step))
 
     def latest_checkpoint(self) -> tuple[Path, int]:
         """Resolve the latest committed filesystem checkpoint.

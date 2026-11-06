@@ -37,6 +37,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   devices, prediction chunks no longer need to be divisible by the device count; they are padded instead.
 - The `all` extra installs every optional feature: `hydra`, `io`, `tensorboard`, and `wandb`. Combine it with at most
   one accelerator extra, such as `phijax[all,cuda13]`.
+- `load_model_state()` and `OrbaxCheckpointIO.restore_model_state()` restore only a checkpoint's model state, without
+  an optimizer or balancer template. `OrbaxCheckpointIO.restore_input_periods()` reads the stored input periods.
 
 ### Breaking changes
 
@@ -87,6 +89,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   files. Without an extra, these features raise `ModuleNotFoundError` naming the extra to install. Training, NPZ
   files, and prediction artifacts need neither. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#optional-hydra-and-io-extras).
+
+- `CheckpointIO.restore_weights()` and `OrbaxCheckpointIO.restore_weights()` are removed. Use
+  `replace(state, model_state=checkpoint_io.restore_model_state(state.model_state))`, or `load_model_state()` outside a
+  backend. Custom `CheckpointIO` backends implement `restore_model_state()`, `restore_input_statistics()`, and
+  `restore_input_periods()` instead.
 
 - `ProgressBar`, `TQDMProgressBar`, and `RichProgressBar` no longer take `total`. As in Lightning, a progress bar
   counts to its Trainer's `max_steps`. Remove `total=...` from constructors and `total: ${trainer.max_steps}` from
@@ -175,6 +182,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   search for the project root from PhiJAX's installed source file. That found the right root only when PhiJAX was
   installed in a virtual environment inside the project. An editable PhiJAX checkout exported its own root, and an
   environment outside the project raised `FileNotFoundError`. The default search now starts in the working directory.
+- `Trainer.fit(..., weights_only=True)` reads only the model state. Before, it restored the whole state first, so it
+  raised `ValueError` whenever the optimizer or balancer differed from the checkpoint's, for example after switching
+  from Adam to SGD.
 - `Trainer(precision="64-true")` enables JAX x64 itself. Before, it raised `ValueError` unless the caller had run
   `configure_precision()` first, so a Hydra config with `precision: 64-true` could not train.
 

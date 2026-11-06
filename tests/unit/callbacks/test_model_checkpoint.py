@@ -11,6 +11,7 @@ import pytest
 from phijax.balancers import BalancerState
 from phijax.callbacks import ModelCheckpoint, TrainerContext
 from phijax.training import OrbaxCheckpointIO, TrainState
+from phijax.types import InputStatistics, ResolvedInputPeriods
 
 
 class _RecordingCheckpointIO:
@@ -103,11 +104,11 @@ class _RecordingCheckpointIO:
         del step
         return target
 
-    def restore_weights(self, target: Any, step: int | None = None) -> Any:
-        """Return the supplied weight-loading target.
+    def restore_model_state(self, target: Any, step: int | None = None) -> Any:
+        """Return the supplied model-state template.
 
         Args:
-            target: Weight-loading target.
+            target: Model-state template.
             step: Optional restore step.
 
         Returns:
@@ -115,6 +116,30 @@ class _RecordingCheckpointIO:
         """
         del step
         return target
+
+    def restore_input_statistics(self, step: int | None = None) -> InputStatistics | None:
+        """Report that no input statistics are stored.
+
+        Args:
+            step: Optional restore step.
+
+        Returns:
+            `None`.
+        """
+        del step
+        return None
+
+    def restore_input_periods(self, step: int | None = None) -> ResolvedInputPeriods | None:
+        """Report that no input periods are stored.
+
+        Args:
+            step: Optional restore step.
+
+        Returns:
+            `None`.
+        """
+        del step
+        return None
 
     def restore_callback_states(self, step: int | None = None) -> dict[str, Mapping[str, Any]]:
         """Return no persistent callback state for the recording backend.

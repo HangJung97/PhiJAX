@@ -11,7 +11,7 @@ import pytest
 
 from phijax import InputStatistics, PhiModule, Trainer
 from phijax.balancers import StaticLossBalancer
-from phijax.callbacks import ModelCheckpoint
+from phijax.callbacks import Callback, ModelCheckpoint, TrainerContext
 from phijax.data import ChunkedPredictionSource, HostPool, NamedBatchSource, PhiDataModule, input_statistics
 from phijax.data.datamodule import DataStage
 from phijax.equations import base_data_fidelity
@@ -210,6 +210,59 @@ def test_fit_stores_statistics_and_resume_keeps_them(
     assert int(resumed.state.step) == 4
     _assert_statistics(planned_statistics[0], source_statistics)
     assert not np.allclose(target_statistics["mean"], source_statistics["mean"])
+
+
+def test_weights_only_transfer_accepts_a_different_optimizer(
+    source_run: tuple[Path, Trainer, Any, Mapping[str, Any]],
+    tmp_path: Path,
+) -> None:
+    """Verify a weights-only fit starts from the source weights when its optimizer differs from the checkpoint's.
+
+    Args:
+        source_run: Adam-trained source checkpoint, trainer, result, and statistics.
+        tmp_path: Temporary directory for trainer outputs.
+    """
+    checkpoints, _, source_result, _ = source_run
+
+    class StartWeights(Callback):
+        """Record the model state at fit start."""
+
+        def __init__(self) -> None:
+            """Initialize an empty record."""
+            self.model_state: Any = None
+
+        def on_fit_start(self, context: TrainerContext) -> None:
+            """Record the restored model state.
+
+            Args:
+                context: Initial fit context.
+            """
+            self.model_state = context.state.model_state
+
+    start = StartWeights()
+    trainer = Trainer(
+        max_steps=2,
+        accelerator="cpu",
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        default_root_dir=tmp_path,
+        callbacks=(start,),
+    )
+    transferred = trainer.fit(
+        _module(),
+        datamodule=_ShiftedDataModule(0.0),
+        optimizer=optax.sgd(1e-2),
+        seed=1,
+        ckpt_path=checkpoints,
+        weights_only=True,
+    )
+
+    for restored, saved in zip(
+        jax.tree.leaves(start.model_state), jax.tree.leaves(source_result.state.model_state), strict=True
+    ):
+        np.testing.assert_array_equal(restored, saved)
+    assert int(transferred.state.step) == 2
 
 
 def test_weights_only_transfer_uses_target_statistics_by_default(

@@ -63,7 +63,7 @@ def test_restore_checkpoint_selects_full_resume_or_weights_only_transfer(
     manager = MagicMock()
     manager.__enter__.return_value = manager
     manager.restore.return_value = resumed
-    manager.restore_weights.return_value = transferred
+    manager.restore_model_state.return_value = transferred.model_state
     checkpoint_io = MagicMock(return_value=manager)
     monkeypatch.setattr(checkpointing_module, "OrbaxCheckpointIO", checkpoint_io)
 
@@ -71,9 +71,10 @@ def test_restore_checkpoint_selects_full_resume_or_weights_only_transfer(
     weights_result = checkpointing_module.restore_checkpoint(target, tmp_path, weights_only=True)
 
     assert full_result is resumed
-    assert weights_result is transferred
+    assert weights_result.model_state is transferred.model_state
+    assert weights_result.step is target.step
     manager.restore.assert_called_once_with(target, 4)
-    manager.restore_weights.assert_called_once_with(target, None)
+    manager.restore_model_state.assert_called_once_with(target.model_state, None)
     checkpoint_io.assert_called_with(tmp_path, enable_async_checkpointing=False)
 
 
