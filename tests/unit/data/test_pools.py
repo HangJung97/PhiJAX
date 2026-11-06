@@ -391,6 +391,88 @@ def test_generated_samplers_validate_templates_and_targets() -> None:
         SpaceTimeSampler(_pool().fields(), time_bounds=(0.0, 1.0))
 
 
+def _mixed_source(key: jax.Array) -> NamedBatchSource:
+    """Build a source with every built-in sampler, sorted output, and one `all` pool.
+
+    Args:
+        key: Root sampling key.
+
+    Returns:
+        Unprepared source over four named samplers.
+    """
+    pool = _pool()
+    mesh = HostPool(inputs=np.asarray([[0.0, -1.0], [0.0, 0.5], [0.0, 2.0]], dtype=np.float32))
+    samplers = {
+        "rows": RandomRowSampler(pool.fields(), sort_axis=1),
+        "everything": RandomRowSampler(pool.fields(), sort_axis=0),
+        "domain": UniformDomainSampler([[0.0, 1.0], [-2.0, 2.0]], {"weight": np.ones(1, dtype=np.float32)}),
+        "space_time": SpaceTimeSampler(mesh.fields(), time_bounds=(2.0, 3.0)),
+    }
+    return NamedBatchSource(samplers, {"rows": 5, "everything": "all", "domain": 7, "space_time": 4}, key)
+
+
+def test_named_source_compiled_draw_matches_eager_sampling_bitwise() -> None:
+    """Verify the compiled draw reproduces the eager per-sampler reference exactly, including `all` pools."""
+    device = jax.devices("cpu")[0]
+    source = _mixed_source(jax.random.key(11)).prepare(device)
+    names = tuple(source.samplers)
+
+    for step in (0, 1, 37):
+        keys = jax.random.split(jax.random.fold_in(source.key, step), len(names))
+        expected = {}
+        for index, name in enumerate(names):
+            sampler, size = source.samplers[name], source.batch_sizes[name]
+            expected[name] = sampler.sample_all() if size == "all" else sampler.sample(keys[index], size)
+        batch = source(step)
+        assert tuple(batch) == names
+        for name in names:
+            assert set(batch[name]) == set(expected[name])
+            for field_name, values in expected[name].items():
+                np.testing.assert_array_equal(batch[name][field_name], values)
+                assert batch[name][field_name].dtype == values.dtype
+                assert batch[name][field_name].devices() == {device}
+
+    diagnostic_key = jax.random.key(5)
+    diagnostic = source.sample(diagnostic_key, {**source.batch_sizes, "rows": 2, "domain": 3})
+    keys = jax.random.split(diagnostic_key, len(names))
+    np.testing.assert_array_equal(diagnostic["rows"]["inputs"], source.samplers["rows"].sample(keys[0], 2)["inputs"])
+    np.testing.assert_array_equal(
+        diagnostic["domain"]["inputs"], source.samplers["domain"].sample(keys[2], 3)["inputs"]
+    )
+
+
+def test_named_source_compiles_each_batch_size_set_once() -> None:
+    """Verify steps reuse one compiled draw, diagnostic sizes add one more, and copies start with empty caches."""
+    traces = []
+
+    class _CountingSampler(UniformDomainSampler):
+        """Record each trace of `sample`."""
+
+        def sample(self, key: jax.Array, batch_size: int) -> dict[str, jax.Array]:
+            """Record the trace and draw uniform coordinates.
+
+            Args:
+                key: Explicit JAX PRNG key.
+                batch_size: Positive number of requested coordinates.
+
+            Returns:
+                Generated coordinates.
+            """
+            traces.append(batch_size)
+            return UniformDomainSampler.sample(self, key, batch_size)
+
+    source = NamedBatchSource({"pde": _CountingSampler([[0.0, 1.0]], {})}, {"pde": 4}, jax.random.key(0))
+    for step in range(5):
+        source(step)
+    source.sample(jax.random.key(1), {"pde": 2})
+    source.sample(jax.random.key(2), {"pde": 2})
+
+    assert traces == [4, 2]
+    assert source.for_devices(2)._draws == {}
+    with pytest.raises(ValueError, match="non-negative"):
+        source(-1)
+
+
 def test_batch_sources_scale_per_device_sizes() -> None:
     """Verify `for_devices` multiplies integer batch sizes and chunk sizes, keeps `all`, and is free for one device."""
     pool = _pool()

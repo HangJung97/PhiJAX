@@ -1,5 +1,5 @@
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field
 from typing import Any, Protocol, Self, cast
 
 import jax
@@ -88,6 +88,10 @@ class PredictionBatchSource(Protocol):
 class NamedBatchSource:
     """Compose named immutable samplers into deterministic step-indexed batches.
 
+    Every sampler with an integer batch size is drawn in one compiled call per step, so a step costs one dispatch
+    instead of one per array operation. Samplers must therefore be traceable by :func:`jax.jit`. A sampler with the
+    `all` policy returns its complete pool outside the compiled call, which avoids copying the pool on every step.
+
     Attributes:
         samplers: Named sampling policies aligned with objective batch keys.
         batch_sizes: Per-sampler positive integer or `all` policies. Integer sizes are rows per device.
@@ -97,6 +101,11 @@ class NamedBatchSource:
     samplers: Mapping[str, BatchSampler]
     batch_sizes: Mapping[str, BatchSize]
     key: jax.Array
+    # Compiled draws keyed by their integer batch sizes and whether they fold a step into the key. Each prepared or
+    # rescaled copy starts empty, because its compiled functions close over that copy's samplers.
+    _draws: dict[tuple[Any, ...], Callable[..., dict[str, DevicePool]]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     @classmethod
     def from_pools(
@@ -199,7 +208,7 @@ class NamedBatchSource:
         """
         if step < 0:
             raise ValueError("`step` must be non-negative.")
-        return self.sample(jax.random.fold_in(self.key, step))
+        return self._draw(self.batch_sizes, self.key, step)
 
     def sample(
         self,
@@ -222,19 +231,79 @@ class NamedBatchSource:
         policies = self.batch_sizes if batch_sizes is None else batch_sizes
         # Explicit diagnostic keys follow the source's prepared placement so random operations and sampler storage
         # never silently cross devices.
-        key = jax.device_put(key, self.key.sharding)
-        keys = jax.random.split(key, len(self.samplers))
-        batches: dict[str, DevicePool] = {}
-        for sampler_key, (name, sampler) in zip(keys, self.samplers.items(), strict=True):
-            policy = policies[name]
-            _validate_batch_size(policy, allow_all=isinstance(sampler, RandomRowSampler))
-            if policy == "all":
-                batches[name] = sampler.sample_all()
-            else:
-                if not isinstance(policy, int):
-                    raise TypeError("Validated sampler batch sizes must be integers or `all`.")
-                batches[name] = sampler.sample(sampler_key, policy)
-        return batches
+        return self._draw(policies, jax.device_put(key, self.key.sharding))
+
+    def _draw(
+        self,
+        policies: Mapping[str, BatchSize],
+        key: jax.Array,
+        step: int | None = None,
+    ) -> dict[str, DevicePool]:
+        """Draw every named batch, sampling integer policies in one compiled call.
+
+        Args:
+            policies: Batch-size policy for every sampler.
+            key: Root key, folded with `step` when one is given, then split in sampler declaration order.
+            step: Optional global step folded into `key` inside the compiled call.
+
+        Returns:
+            Named batches aligned with sampler declaration order.
+
+        Raises:
+            KeyError: If a sampler has no selected batch-size policy.
+            ValueError: If a policy is invalid or requests `all` from a generated sampler.
+        """
+        for name, sampler in self.samplers.items():
+            _validate_batch_size(policies[name], allow_all=isinstance(sampler, RandomRowSampler))
+        sizes = tuple((name, cast(int, policies[name])) for name in self.samplers if policies[name] != "all")
+        sampled: dict[str, DevicePool] = {}
+        if sizes:
+            draw = self._compiled_draw(sizes, fold_step=step is not None)
+            sampled = draw(key, 0 if step is None else step)
+        return {
+            name: sampled[name] if name in sampled else sampler.sample_all() for name, sampler in self.samplers.items()
+        }
+
+    def _compiled_draw(
+        self,
+        sizes: tuple[tuple[str, int], ...],
+        *,
+        fold_step: bool,
+    ) -> Callable[[jax.Array, int], dict[str, DevicePool]]:
+        """Return the cached compiled draw for one set of integer batch sizes.
+
+        Args:
+            sizes: `(name, batch_size)` pairs for the samplers drawn inside the compiled call.
+            fold_step: Whether the compiled call folds its step argument into the key before splitting it.
+
+        Returns:
+            Compiled function mapping a root key and step to the sized batches.
+        """
+        cache_key = (sizes, fold_step)
+        draw = self._draws.get(cache_key)
+        if draw is not None:
+            return draw
+        positions = {name: index for index, name in enumerate(self.samplers)}
+
+        def draw_batches(key: jax.Array, step: jax.Array) -> dict[str, DevicePool]:
+            """Fold the optional step, split one key per sampler, and draw the sized batches.
+
+            Args:
+                key: Root key.
+                step: Traced global step, ignored unless `fold_step` is set.
+
+            Returns:
+                Sized batches keyed by sampler name.
+            """
+            root = jax.random.fold_in(key, step) if fold_step else key
+            # Every sampler receives the key at its declaration position, including samplers drawn with `all`, so
+            # adding or removing an `all` pool never shifts another pool's random stream.
+            keys = jax.random.split(root, len(positions))
+            return {name: self.samplers[name].sample(keys[positions[name]], size) for name, size in sizes}
+
+        # Sampler arrays are closed over: JAX passes them to the compiled call as device buffers, not as constants.
+        draw = self._draws[cache_key] = jax.jit(draw_batches)
+        return draw
 
 
 @dataclass(frozen=True, slots=True)

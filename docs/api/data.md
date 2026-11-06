@@ -120,6 +120,11 @@ leading dimension.
 checkpoint therefore continues the same sampling sequence. The `"all"` batch-size policy works only with finite row
 sources.
 
+Each step draws every sampler with an integer batch size in one compiled call. The compiled draw is cached per set of
+batch sizes, so steps reuse it and adaptive-balancer diagnostics with their own sizes compile once more. Sampler
+arrays are passed to the compiled call as device buffers rather than baked into it. A sampler with the `"all"` policy
+returns its complete pool outside the compiled call. Samplers must therefore be traceable by `jax.jit`.
+
 `NamedBatchSource.from_pools()` is the concise path for aligned finite datasets. It creates ordered
 `RandomRowSampler` instances and validates requested pool names and batch-size policies.
 
