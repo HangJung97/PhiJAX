@@ -1392,6 +1392,49 @@ def test_checkpoints_store_early_stopping_state_of_the_same_step(tmp_path: Path)
     assert trainer.callbacks[-1] is checkpoint
 
 
+def test_callback_state_is_collected_only_for_checkpoint_saves(tmp_path: Path) -> None:
+    """Verify fitting serializes callback state once per checkpoint save, not on every step.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+
+    class StateCountingCallback(Callback):
+        """Count calls to :meth:`state_dict`."""
+
+        def __init__(self) -> None:
+            """Initialize the call counter."""
+            self.calls = 0
+
+        def state_dict(self) -> Mapping[str, Any]:
+            """Record one state request.
+
+            Returns:
+                JSON-compatible callback state.
+            """
+            self.calls += 1
+            return {"calls": self.calls}
+
+    counter = StateCountingCallback()
+    checkpoint = ModelCheckpoint(
+        OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False), every_n_steps=2, save_top_k=-1, save_last=False
+    )
+    trainer = Trainer(
+        max_steps=6,
+        callbacks=(counter, checkpoint),
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+    )
+
+    trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+
+    with OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False) as checkpoint_io:
+        assert checkpoint_io.steps == (2, 4, 6)
+    assert counter.calls == 3
+
+
 def test_trainer_runs_callbacks_multiple_loggers_and_early_stopping() -> None:
     """Verify the trainer coordinates host services around one reusable compiled step."""
     timeline: list[str] = []

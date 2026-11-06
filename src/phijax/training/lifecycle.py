@@ -44,15 +44,6 @@ class TaskLifecycle:
         self._finalized = False
         self._error: BaseException | None = None
 
-    @property
-    def callbacks(self) -> tuple[Callback, ...]:
-        """Return callbacks whose setup completed successfully.
-
-        Returns:
-            Ordered setup callback tuple.
-        """
-        return tuple(self._setup_callbacks)
-
     def setup(self) -> None:
         """Set up callbacks in declaration order and then set up the module."""
         if self._is_global_zero:

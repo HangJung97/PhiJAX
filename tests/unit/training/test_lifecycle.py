@@ -146,7 +146,6 @@ def test_task_lifecycle_preserves_lightning_order_and_idempotent_finalization() 
     lifecycle.finalize("success")
     lifecycle.teardown()
 
-    assert lifecycle.callbacks == (callback,)
     assert timeline == [
         "callback:setup",
         "module:setup",
