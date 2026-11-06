@@ -2842,6 +2842,71 @@ def test_fit_trains_a_custom_module_through_configure_model() -> None:
         fit(_CustomScalarModule(build=False))
 
 
+def test_fit_last_without_a_checkpoint_starts_fresh_and_resumes_later(tmp_path: Path) -> None:
+    """Verify `ckpt_path="last"` warns and trains from scratch until a checkpoint exists, then resumes, as in Lightning.
+
+    Args:
+        tmp_path: Empty checkpoint root.
+    """
+
+    def trainer(max_steps: int) -> Trainer:
+        """Create a quiet CPU trainer that checkpoints into `tmp_path`.
+
+        Args:
+            max_steps: Global step at which fitting stops.
+
+        Returns:
+            Configured trainer.
+        """
+        checkpoint = ModelCheckpoint(OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False))
+        return Trainer(
+            max_steps=max_steps,
+            callbacks=(checkpoint,),
+            logger=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
+        )
+
+    fit = partial(_fit_concise, ckpt_path="last")
+    with pytest.warns(UserWarning, match="no checkpoint has been saved yet"):
+        first = fit(trainer(2))
+    resumed = fit(trainer(3))
+
+    assert int(first.state.step) == 2
+    assert first.iterations == 2
+    assert int(resumed.state.step) == 3
+    assert resumed.iterations == 1
+
+
+def _fit_concise(trainer: Trainer, **kwargs: Any) -> FitResult:
+    """Fit the concise scalar module with a fixed seed and optimizer.
+
+    Args:
+        trainer: Trainer under test.
+        **kwargs: Restore options forwarded to `fit()`.
+
+    Returns:
+        Fit result.
+    """
+    optimizer = optax.sgd(1.0e-2)
+    return trainer.fit(_concise_module(), datamodule=_ConciseDataModule(), optimizer=optimizer, seed=0, **kwargs)
+
+
+def test_missing_explicit_checkpoints_and_last_prediction_still_raise(tmp_path: Path) -> None:
+    """Verify only `fit(ckpt_path="last")` tolerates a missing checkpoint.
+
+    Args:
+        tmp_path: Empty checkpoint root.
+    """
+    trainer = _quiet_trainer(ModelCheckpoint(OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False)))
+
+    with pytest.raises(FileNotFoundError, match="No committed checkpoint"):
+        _fit_concise(trainer, ckpt_path=tmp_path)
+    with pytest.raises(FileNotFoundError, match="No committed checkpoint"):
+        trainer.predict(_concise_module(), ckpt_path="last", datamodule=_ConciseDataModule())
+
+
 def test_concise_fit_validates_seed_and_balancer_contracts() -> None:
     """Verify invalid root keys and balancer loss-name ordering fail before updates."""
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
