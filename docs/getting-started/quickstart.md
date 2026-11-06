@@ -105,8 +105,18 @@ If JAX reports a GPU allocation error, see
 7. `Trainer.predict()` consumes the returned `FitResult` and assembles finite prediction chunks.
 8. `regression_metrics()` compares the in-memory predictions with the analytical reference values.
 
-The equation uses `value_and_jacobian()` for `du/dt` and `hessian_diagonal()` for only `d2u/dx2`; it does not construct
-the unused full Hessian.
+The heat equation is written one point at a time:
+
+1. `solutions(t, x)` evaluates the model at one point and returns output `0`, the temperature. It closes over
+   `model_state`, so training gradients flow through it.
+2. `residual(t, x)` takes `du/dt` from
+   [`value_and_jacobian()`](../api/derivatives.md#phijax.value_and_jacobian) and only `d2u/dx2` from
+   [`hessian_diagonal()`](../api/derivatives.md#phijax.hessian_diagonal), so no full Jacobian or Hessian is built. The
+   `0` and `1` passed to them are the positions of `t` and `x` in `solutions(t, x)`.
+3. `jax.vmap` evaluates `residual` over the `t` and `x` columns of the batch and returns one `[samples]` array, which
+   `CompositeObjective` reduces to the `pde/heat` loss.
+
+For a model with several outputs, see [Derivatives](../api/derivatives.md).
 
 ## Try other callbacks
 

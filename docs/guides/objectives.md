@@ -24,7 +24,7 @@ def equation(
     *,
     stream: ResidualStream = "residual",
     **equation_options: Any,
-) -> ResidualGroups: ...
+) -> ResidualOutput: ...
 ```
 
 The arguments have deliberately generic meanings:
@@ -39,23 +39,20 @@ The arguments have deliberately generic meanings:
 An equation must not import or inspect a particular model class. This lets the same physics work with NNX or another
 model implementation exposing the same pure application contract.
 
-## Residual groups
+## Return values
 
-`ResidualGroups` is a nested tuple:
+An equation with one loss returns its residual array directly. An equation with several losses returns a tuple with one
+entry per name declared by `@residual_equation`. An entry is either an array, or a tuple of arrays that contribute to
+the same scalar loss:
 
-```python
-tuple[tuple[jax.Array, ...], ...]
-```
+| Return value                               | Losses                                                  |
+| ------------------------------------------ | ------------------------------------------------------- |
+| `residual`                                 | `local_names[0]`                                        |
+| `(residual_a, residual_b)`                 | `local_names[0]` and `local_names[1]`                   |
+| `(residual_a, (residual_b1, residual_b2))` | `local_names[0]`, and `local_names[1]` from both arrays |
 
-The outer tuple matches the names declared by `@residual_equation`. Arrays in one inner tuple contribute to the same
-scalar loss:
-
-```text
-(
-    (residual_a,),                  -> local_names[0]
-    (residual_b1, residual_b2),     -> local_names[1]
-)
-```
+The fully nested form, `((residual_a,), (residual_b1, residual_b2))`, is `ResidualGroups`, which `ResidualTerm`
+normalizes every return value to.
 
 `ResidualTerm` reduces each group as:
 
@@ -68,27 +65,33 @@ can also be flattened into one derivative-balancing stream.
 
 ## Application equation pattern
 
-Use `@residual_equation` to attach stable local names to a pure residual function:
+Use `@residual_equation` to attach stable local names to a pure residual function. Write the residual at one point,
+then `jax.vmap` it over the coordinate columns:
 
 ```python
 @residual_equation(names=("heat",))
-def heat_1d(
-    model_apply: ModelApply,
-    model_state: Any,
-    batch: ArrayMapping,
-    *,
-    diffusivity: float = 0.1,
-    stream: ResidualStream = "residual",
-) -> ResidualGroups:
-    if stream != "residual":
-        raise ValueError("The heat equation supports only the `residual` stream.")
-    ...
-    return ((residuals,),)
+def heat_1d(model_apply, model_state, batch, *, diffusivity=0.1, stream="residual"):
+
+    def solutions(t, x):
+        return model_apply(model_state, jnp.stack((t, x)))[0]  # temperature at [t, x]
+
+    def residual(t, x):
+        _, (du_dt,) = value_and_jacobian(solutions, 0)(t, x)
+        (d2u_dx2,) = hessian_diagonal(solutions, 1)(t, x)
+        return du_dt - diffusivity * d2u_dx2
+
+    inputs = batch["inputs"]  # [samples, 2], columns [t, x]
+    return jax.vmap(residual)(inputs[:, 0], inputs[:, 1])  # [samples]
 ```
 
-Keep coordinate order, output meaning, coefficients, supported streams, and returned shapes explicit. Use selective
-helpers such as `value_and_jacobian` and `hessian_diagonal` to avoid tracing derivatives the equation does not need,
-then apply `jax.vmap` over collocation points.
+`solutions(t, x)` stacks the coordinates in model-input order and selects the output the PDE needs. The derivative
+helpers take the positions of its arguments, so `0` is `t` and `1` is `x`, and compute only the requested derivatives.
+`solutions` closes over `model_state`, so gradients with respect to the parameters still flow through it. Keep
+coordinate order, output meaning, coefficients, supported streams, and returned shapes explicit.
+
+`ResidualTerm` requests the `"output"` stream only from equations declared with `default_ntk_stream="output"`, and
+raises at construction for any other `ntk_stream="output"` request. A residual-only equation therefore accepts
+`stream` without checking it.
 
 The [executable heat-equation quickstart](https://github.com/HangJung97/PhiJAX/blob/main/examples/quickstart.py)
 contains the complete `du/dt - diffusivity * d2u/dx2` implementation and its DataModule. Re-export application
@@ -191,18 +194,33 @@ still lets the same objective work with exact NTK balancing.
 
 ## Multiple losses from one equation
 
-One equation may return several outer groups. For example, a coupled PDE could return:
+One equation may return several losses. A coupled PDE usually also has several output fields. Write one function that
+returns every field, and unpack the fields and their derivatives together. For steady 2D Navier--Stokes with model
+outputs `[u, v, p]`:
 
 ```python
 @residual_equation(names=("continuity", "momentum_x", "momentum_y"))
-def fluid_equation(...) -> ResidualGroups:
-    ...
-    return (
-        (continuity_residual,),
-        (momentum_x_residual,),
-        (momentum_y_residual,),
-    )
+def fluid_equation(model_apply, model_state, batch, *, viscosity=0.01, stream="residual"):
+    def solutions(x, y):
+        return model_apply(model_state, jnp.stack((x, y)))  # [u, v, p]
+
+    def residual(x, y):
+        (u, v, p), (d_x, d_y) = value_and_jacobian(solutions, (0, 1))(x, y)
+        u_x, v_x, p_x = d_x
+        u_y, v_y, p_y = d_y
+        (u_xx, v_xx, _), (u_yy, v_yy, _) = hessian_diagonal(solutions, (0, 1))(x, y)
+        continuity = u_x + v_y
+        momentum_x = u * u_x + v * u_y + p_x - viscosity * (u_xx + u_yy)
+        momentum_y = u * v_x + v * v_y + p_y - viscosity * (v_xx + v_yy)
+        return continuity, momentum_x, momentum_y
+
+    inputs = batch["inputs"]  # [samples, 2], columns [x, y]
+    return jax.vmap(residual)(inputs[:, 0], inputs[:, 1])  # three [samples] arrays
 ```
+
+Each derivative has the same structure as the function output, so `d_x` holds `[u_x, v_x, p_x]`. One call computes the
+derivatives of every field. The built-in [Navier--Stokes equations](#built-in-navier-stokes-equations) implement the
+general form in 2D and 3D.
 
 Its term only provides the grouping prefix:
 

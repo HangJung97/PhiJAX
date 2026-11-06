@@ -1,7 +1,7 @@
 # Equations
 
 Equation functions use JAX arrays and a generic model callable, not a concrete model class. Each public PDE accepts an
-`ArrayMapping` batch and returns named residual groups for `ResidualTerm`. One equation callable can compute all of its
+`ArrayMapping` batch and returns one residual array per named loss, or named residual groups, for `ResidualTerm`. One equation callable can compute all of its
 coupled components together.
 
 ## Residual metadata
@@ -12,7 +12,7 @@ with the term's `batch_key`.
 ```python
 @residual_equation(names=("heat",))
 def heat_equation(model_apply, model_state, batch, *, stream="residual"):
-    return ((residual,),)
+    return residual  # [samples]
 ```
 
 ::: phijax.equations.residual_equation

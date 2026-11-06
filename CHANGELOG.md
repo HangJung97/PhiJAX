@@ -48,6 +48,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `prediction_pool()` returns the pool named `predict`, chunked by `batch_sizes["predict"]`. A DataModule that only
   builds pools overrides only `setup()`.
 - `ChunkedPredictionSource(pool, "all")` predicts the whole pool in one chunk, split over the devices.
+- An equation with one loss may return its residual array directly, and a tuple entry may be an array instead of a
+  one-array group, so `return residual` replaces `return ((residual[:, None],),)`.
 - `HostPool.from_grid(inputs, targets, mask=...)` builds a pool from dense `[*grid, features]` arrays and records the
   grid, so `reconstruct_predictions()` returns `[*grid, outputs]` with `NaN` outside the optional mask.
 
@@ -132,6 +134,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `build_array_pools()`, `create_sampler()`, and `SamplerName` are removed, and `phijax.data.samplers.sample_pool()`
   is private. Build pools with NumPy and `HostPool.from_grid()`, and construct samplers directly. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#grid-pools-and-samplers).
+
+- `ResidualTerm(..., ntk_stream="output")` raises at construction unless the equation declares
+  `residual_equation(..., default_ntk_stream="output")`. Residual-only equations no longer need to reject the
+  `"output"` stream themselves.
 
 ### Changed
 
