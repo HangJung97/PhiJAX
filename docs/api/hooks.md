@@ -62,13 +62,13 @@ host-computed scalar. `training_metrics()` then adds uniquely named logger-only 
 existing metric. `on_train_metrics()` receives the complete mapping; use it for displays, monitored checkpoints, or
 diagnostics that need every provider's values.
 
-`predict()` obtains its bound module and state from `FitResult`. `predict_state()` accepts them explicitly. Both use the
-same prediction lifecycle.
+`predict()` takes the bound module and state from a `FitResult`, or builds the module's model from a checkpoint. Both
+use the same prediction lifecycle.
 
 ## Prediction lifecycle
 
 ```text
-Trainer.predict / Trainer.predict_state
+Trainer.predict
 |
 +-- optional DataModule.prepare_stage("predict")
 +-- optional checkpoint weight restoration

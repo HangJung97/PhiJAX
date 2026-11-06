@@ -90,13 +90,26 @@ checkpoint use the stored statistics, even if the DataModule's data changed. Tra
 [`load_input_statistics()`](../api/checkpointing.md#phijax.training.load_input_statistics) from the DataModule's
 `input_statistics()`.
 
+## Predict from a checkpoint
+
+A separate prediction script needs only the module blueprint and the checkpoint. The Trainer builds the model with the
+input statistics and periods stored in the checkpoint, then restores only the model state:
+
+```python
+module = PhiModule(model_factory, objective)
+predictions = trainer.predict(module, ckpt_path="runs/heat/checkpoints", datamodule=data_module)
+```
+
+No optimizer, balancer, or seed is needed, and the DataModule's fit stage is not set up. Checkpoints written by PhiJAX
+0.2.0b5 and earlier store no statistics or periods; for them, the Trainer takes both from the fit stage of
+`datamodule` and warns.
+
 ## Use the explicit state API
 
 Use [`Trainer.fit_state()`](../api/trainer.md#phijax.training.Trainer.fit_state) when an application supplies a bound
 [`BasePhiModule`](../api/module.md#phijax.core.BasePhiModule), explicit
 [`TrainState`](../api/training.md#phijax.training.TrainState), custom
-[`TrainingPlan`](../api/training.md#phijax.training.TrainingPlan), or custom batch source. Use
-[`Trainer.predict_state()`](../api/trainer.md#phijax.training.Trainer.predict_state) when restoring into an explicit state template.
+[`TrainingPlan`](../api/training.md#phijax.training.TrainingPlan), or custom batch source.
 
 ```python
 result = trainer.fit_state(
@@ -105,11 +118,7 @@ result = trainer.fit_state(
     initial_state,
     datamodule=data_module,
 )
-predictions = trainer.predict_state(
-    result.module,
-    result.state,
-    datamodule=data_module,
-)
+predictions = trainer.predict(result, datamodule=data_module)
 ```
 
 A custom compiled step must increment `TrainState.step` exactly once. The Trainer uses a matching host counter for

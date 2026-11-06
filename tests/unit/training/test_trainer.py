@@ -2322,11 +2322,8 @@ def test_trainer_applies_and_restores_matmul_precision_for_fit_and_prediction() 
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
     trainer.fit_state(_RecordingModule(), recording_step, _state(), ({"increment": jnp.asarray(1.0)},))
-    trainer.predict_state(
-        RecordingPredictionModule(),
-        dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)}),
-        ({"inputs": jnp.asarray([[1.0]])},),
-    )
+    state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})
+    trainer.predict(_fit_result(RecordingPredictionModule(), state), ({"inputs": jnp.asarray([[1.0]])},))
 
     assert observed == [("fit", "highest"), ("predict", "highest")]
     assert jax.config.jax_default_matmul_precision == previous_precision
@@ -2958,11 +2955,11 @@ def test_trainer_resolves_the_latest_checkpoint_root(tmp_path: Path) -> None:
     assert checkpoint_step == 4
 
 
-def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
+def test_trainer_fit_restores_checkpoint_state_internally(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Verify Lightning-style checkpoint arguments are resolved inside both trainer execution APIs.
+    """Verify Lightning-style checkpoint arguments are resolved inside the fit API.
 
     Args:
         monkeypatch: Pytest attribute patch helper.
@@ -3020,7 +3017,6 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
 
     monkeypatch.setattr(trainer, "_restore_state", restore_state)
     fit_data_module = MagicMock()
-    prediction_data_module = MagicMock()
     requested_steps: list[int] = []
 
     def batches(step: int) -> dict[str, jax.Array]:
@@ -3044,22 +3040,35 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         ckpt_step=4,
         datamodule=fit_data_module,
     )
-    predictions = trainer.predict_state(
-        _RecordingModule(),
-        _state(),
-        ({"inputs": jnp.asarray([[2.0]])},),
-        ckpt_path=tmp_path,
-        ckpt_step=5,
-        datamodule=prediction_data_module,
-    )
 
-    # Prediction restores the full state so it uses the checkpoint's model state and input statistics.
-    assert calls == [(tmp_path, False, 4), (tmp_path, False, 5)]
+    assert calls == [(tmp_path, False, 4)]
     assert requested_steps == [4]
     assert int(fit_result.state.step) == 5
-    np.testing.assert_array_equal(predictions, [[6.0]])
     fit_data_module.teardown_stage.assert_called_once_with("fit")
-    prediction_data_module.teardown_stage.assert_called_once_with("predict")
+
+
+def test_trainer_predicts_a_fit_result_with_the_checkpoint_model_state() -> None:
+    """Verify a fit result predicts with the model state of `ckpt_path="last"` and closes the backend."""
+    restored = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(3.0)})
+    checkpoint_io = _MemoryCheckpointIO(restored)
+    trainer = _quiet_trainer(ModelCheckpoint(checkpoint_io, save_last=False))
+
+    predictions = trainer.predict(
+        _fit_result(_RecordingModule(), _state()), ({"inputs": jnp.asarray([[2.0]])},), ckpt_path="last"
+    )
+
+    np.testing.assert_array_equal(predictions, [[6.0]])
+    assert checkpoint_io.weight_steps == [4]
+    assert checkpoint_io.restore_steps == []
+    assert checkpoint_io.closed is True
+
+
+def test_trainer_rejects_predicting_a_module_blueprint_without_a_checkpoint() -> None:
+    """Verify an unbound module needs `ckpt_path`, since only a fit result holds in-memory state."""
+    module = PhiModule(_scalar_model_factory, _ScalarObjective())
+
+    with pytest.raises(ValueError, match="requires `ckpt_path`"):
+        _quiet_trainer().predict(module, ({"inputs": jnp.asarray([[2.0]])},))
 
 
 def test_trainer_rejects_multiple_model_checkpoint_callbacks() -> None:
@@ -3097,7 +3106,7 @@ def test_trainer_predict_concatenates_only_valid_padded_rows() -> None:
     )
 
     state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})
-    predictions = trainer.predict_state(module, state, batches)
+    predictions = trainer.predict(_fit_result(module, state), batches)
 
     np.testing.assert_array_equal(predictions, [[2.0], [4.0], [6.0]])
     assert timeline == [
@@ -3139,7 +3148,7 @@ def test_trainer_predict_sets_up_and_uses_data_module_source() -> None:
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
     state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})
 
-    predictions = trainer.predict_state(_RecordingModule(), state, datamodule=data_module)
+    predictions = trainer.predict(_fit_result(_RecordingModule(), state), datamodule=data_module)
 
     np.testing.assert_array_equal(predictions, [[2.0], [4.0]])
     data_module.prepare_stage.assert_called_once_with("predict", run_prepare_data=True, wait_for_prepare_data=ANY)
@@ -3158,7 +3167,7 @@ def test_trainer_predict_skips_missing_data_module_source() -> None:
         callbacks=(callback,),
     )
 
-    predictions = trainer.predict_state(_RecordingModule(), _state(), datamodule=data_module)
+    predictions = trainer.predict(_fit_result(_RecordingModule(), _state()), datamodule=data_module)
 
     assert predictions is None
     assert callback.events == []
@@ -3181,7 +3190,7 @@ def test_trainer_prepares_data_only_on_process_zero_and_always_waits(is_global_z
     data_module.predict_batch_source.return_value = None
     trainer = Trainer(max_steps=1, strategy=strategy, logger=False)
 
-    trainer.predict_state(_RecordingModule(), _state(), datamodule=data_module)
+    trainer.predict(_fit_result(_RecordingModule(), _state()), datamodule=data_module)
 
     call = data_module.prepare_stage.call_args
     assert call.kwargs["run_prepare_data"] is is_global_zero
@@ -3227,7 +3236,7 @@ def test_trainer_prediction_context_exposes_source_pool_and_rank() -> None:
     )
 
     state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})
-    trainer.predict_state(module, state, ChunkedPredictionSource(pool, 2))
+    trainer.predict(_fit_result(module, state), ChunkedPredictionSource(pool, 2))
 
     assert callback.context is not None
     assert callback.context.pool is pool
@@ -3266,9 +3275,8 @@ def test_trainer_predict_can_stream_without_retaining_predictions() -> None:
         precision=trainer.precision,
     )
 
-    result = trainer.predict_state(
-        module,
-        dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)}),
+    result = trainer.predict(
+        _fit_result(module, dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})),
         ({"inputs": jnp.asarray([[1.0], [2.0]])},),
         return_predictions=False,
     )
@@ -3313,6 +3321,19 @@ class _CountingCallback(Callback):
 
 class _OtherCountingCallback(_CountingCallback):
     """Provide a second stateful callback class with its own identifier."""
+
+
+def _fit_result(module: BasePhiModule, state: TrainState) -> FitResult:
+    """Wrap a bound module and state as the result of a completed fit.
+
+    Args:
+        module: Bound module used for prediction.
+        state: Functional state whose model state is predicted with.
+
+    Returns:
+        Fit result with no metrics or iterations.
+    """
+    return FitResult(module=module, state=state, metrics={}, stopped_early=False, iterations=0)
 
 
 def _quiet_trainer(*callbacks: Callback, progress_bar: bool = False, model_summary: bool = False) -> Trainer:

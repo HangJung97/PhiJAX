@@ -24,7 +24,7 @@ from phijax.callbacks import (
 from phijax.core import BasePhiModule, PhiModule
 from phijax.data import DataStage, PhiDataModule
 from phijax.training.assembly import build_training_plan
-from phijax.training.checkpointing import OrbaxCheckpointIO
+from phijax.training.checkpointing import LegacyCheckpointError, OrbaxCheckpointIO
 from phijax.training.connectors.logger_connector import _LoggerConnector
 from phijax.training.connectors.signal_connector import _SignalConnector
 from phijax.training.loggers import ExperimentLogger, LoggerCollection
@@ -361,9 +361,9 @@ class Trainer:
             sampling_key: Optional explicit DataModule sampling key.
             balancer_key: Optional explicit adaptive-balancer diagnostic key.
             input_statistics: Optional normalization statistics the model was built with. When omitted,
-                :meth:`fit_state` and :meth:`predict_state` take them from the module.
-            input_periods: Optional physical input periods the model applies. When omitted, :meth:`fit_state` and
-                :meth:`predict_state` take them from the module.
+                :meth:`fit_state` takes them from the module.
+            input_periods: Optional physical input periods the model applies. When omitted, :meth:`fit_state` takes
+                them from the module.
 
         Returns:
             Complete precision-aware training state.
@@ -621,10 +621,8 @@ class Trainer:
         )
         # Batches drawn with `all` hold the whole pool, so every device receives them in full.
         full_pools = _full_pool_names(getattr(batches, "batch_sizes", None))
-        precision_context = (
-            nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
-        )
-        with precision_context:
+        matmul = self.matmul_precision
+        with nullcontext() if matmul is None else jax.default_matmul_precision(matmul):
             return self._fit_loop.run(
                 module,
                 plan.train_step,
@@ -733,7 +731,7 @@ class Trainer:
 
     def predict(
         self,
-        result: FitResult,
+        model: PhiModule | FitResult,
         batches: Iterable[Mapping[str, Any]] | None = None,
         *,
         datamodule: PhiDataModule | None = None,
@@ -742,12 +740,24 @@ class Trainer:
         metadata: Mapping[str, Any] | None = None,
         return_predictions: bool = True,
     ) -> np.ndarray | None:
-        """Predict from the bound module and functional state returned by :meth:`fit`.
+        """Predict with a fit result, or with a module blueprint loaded from a checkpoint.
+
+        This follows Lightning's `Trainer.predict(model, ckpt_path=...)`. A :class:`FitResult` predicts with its bound
+        module and final model state, or with the model state stored at `ckpt_path`. An unbound :class:`PhiModule`
+        requires `ckpt_path`: the Trainer builds its model with the checkpoint's input statistics and periods and
+        restores only the model state, so prediction needs no optimizer, balancer, or fit-stage data.
+
+        Checkpoints written by PhiJAX 0.2.0b5 and earlier store no input statistics or periods. With one, a fit result
+        keeps its module's values, and a module takes them from the fit stage of `datamodule` with a warning.
+
+        When `batches` is omitted, the Trainer sets up `datamodule` for prediction and requests its batch source.
+        Prediction is skipped when neither source is available.
 
         Args:
-            result: Completed fit result containing the bound module and state.
+            model: Fit result, or unbound module blueprint restored from `ckpt_path`.
             batches: Optional finite prediction batch iterable. When omitted, use `datamodule`.
-            datamodule: Optional DataModule supplying prediction batches.
+            datamodule: Optional DataModule supplying prediction batches, and the input statistics and periods of a
+                legacy checkpoint.
             ckpt_path: Optional Orbax checkpoint root, or `"last"` for the configured callback's latest checkpoint.
             ckpt_step: Exact checkpoint step, or `None` for the latest committed step.
             metadata: Optional immutable metadata exposed to prediction callbacks.
@@ -755,55 +765,21 @@ class Trainer:
 
         Returns:
             Concatenated host predictions, or `None` when collection is disabled or prediction data is unavailable.
-        """
-        return self.predict_state(
-            result.module,
-            result.state,
-            batches,
-            datamodule=datamodule,
-            ckpt_path=ckpt_path,
-            ckpt_step=ckpt_step,
-            metadata=metadata,
-            return_predictions=return_predictions,
-        )
-
-    def predict_state(
-        self,
-        module: BasePhiModule,
-        state: TrainState,
-        batches: Iterable[Mapping[str, Any]] | None = None,
-        *,
-        ckpt_path: str | Path | None = None,
-        ckpt_step: int | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        return_predictions: bool = True,
-        datamodule: PhiDataModule | None = None,
-    ) -> np.ndarray | None:
-        """Predict from an explicitly bound module and functional state template.
-
-        This follows Lightning's `ckpt_path` convention while preserving PhiJAX's explicit functional state. The
-        supplied `state` defines the complete Orbax restore structure. Prediction uses the checkpoint's model state and
-        input statistics, and the module is rebound to those statistics when they differ.
-        When `batches` is omitted, the trainer prepares and sets up `datamodule` for prediction and requests its batch
-        source. Prediction is skipped when neither source is available.
-
-        Args:
-            module: Application module exposing prediction computation and lifecycle hooks.
-            state: Fresh or in-memory functional state supplying the model and optional restore template.
-            batches: Optional finite prediction batch iterable. When omitted, use `datamodule`.
-            ckpt_path: Optional Orbax checkpoint root. `None` predicts from the supplied in-memory state.
-            ckpt_step: Exact checkpoint step, or `None` for the latest committed step.
-            metadata: Optional immutable metadata exposed to prediction callbacks.
-            return_predictions: Whether to concatenate and return host predictions.
-            datamodule: Optional DataModule set up when `batches` is omitted and torn down after prediction.
-
-        Returns:
-            Concatenated host predictions, or `None` when collection is disabled or no prediction data is available.
 
         Raises:
-            ValueError: If checkpoint options are invalid or a provided batch source is empty.
+            ValueError: If a module blueprint has no `ckpt_path`, checkpoint options are invalid, a legacy checkpoint
+                has no `datamodule` to take inputs from, or a provided batch source is empty.
             BaseException: Re-raises prediction lifecycle errors after cleanup.
         """
+        if ckpt_path is not None:
+            module, model_state = self._load_prediction_model(model, ckpt_path, ckpt_step, datamodule)
+        elif isinstance(model, FitResult):
+            module, model_state = model.module, model.state.model_state
+        else:
+            raise ValueError(
+                "Predicting with a module blueprint requires `ckpt_path`. Pass the `FitResult` returned by `fit()` to "
+                "predict with in-memory state."
+            )
         try:
             if batches is None:
                 if datamodule is None:
@@ -814,19 +790,11 @@ class Trainer:
                     return None
             # Every process works through the same chunks, so a per-device chunk spans all devices.
             batches = _for_devices(batches, len(self.strategy.devices))
-            # Prediction is not transfer learning: use the statistics the checkpointed model was trained with.
-            restored_state, _ = self._restore_state(
-                _with_module_inputs(state, module), ckpt_path, ckpt_step, weights_only=False
-            )
-            with jax.default_device(self.strategy.root_device):
-                module = module.bind_inputs(restored_state.input_statistics, restored_state.input_periods)
-            precision_context = (
-                nullcontext() if self.matmul_precision is None else jax.default_matmul_precision(self.matmul_precision)
-            )
-            with precision_context:
+            matmul = self.matmul_precision
+            with nullcontext() if matmul is None else jax.default_matmul_precision(matmul):
                 return self._prediction_loop.run(
                     module,
-                    restored_state.model_state,
+                    model_state,
                     batches,
                     metadata=metadata,
                     return_predictions=return_predictions,
@@ -834,6 +802,68 @@ class Trainer:
         finally:
             if datamodule is not None:
                 datamodule.teardown_stage("predict")
+
+    def _load_prediction_model(
+        self,
+        model: PhiModule | FitResult,
+        ckpt_path: str | Path,
+        ckpt_step: int | None,
+        datamodule: PhiDataModule | None,
+    ) -> tuple[BasePhiModule, Any]:
+        """Bind the prediction module to a checkpoint's inputs and restore only its model state.
+
+        Args:
+            model: Fit result whose model state is the restore template, or unbound module blueprint.
+            ckpt_path: Orbax checkpoint root, or `"last"` for the configured callback's latest checkpoint.
+            ckpt_step: Exact checkpoint step, or `None` for the latest committed step.
+            datamodule: Optional DataModule whose fit stage supplies the inputs of a legacy checkpoint.
+
+        Returns:
+            Bound module and restored model state.
+
+        Raises:
+            ValueError: If a legacy checkpoint is restored into a module blueprint without a `datamodule`.
+        """
+        with self._checkpoint_backend(ckpt_path, ckpt_step) as (checkpoint_io, step):
+            try:
+                statistics = checkpoint_io.restore_input_statistics(step)
+                periods = checkpoint_io.restore_input_periods(step)
+            except LegacyCheckpointError:
+                if isinstance(model, FitResult):
+                    statistics, periods = model.module.input_statistics, model.module.input_periods
+                elif datamodule is None:
+                    raise ValueError(
+                        f"Checkpoint step {step} was written before PhiJAX stored input statistics and periods. Pass "
+                        "the training `datamodule` so prediction can take them from its fit stage."
+                    ) from None
+                else:
+                    warnings.warn(
+                        f"Checkpoint step {step} was written before PhiJAX stored input statistics and periods. "
+                        "Prediction takes them from the fit stage of `datamodule`.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    self._prepare_datamodule(datamodule, "fit")
+                    try:
+                        statistics, periods = datamodule.input_statistics(), datamodule.input_periods()
+                    finally:
+                        datamodule.teardown_stage("fit")
+            with jax.default_device(self.strategy.root_device):
+                if isinstance(model, FitResult):
+                    module = model.module.bind_inputs(as_input_statistics(statistics), periods)
+                    template = model.state.model_state
+                else:
+                    input_mean, input_std = (None, None) if statistics is None else statistics
+                    # The key only shapes the template; every model-state leaf is restored from the checkpoint.
+                    module, template = model.prepare_model(
+                        key=jax.random.key(0),
+                        input_mean=input_mean,
+                        input_std=input_std,
+                        precision=self.precision,
+                        input_periods=periods,
+                    )
+                    template = self.precision.cast_model_state(template)
+            return module, checkpoint_io.restore_model_state(template, step)
 
     @contextmanager
     def _checkpoint_backend(

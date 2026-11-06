@@ -21,6 +21,15 @@ _CHECKPOINT_SCHEMA_VERSION = 3
 _LEGACY_SCHEMA_VERSION = 2
 
 
+class LegacyCheckpointError(LookupError):
+    """Report that a checkpoint predates stored input statistics and periods.
+
+    Checkpoints written by PhiJAX 0.2.0b5 and earlier (schema 2) store neither, so "none stored" cannot be told apart
+    from a model trained without normalization or periodic features. Take the values from the training DataModule
+    instead. Custom :class:`~phijax.callbacks.CheckpointIO` backends raise this error for the same case.
+    """
+
+
 def _state_identifier(state: Any) -> str:
     """Create a stable identifier from state paths, shapes, and dtypes.
 
@@ -389,14 +398,15 @@ class OrbaxCheckpointIO:
             step: Checkpoint step, or `None` for the latest committed step.
 
         Returns:
-            Stored `float32` statistics, or `None` when the checkpoint stores none or predates stored statistics.
+            Stored `float32` statistics, or `None` when the model was trained without input normalization.
 
         Raises:
             FileNotFoundError: If no requested checkpoint exists.
             ValueError: If the checkpoint manifest is absent or incompatible with this runtime.
+            LegacyCheckpointError: If the checkpoint predates stored input statistics.
         """
         resolved_step = self._resolve_step(step)
-        layout = self._read_manifest(resolved_step).get("input_statistics")
+        layout = self._stored_inputs(resolved_step)["input_statistics"]
         if layout is None:
             return None
         shape, dtype = tuple(layout["shape"]), np.dtype(layout["dtype"])
@@ -417,14 +427,33 @@ class OrbaxCheckpointIO:
             step: Checkpoint step, or `None` for the latest committed step.
 
         Returns:
-            Stored `(axis, period)` pairs, or `None` when the model applies no periods or the checkpoint predates stored
-            periods.
+            Stored `(axis, period)` pairs, or `None` when the model applies no periods.
 
         Raises:
             FileNotFoundError: If no requested checkpoint exists.
             ValueError: If the checkpoint manifest is absent or incompatible with this runtime.
+            LegacyCheckpointError: If the checkpoint predates stored input periods.
         """
-        return as_input_periods(self._read_manifest(self._resolve_step(step)).get("input_periods"))
+        return as_input_periods(self._stored_inputs(self._resolve_step(step))["input_periods"])
+
+    def _stored_inputs(self, step: int) -> dict[str, Any]:
+        """Return the validated manifest of a checkpoint that stores input statistics and periods.
+
+        Args:
+            step: Resolved checkpoint step.
+
+        Returns:
+            Validated PhiJAX checkpoint manifest.
+
+        Raises:
+            LegacyCheckpointError: If the checkpoint predates stored input statistics and periods.
+        """
+        manifest = self._read_manifest(step)
+        if manifest["schema_version"] == _LEGACY_SCHEMA_VERSION:
+            raise LegacyCheckpointError(
+                f"Checkpoint step {step} was written before PhiJAX stored input statistics and periods."
+            )
+        return manifest
 
     def restore_model_state(self, target: Any, step: int | None = None) -> Any:
         """Restore only the model state, without reading optimizer, balancer, or run state.
@@ -572,12 +601,13 @@ def load_input_statistics(ckpt_path: str | Path, *, step: int | None = None) -> 
         step: Checkpoint step, or `None` for the latest committed step.
 
     Returns:
-        Stored statistics as host `float32` NumPy arrays, or `None` when the checkpoint stores none or was written
-        before PhiJAX stored input statistics.
+        Stored statistics as host `float32` NumPy arrays, or `None` when the source model was trained without input
+        normalization.
 
     Raises:
         FileNotFoundError: If the requested checkpoint does not exist.
         ValueError: If the checkpoint manifest is absent or incompatible with this runtime.
+        LegacyCheckpointError: If the checkpoint was written before PhiJAX stored input statistics.
     """
     with OrbaxCheckpointIO(ckpt_path, enable_async_checkpointing=False) as checkpoint_io:
         return checkpoint_io.restore_input_statistics(step)
@@ -607,4 +637,10 @@ def load_model_state(ckpt_path: str | Path, target: Any, *, step: int | None = N
         return checkpoint_io.restore_model_state(target, step)
 
 
-__all__ = ["OrbaxCheckpointIO", "load_input_statistics", "load_model_state", "restore_checkpoint"]
+__all__ = [
+    "LegacyCheckpointError",
+    "OrbaxCheckpointIO",
+    "load_input_statistics",
+    "load_model_state",
+    "restore_checkpoint",
+]

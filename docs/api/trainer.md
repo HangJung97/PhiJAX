@@ -115,8 +115,13 @@ backend and display options.
 Use `fit()` and `predict()` for normal application code. The Trainer initializes and binds the model, constructs the
 training plan, creates state, and obtains batches from the DataModule.
 
-Use `fit_state()` and `predict_state()` when an integration supplies a bound `BasePhiModule`, explicit `TrainState`,
-custom `TrainingPlan`, or custom batch source. Supporting methods such as `initialize_state()`, `compile_train_step()`,
+To predict later from a saved run, pass the module blueprint and the checkpoint:
+`trainer.predict(module, ckpt_path=..., datamodule=data_module)`. The Trainer builds the model with the input
+statistics and periods stored in the checkpoint and restores only the model state, so prediction needs no optimizer,
+balancer, or fit-stage data.
+
+Use `fit_state()` when an integration supplies a bound `BasePhiModule`, explicit `TrainState`, custom `TrainingPlan`,
+or custom batch source. Supporting methods such as `initialize_state()`, `compile_train_step()`,
 `prepare_batch_source()`, and `prepare_batch()` expose the same runtime policies without creating another training
 loop.
 
@@ -163,7 +168,6 @@ created and only on global rank zero.
         - fit
         - predict
         - fit_state
-        - predict_state
         - initialize_state
         - compile_train_step
         - prepare_batch_source

@@ -12,7 +12,14 @@ import pytest
 
 from phijax import __version__ as phijax_version
 from phijax.balancers import BalancerState
-from phijax.training import InputStatistics, OrbaxCheckpointIO, TrainState, load_input_statistics, load_model_state
+from phijax.training import (
+    InputStatistics,
+    LegacyCheckpointError,
+    OrbaxCheckpointIO,
+    TrainState,
+    load_input_statistics,
+    load_model_state,
+)
 from phijax.training import checkpointing as checkpointing_module
 
 
@@ -348,14 +355,17 @@ def test_schema_2_checkpoint_restores_with_template_statistics(tmp_path: Path) -
     with OrbaxCheckpointIO(directory, enable_async_checkpointing=False) as checkpoint_io:
         with pytest.warns(UserWarning, match="before PhiJAX stored input statistics"):
             resumed = checkpoint_io.restore(template)
-        stored = checkpoint_io.restore_input_statistics()
+        # A schema-2 checkpoint cannot tell "no statistics" from "not stored", so reading them raises.
+        with pytest.raises(LegacyCheckpointError, match="before PhiJAX stored input statistics"):
+            checkpoint_io.restore_input_statistics()
+        with pytest.raises(LegacyCheckpointError):
+            load_input_statistics(directory)
 
     assert isinstance(resumed, TrainState)
     assert float(resumed.model_state["weight"]) == 2.0
     assert float(cast(dict[str, jax.Array], resumed.optimizer_state)["slot"]) == 3.0
     assert int(resumed.step) == 4
     assert resumed.input_statistics is template.input_statistics
-    assert stored is None
 
 
 def test_checkpoint_metadata_reads_do_not_log_restore_warnings(
@@ -459,7 +469,7 @@ def test_model_state_restore_rejects_a_different_model(tmp_path: Path, template:
 
 
 def test_schema_2_checkpoint_restores_model_state_without_an_identifier(tmp_path: Path) -> None:
-    """Verify checkpoints written before the model-state identifier still restore model-only and report no periods.
+    """Verify checkpoints written before the model-state identifier still restore model-only, but not their periods.
 
     Args:
         tmp_path: Temporary checkpoint root.
@@ -469,7 +479,7 @@ def test_schema_2_checkpoint_restores_model_state_without_an_identifier(tmp_path
 
     with OrbaxCheckpointIO(directory, enable_async_checkpointing=False) as checkpoint_io:
         restored = checkpoint_io.restore_model_state({"weight": jnp.asarray(9.0)})
-        periods = checkpoint_io.restore_input_periods()
+        with pytest.raises(LegacyCheckpointError, match="before PhiJAX stored input statistics and periods"):
+            checkpoint_io.restore_input_periods()
 
     assert float(restored["weight"]) == 2.0
-    assert periods is None

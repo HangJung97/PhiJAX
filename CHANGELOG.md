@@ -39,6 +39,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   one accelerator extra, such as `phijax[all,cuda13]`.
 - `load_model_state()` and `OrbaxCheckpointIO.restore_model_state()` restore only a checkpoint's model state, without
   an optimizer or balancer template. `OrbaxCheckpointIO.restore_input_periods()` reads the stored input periods.
+- `Trainer.predict(module, ckpt_path=...)` predicts with a module blueprint, as Lightning's `predict(model, ckpt_path)`
+  does. The Trainer builds the model with the checkpoint's input statistics and periods and restores only the model
+  state, so prediction needs no optimizer, balancer, seed, or fit-stage data. For schema-2 checkpoints, which store
+  neither, it takes them from the DataModule's fit stage with a warning. Reading them directly raises
+  `LegacyCheckpointError`.
 
 ### Breaking changes
 
@@ -95,6 +100,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   backend. Custom `CheckpointIO` backends implement `restore_model_state()`, `restore_input_statistics()`, and
   `restore_input_periods()` instead.
 
+- `Trainer.predict_state()` is removed. Use `predict(fit_result, ...)` in memory, or `predict(module, ckpt_path=...)`
+  from a checkpoint without building a state template.
+
 - `ProgressBar`, `TQDMProgressBar`, and `RichProgressBar` no longer take `total`. As in Lightning, a progress bar
   counts to its Trainer's `max_steps`. Remove `total=...` from constructors and `total: ${trainer.max_steps}` from
   Hydra callback configs.
@@ -103,8 +111,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's
   input statistics with a warning. PhiJAX 0.2.0b5 cannot read schema-3 checkpoints.
-- `Trainer.predict_state(..., ckpt_path=...)` restores the full checkpoint and uses its model state and input
-  statistics, instead of restoring model weights only.
 - The Trainer runs `ModelCheckpoint` after all other callbacks, as in Lightning, so each checkpoint stores the state
   every other callback reached at that step.
 - The first `Ctrl+C` or `SIGTERM` during fitting now lets the current step finish before interrupting, so the

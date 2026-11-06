@@ -1,5 +1,7 @@
+import dataclasses
 from collections.abc import Mapping
 from functools import partial
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -7,6 +9,7 @@ from unittest.mock import MagicMock
 import jax
 import numpy as np
 import optax
+import orbax.checkpoint as ocp
 import pytest
 
 from phijax import InputStatistics, PhiModule, Trainer
@@ -17,7 +20,8 @@ from phijax.data.datamodule import DataStage
 from phijax.equations import base_data_fidelity
 from phijax.models import build_mlp
 from phijax.objectives import CompositeObjective
-from phijax.training import OrbaxCheckpointIO, build_training_plan, load_input_statistics
+from phijax.training import OrbaxCheckpointIO, TrainState, build_training_plan, load_input_statistics
+from phijax.training import checkpointing as checkpointing_module
 from phijax.training import trainer as trainer_module
 
 
@@ -291,36 +295,95 @@ def test_weights_only_transfer_uses_target_statistics_by_default(
     _assert_statistics(with_source.module.input_statistics, source_statistics)
 
 
+class _StageRecordingDataModule(_ShiftedDataModule):
+    """Record every stage the Trainer sets up."""
+
+    def __init__(self) -> None:
+        """Use the source data and start with no recorded stages."""
+        super().__init__(0.0)
+        self.stages: list[DataStage] = []
+
+    def setup(self, stage: DataStage) -> None:
+        """Record and set up one stage.
+
+        Args:
+            stage: Requested lifecycle stage.
+        """
+        self.stages.append(stage)
+        super().setup(stage)
+
+
+def _write_schema_2_checkpoint(directory: Path, state: TrainState) -> None:
+    """Write a checkpoint in the PhiJAX 0.2.0b5 layout, which stores no input statistics or periods.
+
+    Args:
+        directory: Checkpoint root.
+        state: State whose fields other than `input_statistics` and `input_periods` are saved.
+    """
+    step = int(np.asarray(state.step))
+    legacy_state = {
+        field.name: getattr(state, field.name)
+        for field in dataclasses.fields(TrainState)
+        if field.name not in {"input_statistics", "input_periods"}
+    }
+    manifest = {
+        "schema_version": 2,
+        "phijax_version": version("phijax"),
+        "step": step,
+        "state_identifier": checkpointing_module._state_identifier(dataclasses.replace(state, input_statistics=None)),
+        "callbacks": {},
+    }
+    options = ocp.CheckpointManagerOptions(enable_async_checkpointing=False)
+    with ocp.CheckpointManager(directory, options=options) as manager:
+        manager.save(step, args=ocp.args.StandardSave(legacy_state), custom_metadata={"phijax": manifest})
+
+
 def test_prediction_from_checkpoint_uses_checkpoint_statistics(
     source_run: tuple[Path, Trainer, Any, Mapping[str, Any]],
 ) -> None:
-    """Verify downstream-style prediction reproduces in-memory predictions despite different template statistics.
+    """Verify a module blueprint predicts from a checkpoint like the fit result, without setting up the fit stage.
 
     Args:
         source_run: Source checkpoint, trainer, result, and statistics.
     """
     checkpoints, trainer, source_result, _ = source_run
     in_memory = trainer.predict(source_result, datamodule=_ShiftedDataModule(0.0))
-    # Mirror downstream predict.py: rebuild the module from current data and a template without statistics.
-    target_statistics = _statistics_of(_ShiftedDataModule(5.0))
-    module, model_state = _module().prepare_model(
-        key=jax.random.key(3),
-        input_mean=target_statistics["mean"],
-        input_std=target_statistics["std"],
-        precision=trainer.precision,
-    )
-    template = trainer.initialize_state(
-        model_state,
-        optax.adam(1e-2),
-        StaticLossBalancer(module.loss_names).initialize(),
-        jax.random.key(4),
-    )
+    data = _StageRecordingDataModule()
 
-    from_checkpoint = trainer.predict_state(module, template, ckpt_path=checkpoints, datamodule=_ShiftedDataModule(0.0))
+    from_checkpoint = trainer.predict(_module(), ckpt_path=checkpoints, datamodule=data)
 
     assert in_memory is not None
     assert from_checkpoint is not None
     np.testing.assert_allclose(from_checkpoint, in_memory, rtol=1e-6)
+    assert data.stages == ["predict"]
+
+
+def test_prediction_from_a_legacy_checkpoint_takes_inputs_from_the_datamodule(
+    source_run: tuple[Path, Trainer, Any, Mapping[str, Any]],
+    tmp_path: Path,
+) -> None:
+    """Verify a schema-2 checkpoint takes its inputs from the fit stage, or from the fit result's module.
+
+    Args:
+        source_run: Source checkpoint, trainer, result, and statistics.
+        tmp_path: Temporary directory for the legacy checkpoint.
+    """
+    _, trainer, source_result, _ = source_run
+    legacy = tmp_path / "legacy"
+    _write_schema_2_checkpoint(legacy, source_result.state)
+    in_memory = trainer.predict(source_result, datamodule=_ShiftedDataModule(0.0))
+    data = _StageRecordingDataModule()
+
+    with pytest.warns(UserWarning, match="takes them from the fit stage"):
+        from_module = trainer.predict(_module(), ckpt_path=legacy, datamodule=data)
+    from_result = trainer.predict(source_result, ckpt_path=legacy, datamodule=_ShiftedDataModule(0.0))
+    with pytest.raises(ValueError, match="Pass the training `datamodule`"):
+        trainer.predict(_module(), ({"inputs": np.zeros((1, 1), np.float32)},), ckpt_path=legacy)
+
+    assert in_memory is not None
+    np.testing.assert_allclose(np.asarray(from_module), in_memory, rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(from_result), in_memory, rtol=1e-6)
+    assert data.stages == ["fit", "predict"]
 
 
 def test_fit_state_rejects_statistics_that_differ_from_the_compiled_module(
@@ -440,19 +503,9 @@ def test_resume_and_prediction_use_checkpoint_periods(tmp_path: Path) -> None:
             seed=1,
             ckpt_path=checkpoints,
         )
-    module, model_state = _periodic_module().prepare_model(
-        key=jax.random.key(3),
-        input_mean=None,
-        input_std=None,
-        precision=trainer.precision,
-        input_periods={0: 0.9},
-    )
-    template = trainer.initialize_state(
-        model_state, optax.adam(1e-2), StaticLossBalancer(module.loss_names).initialize(), jax.random.key(4)
-    )
-    from_checkpoint = trainer.predict_state(
-        module, template, ckpt_path=checkpoints, datamodule=_PeriodicDataModule(0.0, 0.6)
-    )
+    # The blueprint takes the stored period, not the 0.9 of a different DataModule.
+    data = _PeriodicDataModule(0.0, 0.6)
+    from_checkpoint = trainer.predict(_periodic_module(), ckpt_path=checkpoints, datamodule=data)
 
     assert source.state.input_periods == ((0, 0.6),)
     assert source.module.input_periods == ((0, 0.6),)
