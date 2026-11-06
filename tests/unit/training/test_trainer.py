@@ -3253,6 +3253,44 @@ def test_trainer_predict_sets_up_and_uses_data_module_source() -> None:
     data_module.teardown.assert_called_once_with("predict")
 
 
+def test_trainer_predict_compiles_predict_step_once_for_every_chunk() -> None:
+    """Verify one compiled `predict_step` serves every padded chunk and matches eager prediction."""
+    traces: list[tuple[int, ...]] = []
+
+    class _TracingModule(_RecordingModule):
+        """Record each trace of `predict_step`."""
+
+        def predict_step(self, model_state: Any, batch: ArrayMapping) -> jax.Array:
+            """Record the traced input shape and evaluate the batch.
+
+            Args:
+                model_state: Explicit scalar model state.
+                batch: Prediction batch containing model inputs.
+
+            Returns:
+                Batched scalar model outputs.
+            """
+            traces.append(tuple(batch["inputs"].shape))
+            return super().predict_step(model_state, batch)
+
+    inputs = np.arange(5, dtype=np.float32)[:, None]
+    source = ChunkedPredictionSource(HostPool(inputs), 2)
+    trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]), logger=False)
+    module = _TracingModule()
+    state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(3.0)})
+
+    predictions = trainer.predict(_fit_result(module, state), source)
+    eager = []
+    for chunk in source:
+        device_chunk = {name: jnp.asarray(values) for name, values in chunk.items()}
+        outputs = np.asarray(_RecordingModule.predict_step(module, state.model_state, device_chunk))
+        eager.append(outputs[chunk["valid_predict_mask"]])
+
+    assert traces == [(2, 1)]
+    np.testing.assert_array_equal(predictions, np.concatenate(eager))
+    np.testing.assert_array_equal(predictions, 3.0 * inputs)
+
+
 def test_trainer_predict_skips_missing_data_module_source() -> None:
     """Verify a DataModule without prediction data produces a clean no-op lifecycle."""
     callback = _RecordingCallback()

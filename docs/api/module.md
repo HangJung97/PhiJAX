@@ -120,7 +120,9 @@ callbacks.teardown              -> module.teardown
 
 Module hooks run on the Python host. Training hooks return explicit replacement values and must preserve the PyTree
 structure and fixed shapes expected by compiled functions. Prediction hooks observe state; override `predict_step()`
-to transform output batches before collection or artifact writing.
+to transform output batches before collection or artifact writing. The Trainer compiles `predict_step()` with
+`jax.jit` once per `predict()` call, so it must be traceable: use JAX operations, and do not convert arrays to Python
+values or log from it.
 
 See [Trainer and module hooks](hooks.md) for the complete fit, prediction, interruption, and exception lifecycles.
 

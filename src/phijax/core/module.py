@@ -305,6 +305,8 @@ class BasePhiModule(_ModuleHooks, ABC):
     def predict_step(self, model_state: Any, batch: ArrayMapping) -> jax.Array:
         """Evaluate one prediction batch.
 
+        The Trainer compiles this method with :func:`jax.jit` once per prediction task, so overrides must be traceable.
+
         Args:
             model_state: Explicit model parameter PyTree.
             batch: Prediction batch containing model coordinates under `inputs`.
