@@ -16,37 +16,40 @@ chunking. An application DataModule uses only the pieces it needs.
 
 ## The `PhiDataModule` contract
 
-An application subclasses `phijax.data.PhiDataModule`, implements setup and training-source construction, and may
-provide prediction hooks:
+An application subclasses `phijax.data.PhiDataModule` and implements `setup()`. Every other hook has a default:
 
 ```python
 class PhiDataModule(ABC):
+    def __init__(self, *, batch_sizes=None) -> None: ...
+
     def prepare_data(self) -> None: ...
 
     @abstractmethod
     def setup(self, stage: DataStage) -> None: ...
 
-    @abstractmethod
-    def train_batch_source(
-        self,
-        batch_keys: tuple[str, ...],
-        key: jax.Array,
-    ) -> TrainingBatchSource: ...
+    def train_batch_source(self, batch_keys: tuple[str, ...], key: jax.Array) -> TrainingBatchSource: ...
 
     def predict_batch_source(self) -> PredictionBatchSource | None: ...
 
     def prediction_pool(self) -> HostPool | None: ...
 ```
 
-The remaining lifecycle and normalization methods are:
+The default sources cover finite pools:
 
-- `prepare_stage(stage)`, for idempotently running `prepare_data()` and `setup(stage)`;
-- `teardown_stage(stage)`, for releasing the active stage exactly once;
+- `train_batch_source()` draws random rows from the pool named by each objective batch key, with the size from
+  `batch_sizes`;
+- `prediction_pool()` returns the pool named `predict`, or `None`; and
+- `predict_batch_source()` chunks that pool into `batch_sizes["predict"]` rows per device, or one chunk for `"all"`.
+
+Override a source hook for custom sampling, such as continuously generated collocation points. The remaining hooks are:
+
 - `prepare_data()`, for generating or downloading an artifact before loading it;
-- `prediction_pool()`, for declaring the ordered host pool represented by prediction chunks;
 - `normalization_pools()`, for selecting coordinates when an application opts into empirical normalization;
-- `input_statistics()`, which returns `None` by default and can return empirical or exact statistics; and
+- `input_statistics()`, which returns `None` by default and can return empirical or exact statistics;
+- `input_periods()`, for declaring the physical period of periodic input axes; and
 - `teardown(stage)`, for releasing application-owned resources.
+
+The Trainer calls `prepare_data()`, `setup(stage)`, and `teardown(stage)` once per `fit()` or `predict()` call.
 
 Use NumPy in `prepare_data()` and host-pool builders so they do not initialize JAX. DataModules create host-backed
 samplers and prediction chunks. The Trainer prepares sampler state on the selected device and places or shards each
@@ -133,7 +136,8 @@ empirical pool statistics or the exact values
 `mean = (a + b) / 2` and `std = (b - a) / sqrt(12)`.
 
 Prediction batch size is a chunking policy, not a prediction-grid size. The grid size comes from `reference_shape`;
-`batch_sizes["predict"]` only limits the number of rows each device evaluates at once.
+`batch_sizes["predict"]` only limits the number of rows each device evaluates at once. With `"all"`, the whole grid is
+one chunk split over the devices, so it must fit in device memory in one forward pass.
 
 Batch sizes are per device, as in Lightning. On one device nothing changes; with several devices, each device
 evaluates the configured rows. See [device strategies](../api/strategies.md).
@@ -174,8 +178,9 @@ data_module = HeatDataModule(
 )
 ```
 
-The Trainer only requires a `PhiDataModule`. It does not need to know how pools or sources were created. For aligned
-finite pools, `NamedBatchSource.from_pools()` reduces the training hook to one return statement:
+The Trainer only requires a `PhiDataModule`. It does not need to know how pools or sources were created. The
+DataModule passes `batch_sizes` to `PhiDataModule.__init__()`. For aligned finite pools, the
+default `train_batch_source()` is then equivalent to:
 
 ```python
 def train_batch_source(self, batch_keys, key):
@@ -184,7 +189,7 @@ def train_batch_source(self, batch_keys, key):
 
 ## Inspect training data
 
-Prepare the fit stage before inspecting complete host pools or drawing a training batch. Calling a training source
+Set up the fit stage before inspecting complete host pools or drawing a training batch. Calling a training source
 with step `0` is the PhiJAX equivalent of requesting the first batch from an iterable DataLoader:
 
 ```python
@@ -192,7 +197,7 @@ import jax
 import numpy as np
 
 data_module = HeatDataModule()
-data_module.prepare_stage("fit")
+data_module.setup("fit")
 
 try:
     initial_coordinates = data_module.pools["initial"].inputs
@@ -203,7 +208,7 @@ try:
     host_batch = jax.tree.map(lambda value: np.asarray(jax.device_get(value)), batch)
     print(host_batch["pde"]["inputs"][:5])
 finally:
-    data_module.teardown_stage("fit")
+    data_module.teardown("fit")
 ```
 
 Use `source(step)` to inspect later deterministic batches. Finite datasets can be viewed directly through

@@ -4,6 +4,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from phijax.data import ChunkedPredictionSource, HostPool
 from phijax.training import Strategy
 from phijax.training.loops import prediction_loop as prediction_loop_module
 
@@ -93,3 +94,17 @@ def test_process_share_pads_a_single_process_batch_to_its_device_count() -> None
     np.testing.assert_array_equal(share.batch["inputs"][:, 0], [0, 1, 2, 3, 4, 5, 0, 0])
     np.testing.assert_array_equal(share.rows, np.arange(8))
     np.testing.assert_array_equal(share.valid, [True] * 6)
+
+
+def test_all_prediction_chunk_is_split_over_every_device() -> None:
+    """Verify an `"all"` chunk of six rows is padded to eight and split over two processes with two devices each."""
+    source = ChunkedPredictionSource(HostPool(np.arange(6, dtype=np.float32)[:, None]), "all").for_devices(4)
+    (chunk,) = tuple(source)
+
+    first = prediction_loop_module._process_share(chunk, _strategy(0))
+    second = prediction_loop_module._process_share(chunk, _strategy(1))
+
+    np.testing.assert_array_equal(first.batch["inputs"][:, 0], [0, 1, 2, 3])
+    np.testing.assert_array_equal(second.batch["inputs"][:, 0], [4, 5, 0, 0])
+    np.testing.assert_array_equal(second.batch["valid_predict_mask"], [True, True, False, False])
+    np.testing.assert_array_equal(first.valid, [True] * 6)

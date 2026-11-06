@@ -44,6 +44,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   state, so prediction needs no optimizer, balancer, seed, or fit-stage data. For schema-2 checkpoints, which store
   neither, it takes them from the DataModule's fit stage with a warning. Reading them directly raises
   `LegacyCheckpointError`.
+- `PhiDataModule(batch_sizes=...)` enables default `train_batch_source()` and `predict_batch_source()` hooks, and
+  `prediction_pool()` returns the pool named `predict`, chunked by `batch_sizes["predict"]`. A DataModule that only
+  builds pools overrides only `setup()`.
+- `ChunkedPredictionSource(pool, "all")` predicts the whole pool in one chunk, split over the devices.
 
 ### Breaking changes
 
@@ -116,6 +120,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - `TrainerContext.callback_states` is removed. `ModelCheckpoint` reads callback states from its connected Trainer
   when it saves, so the field was never needed.
+
+- The Trainer owns the DataModule stage, as Lightning's data connector does. `PhiDataModule.prepare_stage()`,
+  `teardown_stage()`, and `prepared_stage` are removed; call `setup()` and `teardown()` to inspect pools outside the
+  Trainer. Because `prediction_pool()` now returns a pool named `predict`, the default `normalization_pools()` excludes
+  that pool. See the
+  [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#datamodule-defaults).
 
 ### Changed
 

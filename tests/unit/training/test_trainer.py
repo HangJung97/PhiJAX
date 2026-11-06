@@ -8,7 +8,7 @@ from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import ANY, MagicMock
+from unittest.mock import MagicMock
 
 import jax
 import jax.numpy as jnp
@@ -1852,16 +1852,9 @@ def test_callback_exception_and_teardown_hooks_run_before_module_hooks() -> None
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
         callbacks=(callback,),
     )
-    data_module = MagicMock()
 
     with pytest.raises(RuntimeError, match="synthetic step failure"):
-        trainer._run_fit(
-            module,
-            _failing_train_step,
-            _state(),
-            lambda _: {"increment": jnp.asarray(1.0)},
-            datamodule=data_module,
-        )
+        trainer._run_fit(module, _failing_train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
 
     assert timeline == [
         "callback:setup",
@@ -1875,7 +1868,6 @@ def test_callback_exception_and_teardown_hooks_run_before_module_hooks() -> None
         "callback:teardown",
         "module:teardown",
     ]
-    data_module.teardown_stage.assert_called_once_with("fit")
 
 
 def test_keyboard_interrupt_returns_last_valid_state_and_interrupted_status() -> None:
@@ -2454,11 +2446,11 @@ def test_trainer_builds_training_source_from_data_module() -> None:
     state = _state()
     result = trainer._run_fit(_RecordingModule(), _train_step, state, datamodule=data_module, batch_keys=("train",))
 
-    data_module.prepare_stage.assert_called_once_with("fit", run_prepare_data=True, wait_for_prepare_data=ANY)
+    data_module.setup.assert_called_once_with("fit")
     requested_keys, requested_sampling_key = data_module.train_batch_source.call_args.args
     assert requested_keys == ("train",)
     np.testing.assert_array_equal(jax.random.key_data(requested_sampling_key), jax.random.key_data(state.sampling_key))
-    data_module.teardown_stage.assert_called_once_with("fit")
+    data_module.teardown.assert_called_once_with("fit")
     assert source.device == device
     assert source.steps == [0]
     assert int(result.state.step) == 1
@@ -2540,7 +2532,11 @@ class _ScalarObjective:
 
 
 class _ConciseDataModule(PhiDataModule):
-    """Provide deterministic finite batches for concise Trainer API tests."""
+    """Provide deterministic finite batches through the default DataModule sources."""
+
+    def __init__(self) -> None:
+        """Sample every training row and predict in chunks of two rows."""
+        super().__init__(batch_sizes={"data": "all", "predict": 2})
 
     def setup(self, stage: DataStage) -> None:
         """Construct one scalar input pool for the requested stage.
@@ -2550,37 +2546,6 @@ class _ConciseDataModule(PhiDataModule):
         """
         inputs = np.asarray([[1.0], [2.0], [3.0]], dtype=np.float32)
         self.pools = {"data": HostPool(inputs)} if stage == "fit" else {"predict": HostPool(inputs)}
-
-    def train_batch_source(self, batch_keys: tuple[str, ...], key: jax.Array) -> NamedBatchSource:
-        """Build one deterministic all-row source.
-
-        Args:
-            batch_keys: Objective batch names requested by the Trainer.
-            key: Explicit persistent sampling key.
-
-        Returns:
-            Finite-row source aligned with the objective.
-        """
-        return NamedBatchSource.from_pools(self._require_setup("fit"), {"data": "all"}, key, names=batch_keys)
-
-    def predict_batch_source(self) -> ChunkedPredictionSource:
-        """Build one ordered prediction source.
-
-        Returns:
-            Prediction source covering the complete scalar pool.
-        """
-        pool = self.prediction_pool()
-        if pool is None:
-            raise RuntimeError("Prediction data is unavailable.")
-        return ChunkedPredictionSource(pool, 2)
-
-    def prediction_pool(self) -> HostPool | None:
-        """Return the prepared prediction pool.
-
-        Returns:
-            Prepared prediction pool, or `None` during fitting.
-        """
-        return self.pools.get("predict")
 
 
 def _scalar_model_factory(
@@ -2690,6 +2655,20 @@ def test_concise_fit_defaults_to_equal_static_weights_and_predicts_from_result()
     )
 
 
+def test_concise_predict_with_all_rows_matches_chunked_prediction() -> None:
+    """Verify `batch_sizes["predict"] = "all"` predicts the same rows in one chunk as two-row chunks."""
+    trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]), logger=False)
+    data_module = _ConciseDataModule()
+    result = trainer.fit(_concise_module(), datamodule=data_module, optimizer=optax.sgd(1.0e-2), seed=3)
+    chunked = trainer.predict(result, datamodule=data_module)
+
+    data_module.batch_sizes = {**(data_module.batch_sizes or {}), "predict": "all"}
+    whole = trainer.predict(result, datamodule=data_module)
+
+    assert whole is not None
+    np.testing.assert_array_equal(whole, chunked)
+
+
 def test_concise_fit_tears_down_data_after_model_initialization_failure() -> None:
     """Verify Trainer releases a prepared DataModule when a lazy model factory fails."""
 
@@ -2709,6 +2688,7 @@ def test_concise_fit_tears_down_data_after_model_initialization_failure() -> Non
         raise RuntimeError("model initialization failed")
 
     data_module = _ConciseDataModule()
+    data_module.teardown = MagicMock()  # type: ignore[method-assign]
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
 
     with pytest.raises(RuntimeError, match="model initialization failed"):
@@ -2719,7 +2699,8 @@ def test_concise_fit_tears_down_data_after_model_initialization_failure() -> Non
             seed=0,
         )
 
-    assert data_module.prepared_stage is None
+    data_module.teardown.assert_called_once_with("fit")
+    assert trainer._data_stage is None
 
 
 def test_concise_fit_compiles_the_module_and_builds_the_adaptive_update_plan(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3134,7 +3115,6 @@ def test_trainer_fit_restores_checkpoint_state_internally(
         return restore(target, ckpt_path, weights_only=weights_only, step=ckpt_step), None
 
     monkeypatch.setattr(trainer, "_restore_state", restore_state)
-    fit_data_module = MagicMock()
     requested_steps: list[int] = []
 
     def batches(step: int) -> dict[str, jax.Array]:
@@ -3157,13 +3137,11 @@ def test_trainer_fit_restores_checkpoint_state_internally(
         batches,
         ckpt_path=tmp_path,
         ckpt_step=4,
-        datamodule=fit_data_module,
     )
 
     assert calls == [(tmp_path, False, 4)]
     assert requested_steps == [4]
     assert int(fit_result.state.step) == 5
-    fit_data_module.teardown_stage.assert_called_once_with("fit")
 
 
 def test_trainer_predicts_a_fit_result_with_the_checkpoint_model_state() -> None:
@@ -3270,9 +3248,9 @@ def test_trainer_predict_sets_up_and_uses_data_module_source() -> None:
     predictions = trainer.predict(_fit_result(_RecordingModule(), state), datamodule=data_module)
 
     np.testing.assert_array_equal(predictions, [[2.0], [4.0]])
-    data_module.prepare_stage.assert_called_once_with("predict", run_prepare_data=True, wait_for_prepare_data=ANY)
+    data_module.setup.assert_called_once_with("predict")
     data_module.predict_batch_source.assert_called_once_with()
-    data_module.teardown_stage.assert_called_once_with("predict")
+    data_module.teardown.assert_called_once_with("predict")
 
 
 def test_trainer_predict_skips_missing_data_module_source() -> None:
@@ -3290,8 +3268,8 @@ def test_trainer_predict_skips_missing_data_module_source() -> None:
 
     assert predictions is None
     assert callback.events == []
-    data_module.prepare_stage.assert_called_once_with("predict", run_prepare_data=True, wait_for_prepare_data=ANY)
-    data_module.teardown_stage.assert_called_once_with("predict")
+    data_module.setup.assert_called_once_with("predict")
+    data_module.teardown.assert_called_once_with("predict")
 
 
 @pytest.mark.parametrize("is_global_zero", [True, False], ids=["process-zero", "other-process"])
@@ -3303,18 +3281,55 @@ def test_trainer_prepares_data_only_on_process_zero_and_always_waits(is_global_z
     """
     strategy = SingleDeviceStrategy(jax.devices("cpu")[0])
     strategy.is_global_zero = is_global_zero
-    barriers: list[str] = []
-    strategy.barrier = barriers.append  # type: ignore[method-assign]
+    events: list[str] = []
+    strategy.barrier = events.append  # type: ignore[method-assign]
     data_module = MagicMock(spec=PhiDataModule)
+    data_module.prepare_data.side_effect = lambda: events.append("prepare_data")
+    data_module.setup.side_effect = events.append
+    data_module.teardown.side_effect = lambda stage: events.append(f"teardown:{stage}")
     data_module.predict_batch_source.return_value = None
     trainer = Trainer(max_steps=1, strategy=strategy, logger=False)
 
     trainer.predict(_fit_result(_RecordingModule(), _state()), datamodule=data_module)
 
-    call = data_module.prepare_stage.call_args
-    assert call.kwargs["run_prepare_data"] is is_global_zero
-    call.kwargs["wait_for_prepare_data"]()
-    assert barriers == ["phijax_prepare_data_predict"]
+    expected = ["phijax_prepare_data_predict", "predict", "teardown:predict"]
+    assert events == (["prepare_data", *expected] if is_global_zero else expected)
+
+
+def test_trainer_datamodule_stage_is_reused_and_conflicts_with_another_stage() -> None:
+    """Verify an active stage is set up once, and a different stage cannot start before it ends."""
+    data_module = MagicMock(spec=PhiDataModule)
+    trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]), logger=False)
+
+    with trainer._datamodule_stage(data_module, "fit"):
+        with trainer._datamodule_stage(data_module, "fit"):
+            assert trainer._data_stage == "fit"
+        with (
+            pytest.raises(RuntimeError, match="`fit` is still active"),
+            trainer._datamodule_stage(data_module, "predict"),
+        ):
+            pass
+        data_module.teardown.assert_not_called()
+
+    data_module.setup.assert_called_once_with("fit")
+    data_module.teardown.assert_called_once_with("fit")
+    assert trainer._data_stage is None
+
+
+def test_trainer_tears_down_datamodule_after_failed_setup() -> None:
+    """Verify a failed `setup()` is followed by `teardown()` and leaves no active stage."""
+    data_module = MagicMock(spec=PhiDataModule)
+    data_module.setup.side_effect = RuntimeError("synthetic setup failure")
+    trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]), logger=False)
+
+    with (
+        pytest.raises(RuntimeError, match="synthetic setup failure"),
+        trainer._datamodule_stage(data_module, "predict"),
+    ):
+        pass
+
+    data_module.teardown.assert_called_once_with("predict")
+    assert trainer._data_stage is None
 
 
 def test_trainer_prediction_context_exposes_source_pool_and_rank() -> None:

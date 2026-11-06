@@ -23,7 +23,7 @@ def _chunk_layout(row_count: int, batch_size: int) -> tuple[int, int]:
     if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count < 0:
         raise ValueError("Prediction row count must be a non-negative integer.")
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
-        raise ValueError("Prediction batch size must be a positive integer.")
+        raise ValueError("Prediction batch size must be a positive integer or `all`.")
     batch_count = max(1, (row_count + batch_size - 1) // batch_size)
     return batch_count, batch_count * batch_size
 

@@ -70,7 +70,7 @@ use the same prediction lifecycle.
 ```text
 Trainer.predict
 |
-+-- optional DataModule.prepare_stage("predict")
++-- optional DataModule.prepare_data() on global process zero, then setup("predict")
 +-- optional checkpoint weight restoration
 +-- Callback.setup()
 +-- BasePhiModule.setup()
@@ -97,7 +97,7 @@ Trainer.predict
 +-- logger.finalize("success")
 +-- Callback.teardown()
 +-- BasePhiModule.teardown()
-+-- optional DataModule.teardown_stage("predict")
++-- optional DataModule.teardown("predict")
 ```
 
 Prediction hooks only observe state. Override `predict_step()` to transform model outputs. Batch-end hooks receive

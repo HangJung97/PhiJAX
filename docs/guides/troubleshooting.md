@@ -82,15 +82,15 @@ those properties fixed between steps.
 
 ## A DataModule reports that another stage is active
 
-One DataModule cannot own fitting and prediction simultaneously. Pass it to `Trainer.fit()` and then pass the returned
-`FitResult` to `Trainer.predict()`. The Trainer prepares and tears down each stage. When manually calling
-`prepare_stage()`, pair it with
-`teardown_stage()` before starting a different stage.
+A Trainer runs one DataModule stage at a time. This error means a `fit()` or `predict()` call started inside another
+one, for example from a callback. Pass the DataModule to `Trainer.fit()`, and then pass the returned `FitResult` to
+`Trainer.predict()`. The Trainer sets up and tears down each stage.
 
 ## Prediction returns `None`
 
 This is expected when `predict_batch_source()` returns `None`. Prediction hooks are skipped cleanly for a fit-only
-DataModule. Implement both `predict_batch_source()` and `prediction_pool()` when prediction is required.
+DataModule. When prediction is required, set up a pool named `predict` and give it an entry in `batch_sizes`, or override
+`prediction_pool()` and `predict_batch_source()`.
 
 ## A checkpoint cannot be restored
 

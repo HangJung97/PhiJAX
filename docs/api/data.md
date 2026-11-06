@@ -13,16 +13,32 @@ Trainer prepares source and places batches
 teardown("fit" | "predict")
 ```
 
-`prepare_data` may generate or obtain shared artifacts. Build process-local NumPy pools in `setup`.
-`prepare_stage(stage)` runs these methods at most once until `teardown_stage(stage)` releases the stage. The Trainer
-prepares fitting before requesting optional model normalization statistics, then retrieves sources and handles
-teardown. The base `input_statistics()` returns `None`; override it to opt into input normalization. The Trainer stores
+`prepare_data` may generate or obtain shared artifacts. Build process-local NumPy pools in `setup`. The Trainer runs
+this lifecycle once per `fit()` or `predict()` call, and always calls `teardown()`, even after a failed `setup()`. It
+sets up fitting before requesting optional model normalization statistics, then retrieves sources. The base `input_statistics()` returns `None`; override it to opt into input normalization. The Trainer stores
 the returned statistics in `TrainState`, so a full resume and prediction from a checkpoint use the statistics the model
 was trained with. See [input normalization statistics](checkpointing.md#input-normalization-statistics). Override
 `input_periods()` to declare the physical period of periodic input axes; see
 [periodic features](models/layers.md#periodic-features). Return `None` from
 `predict_batch_source()` to skip prediction. Prediction sources must be finite and repeatable; training sources may
 sample indefinitely from the global optimizer step.
+
+### Default sources
+
+Most DataModules only build pools. Pass the source sizes to `PhiDataModule.__init__()` and override `setup()`:
+
+| Hook                                  | Default                                                                                        |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `train_batch_source(batch_keys, key)` | Random rows from the pool named by each batch key, sized by `batch_sizes`                      |
+| `prediction_pool()`                   | The pool named `predict`, or `None`                                                            |
+| `predict_batch_source()`              | `batch_sizes["predict"]` rows per device from `prediction_pool()`, or `None` without that pool |
+
+`batch_sizes["predict"]` may be `"all"`, which predicts the whole pool in one chunk split over the devices. This gives
+one compiled shape and no chunk loop, but the whole grid must fit in device memory in one forward pass. In training,
+`"all"` instead gives every device the full pool.
+
+A default source raises an error when a size is missing or a batch key names no pool. Override the hook for custom
+sampling, such as a [`SpaceTimeSampler`](#phijax.data.SpaceTimeSampler).
 
 ### Multi-process runs
 

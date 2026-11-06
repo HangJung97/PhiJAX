@@ -11,7 +11,7 @@ import optax
 
 from phijax import PhiModule, Trainer, hessian_diagonal, value_and_jacobian
 from phijax.callbacks import RichModelSummary, RichProgressBar
-from phijax.data import BatchSize, ChunkedPredictionSource, HostPool, NamedBatchSource, PhiDataModule, input_statistics
+from phijax.data import BatchSize, HostPool, PhiDataModule, input_statistics
 from phijax.data.datamodule import DataStage
 from phijax.equations import base_data_fidelity, residual_equation
 from phijax.evaluation import regression_metrics
@@ -105,15 +105,15 @@ class HeatDataModule(PhiDataModule):
             boundary_size: Number of time coordinates sampled on each boundary edge.
             pde_shape: Number of candidate coordinates along the time and space axes.
             predict_shape: Number of ordered prediction coordinates along the time and space axes.
-            batch_sizes: Optional per-pool training batch sizes. Finite pools also accept `"all"`.
+            batch_sizes: Optional per-pool batch sizes; `predict` sets the prediction chunk size. Finite pools also
+                accept `"all"`.
         """
-        super().__init__()
+        defaults = {"initial": 32, "boundary": 32, "pde": 64, "predict": 128}
+        super().__init__(batch_sizes=defaults if batch_sizes is None else batch_sizes)
         self.initial_size = initial_size
         self.boundary_size = boundary_size
         self.pde_shape = pde_shape
         self.predict_shape = predict_shape
-        defaults = {"initial": 32, "boundary": 32, "pde": 64}
-        self.batch_sizes = dict(defaults if batch_sizes is None else batch_sizes)
 
     def setup(self, stage: DataStage) -> None:
         """Construct immutable pools for one Trainer stage.
@@ -155,19 +155,6 @@ class HeatDataModule(PhiDataModule):
             return
         raise ValueError(f"Unsupported stage: {stage}")
 
-    def train_batch_source(self, batch_keys: tuple[str, ...], key: jax.Array) -> NamedBatchSource:
-        """Build deterministic finite-row training samplers.
-
-        Args:
-            batch_keys: Objective batch keys requested by the training plan.
-            key: Explicit root sampling key.
-
-        Returns:
-            Step-indexed initial, boundary, and collocation batches.
-        """
-        pools = self._require_setup("fit")
-        return NamedBatchSource.from_pools(pools, self.batch_sizes, key, names=batch_keys)
-
     def input_statistics(self) -> tuple[np.ndarray, np.ndarray]:
         """Compute normalization statistics from the finite training pools.
 
@@ -175,25 +162,6 @@ class HeatDataModule(PhiDataModule):
             Per-coordinate mean and safely positive standard deviation arrays.
         """
         return input_statistics(self.normalization_pools())
-
-    def predict_batch_source(self) -> ChunkedPredictionSource:
-        """Build finite ordered prediction batches.
-
-        Returns:
-            Prediction source with at most 128 coordinates per batch.
-        """
-        pool = self.prediction_pool()
-        if pool is None:
-            raise RuntimeError("Prediction data is unavailable before the `predict` stage is prepared.")
-        return ChunkedPredictionSource(pool, 128)
-
-    def prediction_pool(self) -> HostPool | None:
-        """Return the ordered pool represented by prediction batches.
-
-        Returns:
-            Prediction pool containing the analytical solution, or `None` during fitting.
-        """
-        return self.pools.get("predict")
 
 
 def _pool(

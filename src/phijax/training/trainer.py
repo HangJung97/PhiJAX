@@ -1,9 +1,8 @@
 import json
 import warnings
 from collections.abc import Callable, Collection, Generator, Iterable, Mapping, Sequence
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import replace
-from functools import partial
 from pathlib import Path
 from typing import Any, Self, cast
 
@@ -178,6 +177,7 @@ class Trainer:
         self._signal_connector = _SignalConnector()
         self._fit_loop = _FitLoop(self)
         self._prediction_loop = _PredictionLoop(self)
+        self._data_stage: DataStage | None = None
         for callback in self.callbacks:
             callback.connect(self)
         self.print_environment_info()
@@ -412,8 +412,7 @@ class Trainer:
             ValueError: If the balancer's loss names differ from the module's, the module declares no batch keys, or
                 checkpoint options are inconsistent.
         """
-        self._prepare_datamodule(datamodule, "fit")
-        try:
+        with self._datamodule_stage(datamodule, "fit"):
             root_key = _normalize_seed(seed)
             model_key, runtime_key, sampling_key, balancer_key = jax.random.split(root_key, 4)
             statistics = datamodule.input_statistics()
@@ -470,8 +469,6 @@ class Trainer:
                 hyperparameters=hyperparameters,
                 callback_states=callback_states,
             )
-        finally:
-            datamodule.teardown_stage("fit")
 
     def _run_fit(
         self,
@@ -509,7 +506,7 @@ class Trainer:
             ValueError: If neither `batches` nor a `datamodule` with `batch_keys` supplies a source.
             RuntimeError: If a custom training step does not increment `TrainState.step` exactly once.
         """
-        try:
+        with ExitStack() as stack:
             state = self.strategy.place_state(state)
             initial_step = _state_step(state)
             if batches is None:
@@ -517,7 +514,7 @@ class Trainer:
                     raise ValueError("Training requires explicit `batches`, or a `datamodule` with `batch_keys`.")
                 if state.sampling_key is None:
                     raise ValueError("A DataModule-owned training source requires `TrainState.sampling_key`.")
-                self._prepare_datamodule(datamodule, "fit")
+                stack.enter_context(self._datamodule_stage(datamodule, "fit"))
                 batches = datamodule.train_batch_source(batch_keys, self.strategy.process_key(state.sampling_key))
             batches = self.prepare_batch_source(batches)
             draw_update_batches = (
@@ -541,22 +538,42 @@ class Trainer:
                     replicated_batches=full_pools,
                     callback_states=callback_states,
                 )
-        finally:
-            if datamodule is not None:
-                datamodule.teardown_stage("fit")
 
-    def _prepare_datamodule(self, datamodule: PhiDataModule, stage: DataStage) -> None:
-        """Prepare a DataModule stage, running `prepare_data()` only on global process zero.
+    @contextmanager
+    def _datamodule_stage(self, datamodule: PhiDataModule, stage: DataStage) -> Generator[None, None, None]:
+        """Run one DataModule stage: prepare data, set up, and always tear down.
+
+        Like Lightning's data connector, the Trainer owns this bookkeeping. Global process zero runs `prepare_data()`,
+        and every process waits for it before `setup(stage)`. Entering the stage that is already active does nothing,
+        so `fit()` can set up its DataModule once for input statistics and the training source.
 
         Args:
-            datamodule: DataModule to prepare.
+            datamodule: DataModule to set up.
             stage: Requested `fit` or `predict` stage.
+
+        Yields:
+            Control while the stage is set up.
+
+        Raises:
+            RuntimeError: If a different DataModule stage is still active.
         """
-        datamodule.prepare_stage(
-            stage,
-            run_prepare_data=self.strategy.is_global_zero,
-            wait_for_prepare_data=partial(self.strategy.barrier, f"phijax_prepare_data_{stage}"),
-        )
+        if self._data_stage == stage:
+            yield
+            return
+        if self._data_stage is not None:
+            raise RuntimeError(f"DataModule stage `{self._data_stage}` is still active; it must end before `{stage}`.")
+        self._data_stage = stage
+        try:
+            if self.strategy.is_global_zero:
+                datamodule.prepare_data()
+            self.strategy.barrier(f"phijax_prepare_data_{stage}")
+            datamodule.setup(stage)
+            yield
+        finally:
+            try:
+                datamodule.teardown(stage)
+            finally:
+                self._data_stage = None
 
     def _diagnostic_batches(
         self,
@@ -657,11 +674,11 @@ class Trainer:
                 "Predicting with a module blueprint requires `ckpt_path`. Pass the `FitResult` returned by `fit()` to "
                 "predict with in-memory state."
             )
-        try:
+        with ExitStack() as stack:
             if batches is None:
                 if datamodule is None:
                     return None
-                self._prepare_datamodule(datamodule, "predict")
+                stack.enter_context(self._datamodule_stage(datamodule, "predict"))
                 batches = datamodule.predict_batch_source()
                 if batches is None:
                     return None
@@ -676,9 +693,6 @@ class Trainer:
                     metadata=metadata,
                     return_predictions=return_predictions,
                 )
-        finally:
-            if datamodule is not None:
-                datamodule.teardown_stage("predict")
 
     def _load_prediction_model(
         self,
@@ -720,11 +734,8 @@ class Trainer:
                         UserWarning,
                         stacklevel=3,
                     )
-                    self._prepare_datamodule(datamodule, "fit")
-                    try:
+                    with self._datamodule_stage(datamodule, "fit"):
                         statistics, periods = datamodule.input_statistics(), datamodule.input_periods()
-                    finally:
-                        datamodule.teardown_stage("fit")
             with jax.default_device(self.strategy.root_device):
                 if isinstance(model, FitResult):
                     module = model.module.bind_inputs(as_input_statistics(statistics), periods)
