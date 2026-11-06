@@ -78,6 +78,7 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
     # Prediction splits each chunk over both processes and gathers complete, ordered outputs on every process.
     assert len(full["prediction"]["values"]) == 10
     assert full["prediction"]["max_error"] < 1e-6
+    assert full["prediction"]["checkpoint_max_error"] == 0.0
     assert results[0]["full"]["prediction"] == results[1]["full"]["prediction"]
     # Different seeds per process are rejected on every process instead of silently diverging.
     for result in results:
@@ -123,6 +124,7 @@ def test_single_process_fit_and_prediction_use_per_device_sizes(tmp_path: Path) 
     assert all(len(batch) == 4 * 4 for batch in result["batches"].values())
     assert len(result["prediction"]["values"]) == 10
     assert result["prediction"]["max_error"] < 1e-6
+    assert result["prediction"]["checkpoint_max_error"] == 0.0
 
     # Six `all` rows do not divide over four devices; replicated, they train exactly as on one device.
     full_pool, reference = results["full_pool"], results["full_pool_one_device"]

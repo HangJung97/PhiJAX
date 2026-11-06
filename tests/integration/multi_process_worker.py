@@ -198,9 +198,12 @@ def _fit(
         # Evaluate this process's copy of the replicated state on one local device as the reference.
         local_state = jax.tree.map(lambda leaf: leaf.addressable_data(0), result.state.model_state)
         expected = result.module.predict_step(local_state, {"inputs": jnp.asarray(data_module.pools["predict"].inputs)})
+        # The blueprint is restored from the terminal checkpoint, which stores the final model state.
+        from_checkpoint = trainer.predict(module, ckpt_path=directory, datamodule=_LineDataModule())
         prediction = {
             "values": np.asarray(predictions).reshape(-1).tolist(),
             "max_error": float(np.max(np.abs(np.asarray(predictions) - np.asarray(expected)))),
+            "checkpoint_max_error": float(np.max(np.abs(np.asarray(from_checkpoint) - np.asarray(predictions)))),
         }
     return {
         "batches": recorder.batches,

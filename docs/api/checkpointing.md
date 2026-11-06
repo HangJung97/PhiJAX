@@ -105,10 +105,9 @@ Training accepts `ckpt_path=None` for fresh initialization. Standalone predictio
 explicit `step` chooses an exact committed step; `None` selects the latest.
 
 `Trainer.fit(..., ckpt_path=...)` restores the full state by default. Set `weights_only=True` to load only model
-weights, or set `ckpt_path="last"` to use the latest checkpoint from the configured callback. `predict_state()`
-restores the checkpoint's model state and input statistics into the supplied state template when a path is provided.
-The template must have the same model, optimizer, and balancer structure. Use `restore_checkpoint()` directly only when
-managing state outside the Trainer.
+weights, or set `ckpt_path="last"` to use the latest checkpoint from the configured callback.
+`Trainer.predict(module, ckpt_path=...)` builds the module's model with the checkpoint's input statistics and periods
+and restores only its model state. Use `restore_checkpoint()` directly only when managing state outside the Trainer.
 
 ### Model weights only
 
@@ -142,12 +141,12 @@ The statistics are never differentiated or updated by the optimizer. `TrainState
 physical periods the model applies with the same rules, except that periods configured in
 `periodic_features_kwargs` always win; see [periodic features](models/layers.md#periodic-features).
 
-| Task                                   | Statistics used                                          |
-| -------------------------------------- | -------------------------------------------------------- |
-| `Trainer.fit()` without a checkpoint   | Current DataModule                                       |
-| `Trainer.fit()` full resume            | Checkpoint; the module is rebound before training starts |
-| `Trainer.fit(..., weights_only=True)`  | Current DataModule (the transfer target)                 |
-| `Trainer.predict_state(ckpt_path=...)` | Checkpoint; the module is rebound before prediction      |
+| Task                                  | Statistics used                                          |
+| ------------------------------------- | -------------------------------------------------------- |
+| `Trainer.fit()` without a checkpoint  | Current DataModule                                       |
+| `Trainer.fit()` full resume           | Checkpoint; the module is rebound before training starts |
+| `Trainer.fit(..., weights_only=True)` | Current DataModule (the transfer target)                 |
+| `Trainer.predict(..., ckpt_path=...)` | Checkpoint; the module is built or rebound for them      |
 
 Transfer learning uses the target statistics by default. To start from the source model's statistics, or to mix them
 per coordinate, return [`load_input_statistics()`](#phijax.training.load_input_statistics) from the target DataModule:
@@ -175,11 +174,16 @@ restored statistics differ from the module's. Rebuild the module and plan with t
 
 ::: phijax.training.load_input_statistics
 
+::: phijax.training.LegacyCheckpointError
+
 ### Checkpoint schema
 
 PhiJAX 0.2 checkpoints use schema version 3, which adds `TrainState.input_statistics`. Schema-2 checkpoints, written by
 PhiJAX 0.2.0b5 and earlier, still restore. They do not contain statistics, so the restored state keeps the template's
-statistics, which the Trainer takes from the current DataModule, and PhiJAX emits a `UserWarning`. PhiJAX 0.1
+statistics, which the Trainer takes from the current DataModule, and PhiJAX emits a `UserWarning`. Reading their inputs
+alone raises [`LegacyCheckpointError`](#phijax.training.LegacyCheckpointError), because "none stored" cannot be told
+apart from a model trained without normalization. `Trainer.predict(module, ckpt_path=...)` then sets up the fit stage
+of `datamodule` and uses its statistics and periods, with a warning; a `FitResult` keeps its module's values. PhiJAX 0.1
 checkpoints remain readable by 0.1; 0.2 rejects them rather than partially restoring incompatible state.
 
 Each manifest also stores an identifier of the model-state structure, which model-only restores check. Checkpoints

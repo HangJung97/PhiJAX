@@ -119,7 +119,10 @@ class CheckpointIO(Protocol):
             step: Checkpoint step, or `None` for the latest checkpoint.
 
         Returns:
-            Stored statistics, or `None` when the checkpoint stores none.
+            Stored statistics, or `None` when the model was trained without input normalization.
+
+        Raises:
+            phijax.training.LegacyCheckpointError: If the checkpoint predates stored input statistics.
         """
         ...
 
@@ -130,7 +133,10 @@ class CheckpointIO(Protocol):
             step: Checkpoint step, or `None` for the latest checkpoint.
 
         Returns:
-            Stored `(axis, period)` pairs, or `None` when the checkpoint stores none.
+            Stored `(axis, period)` pairs, or `None` when the model applies no periods.
+
+        Raises:
+            phijax.training.LegacyCheckpointError: If the checkpoint predates stored input periods.
         """
         ...
 

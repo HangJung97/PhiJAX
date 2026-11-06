@@ -6,20 +6,20 @@ under names that describe its state-level contract.
 
 ## API replacements
 
-| PhiJAX 0.1                                                       | PhiJAX 0.2                                                          |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `PhiModule(model_apply, objective, model_summary=...)`           | `PhiModule(model_factory, objective)`                               |
-| `initialize_state()` + `compile_train_step()` + `TrainingPlan()` | `Trainer.fit(..., optimizer=..., seed=...)`                         |
-| `Trainer.fit(module, plan, state, ...)`                          | `Trainer.fit_state(module, plan, state, ...)`                       |
-| `Trainer.predict(module, state, ...)`                            | `Trainer.predict_state(module, state, ...)`                         |
-| Explicit post-fit module and state                               | `Trainer.predict(fit_result, ...)`                                  |
-| `resume_latest(...)`                                             | `fit(..., ckpt_path="last")`                                        |
-| `MetricRoute` and `configure_metric_routes()`                    | `self.log(..., logger=..., prog_bar=...)` in `on_train_batch_end()` |
-| `from phijax.module import PhiModule`                            | `from phijax import PhiModule`                                      |
-| `from phijax.module import BasePhiModule`                        | `from phijax.core import BasePhiModule`                             |
-| `from phijax.training.trainer import FitResult`                  | `from phijax.training import FitResult`                             |
-| `trainer.set_logger(instantiate_loggers(cfg.logger, trainer))`   | `instantiate_trainer(cfg.trainer, callbacks, logger=loggers)`       |
-| `batch["mask"]` in prediction batches                            | `batch["valid_predict_mask"]`                                       |
+| PhiJAX 0.1                                                       | PhiJAX 0.2                                                             |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `PhiModule(model_apply, objective, model_summary=...)`           | `PhiModule(model_factory, objective)`                                  |
+| `initialize_state()` + `compile_train_step()` + `TrainingPlan()` | `Trainer.fit(..., optimizer=..., seed=...)`                            |
+| `Trainer.fit(module, plan, state, ...)`                          | `Trainer.fit_state(module, plan, state, ...)`                          |
+| `Trainer.predict(module, state, ...)`                            | `Trainer.predict(fit_result, ...)` or `predict(module, ckpt_path=...)` |
+| Explicit post-fit module and state                               | `Trainer.predict(fit_result, ...)`                                     |
+| `resume_latest(...)`                                             | `fit(..., ckpt_path="last")`                                           |
+| `MetricRoute` and `configure_metric_routes()`                    | `self.log(..., logger=..., prog_bar=...)` in `on_train_batch_end()`    |
+| `from phijax.module import PhiModule`                            | `from phijax import PhiModule`                                         |
+| `from phijax.module import BasePhiModule`                        | `from phijax.core import BasePhiModule`                                |
+| `from phijax.training.trainer import FitResult`                  | `from phijax.training import FitResult`                                |
+| `trainer.set_logger(instantiate_loggers(cfg.logger, trainer))`   | `instantiate_trainer(cfg.trainer, callbacks, logger=loggers)`          |
+| `batch["mask"]` in prediction batches                            | `batch["valid_predict_mask"]`                                          |
 
 Top-level imports are the recommended application API. PhiJAX 0.2 removes the old `phijax.module` path; custom module
 implementations that need a deep import should use `phijax.core`.
@@ -152,6 +152,19 @@ template instead of a full state.
 
 Outside the Trainer, `load_model_state(ckpt_path, state.model_state)` opens the checkpoint, restores the model
 state, and closes it.
+
+### Prediction from a checkpoint
+
+From PhiJAX 0.2.0b6, `Trainer.predict()` accepts a module blueprint with `ckpt_path`, and `Trainer.predict_state()` is
+removed. A prediction script no longer builds a training-state template, so it needs no optimizer, balancer, or seed.
+
+| PhiJAX 0.2.0b5 and earlier                                                     | PhiJAX 0.2.0b6 and later                         |
+| ------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `prepare_model()` + `initialize_state()` + `predict_state(..., ckpt_path=...)` | `predict(module, ckpt_path=..., datamodule=...)` |
+| `predict_state(fit_result.module, fit_result.state, ...)`                      | `predict(fit_result, ...)`                       |
+
+Checkpoints written by 0.2.0b5 store no input statistics or periods, so prediction takes them from the fit stage of
+`datamodule` and warns.
 
 ### Global `max_steps`
 

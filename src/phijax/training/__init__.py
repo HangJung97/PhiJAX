@@ -1,7 +1,13 @@
 from phijax.core import BasePhiModule, PhiModule, PhiModuleContext
 from phijax.metrics import TrainingOutput
 from phijax.training.assembly import build_training_plan
-from phijax.training.checkpointing import OrbaxCheckpointIO, load_input_statistics, load_model_state, restore_checkpoint
+from phijax.training.checkpointing import (
+    LegacyCheckpointError,
+    OrbaxCheckpointIO,
+    load_input_statistics,
+    load_model_state,
+    restore_checkpoint,
+)
 from phijax.training.loggers import (
     ConsoleLogger,
     CSVLogger,
@@ -44,6 +50,7 @@ __all__ = [
     "ExperimentLogger",
     "FitResult",
     "InputStatistics",
+    "LegacyCheckpointError",
     "LoggerCollection",
     "MatmulPrecision",
     "OrbaxCheckpointIO",
