@@ -14,18 +14,18 @@ import numpy as np
 import orbax.checkpoint as ocp
 
 from phijax.training.state import TrainState
-from phijax.types import InputStatistics, as_input_periods
+from phijax.types import InputStatistics, ResolvedInputPeriods, as_input_periods
 
 _CHECKPOINT_SCHEMA_VERSION = 3
 # Schema 2 (PhiJAX 0.2.0b5 and earlier) predates `TrainState.input_statistics` and is still restorable.
 _LEGACY_SCHEMA_VERSION = 2
 
 
-def _state_identifier(state: TrainState) -> str:
+def _state_identifier(state: Any) -> str:
     """Create a stable identifier from state paths, shapes, and dtypes.
 
     Args:
-        state: Training-state PyTree used as a save value or restore template.
+        state: Training-state or model-state PyTree used as a save value or restore template.
 
     Returns:
         Hexadecimal SHA-256 digest describing the state structure.
@@ -108,6 +108,8 @@ def _checkpoint_metadata(
             "phijax_version": version("phijax"),
             "step": step,
             "state_identifier": _state_identifier(state),
+            # Model-only restores check this without an optimizer or balancer template.
+            "model_state_identifier": _state_identifier(state.model_state),
             "input_statistics": layout,
             # Periods are static metadata rather than array state, so the manifest stores their values.
             "input_periods": None if state.input_periods is None else {str(axis): T for axis, T in state.input_periods},
@@ -349,6 +351,9 @@ class OrbaxCheckpointIO:
                 valid_periods = False
             if not valid_periods:
                 raise ValueError("Checkpoint input-periods metadata is missing or malformed.")
+            # Development schema-3 checkpoints were written before this identifier existed.
+            if not isinstance(metadata.get("model_state_identifier", ""), str):
+                raise ValueError("Checkpoint model-state identifier is malformed.")
         return metadata
 
     def _validate_metadata(self, target: TrainState, step: int) -> dict[str, Any]:
@@ -405,18 +410,56 @@ class OrbaxCheckpointIO:
         statistics = restored["input_statistics"]
         return InputStatistics(mean=statistics["mean"], std=statistics["std"])
 
-    def restore_weights(self, target: TrainState, step: int | None = None) -> TrainState:
-        """Restore model weights while preserving fresh optimization and run state.
+    def restore_input_periods(self, step: int | None = None) -> ResolvedInputPeriods | None:
+        """Read the stored physical periods of periodic input axes.
 
         Args:
-            target: Fresh training state defining both restore structure and preserved non-model fields.
             step: Checkpoint step, or `None` for the latest committed step.
 
         Returns:
-            `target` with only `model_state` replaced from the checkpoint. The target's input statistics are kept.
+            Stored `(axis, period)` pairs, or `None` when the model applies no periods or the checkpoint predates stored
+            periods.
+
+        Raises:
+            FileNotFoundError: If no requested checkpoint exists.
+            ValueError: If the checkpoint manifest is absent or incompatible with this runtime.
         """
-        restored = self.restore(target, step)
-        return replace(target, model_state=restored.model_state)
+        return as_input_periods(self._read_manifest(self._resolve_step(step)).get("input_periods"))
+
+    def restore_model_state(self, target: Any, step: int | None = None) -> Any:
+        """Restore only the model state, without reading optimizer, balancer, or run state.
+
+        Prediction and weights-only transfer use this, so the template needs no optimizer or balancer.
+
+        Args:
+            target: Model-state PyTree defining the expected structure, dtypes, and sharding. Abstract
+                `jax.ShapeDtypeStruct` leaves need a `sharding`; without one, Orbax restores NumPy arrays.
+            step: Checkpoint step, or `None` for the latest committed step.
+
+        Returns:
+            Restored model state with the structure and sharding of `target`.
+
+        Raises:
+            FileNotFoundError: If no requested checkpoint exists.
+            ValueError: If the manifest is incompatible, or the stored model state differs from `target` in structure,
+                shape, or dtype.
+        """
+        resolved_step = self._resolve_step(step)
+        identifier = self._read_manifest(resolved_step).get("model_state_identifier")
+        # Checkpoints without the identifier still fail in Orbax when a stored shape differs.
+        if identifier is not None and identifier != _state_identifier(target):
+            raise ValueError("Checkpoint model state does not match the supplied model-state template.")
+        item = {"model_state": target}
+        restored = ocp.PyTreeCheckpointer().restore(
+            # `CheckpointManager` stores its single unnamed item under `default`.
+            self.checkpoint_path(resolved_step) / "default",
+            args=ocp.args.PyTreeRestore(
+                item,
+                restore_args=ocp.checkpoint_utils.construct_restore_args(item),
+                partial_restore=True,
+            ),
+        )
+        return restored["model_state"]
 
     def restore_callback_states(self, step: int | None = None) -> dict[str, Mapping[str, Any]]:
         """Restore JSON-compatible callback states from checkpoint metadata.
@@ -513,7 +556,7 @@ def restore_checkpoint(
         raise ValueError("`ckpt_step` must be a nonnegative integer or `None`.")
     with OrbaxCheckpointIO(ckpt_path, enable_async_checkpointing=False) as checkpoint_io:
         if weights_only:
-            return checkpoint_io.restore_weights(target, step)
+            return replace(target, model_state=checkpoint_io.restore_model_state(target.model_state, step))
         return checkpoint_io.restore(target, step)
 
 
@@ -540,4 +583,28 @@ def load_input_statistics(ckpt_path: str | Path, *, step: int | None = None) -> 
         return checkpoint_io.restore_input_statistics(step)
 
 
-__all__ = ["OrbaxCheckpointIO", "load_input_statistics", "restore_checkpoint"]
+def load_model_state(ckpt_path: str | Path, target: Any, *, step: int | None = None) -> Any:
+    """Read the model state stored in a checkpoint without restoring optimizer, balancer, or run state.
+
+    Use this to load trained weights outside the Trainer, for example into a fresh state with another optimizer:
+    `replace(state, model_state=load_model_state(path, state.model_state))`.
+
+    Args:
+        ckpt_path: Orbax checkpoint-root directory.
+        target: Model-state PyTree defining the expected structure, dtypes, and sharding. Abstract
+            `jax.ShapeDtypeStruct` leaves need a `sharding`; without one, Orbax restores NumPy arrays.
+        step: Checkpoint step, or `None` for the latest committed step.
+
+    Returns:
+        Restored model state with the structure and sharding of `target`.
+
+    Raises:
+        FileNotFoundError: If the requested checkpoint does not exist.
+        ValueError: If the manifest is incompatible, or the stored model state differs from `target` in structure,
+            shape, or dtype.
+    """
+    with OrbaxCheckpointIO(ckpt_path, enable_async_checkpointing=False) as checkpoint_io:
+        return checkpoint_io.restore_model_state(target, step)
+
+
+__all__ = ["OrbaxCheckpointIO", "load_input_statistics", "load_model_state", "restore_checkpoint"]

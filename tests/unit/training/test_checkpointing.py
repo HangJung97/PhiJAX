@@ -12,7 +12,7 @@ import pytest
 
 from phijax import __version__ as phijax_version
 from phijax.balancers import BalancerState
-from phijax.training import InputStatistics, OrbaxCheckpointIO, TrainState, load_input_statistics
+from phijax.training import InputStatistics, OrbaxCheckpointIO, TrainState, load_input_statistics, load_model_state
 from phijax.training import checkpointing as checkpointing_module
 
 
@@ -50,7 +50,7 @@ def test_orbax_checkpoint_supports_resume_and_weights_only_loading(tmp_path: Pat
         checkpoint_io.wait_until_finished()
         manifest = checkpoint_io._active_manager().metadata(4).custom_metadata["phijax"]
         resumed = checkpoint_io.restore(target)
-        weights_only = checkpoint_io.restore_weights(target)
+        weights_only = dataclasses.replace(target, model_state=checkpoint_io.restore_model_state(target.model_state))
         restored_callback_states = checkpoint_io.restore_callback_states()
 
     assert float(resumed.model_state["weight"]) == 2.0
@@ -196,6 +196,17 @@ def test_checkpoint_state_identifier_tracks_structure_not_values() -> None:
             },
             "input-periods",
         ),
+        (
+            {
+                "schema_version": 3,
+                "phijax_version": phijax_version,
+                "step": 4,
+                "input_statistics": None,
+                "input_periods": None,
+                "model_state_identifier": 5,
+            },
+            "model-state identifier",
+        ),
     ],
 )
 def test_checkpoint_manifest_rejects_incompatible_producers(metadata: dict[str, object], message: str) -> None:
@@ -243,7 +254,7 @@ def test_full_restore_uses_checkpoint_input_statistics(tmp_path: Path, template_
         checkpoint_io.save(source, 4)
         manifest = checkpoint_io._active_manager().metadata(4).custom_metadata["phijax"]
         resumed = checkpoint_io.restore(target)
-        weights_only = checkpoint_io.restore_weights(target)
+        weights_only = dataclasses.replace(target, model_state=checkpoint_io.restore_model_state(target.model_state))
 
     assert manifest["schema_version"] == 3
     assert manifest["input_statistics"] == {"shape": [2], "dtype": "float32"}
@@ -387,7 +398,7 @@ def test_full_restore_uses_checkpoint_input_periods(tmp_path: Path, template_per
         checkpoint_io.save(source, 4)
         manifest = checkpoint_io._active_manager().metadata(4).custom_metadata["phijax"]
         resumed = checkpoint_io.restore(target)
-        weights_only = checkpoint_io.restore_weights(target)
+        weights_only = dataclasses.replace(target, model_state=checkpoint_io.restore_model_state(target.model_state))
 
     assert manifest["input_periods"] == {"1": 0.84}
     assert resumed.input_periods == ((1, 0.84),)
@@ -395,3 +406,70 @@ def test_full_restore_uses_checkpoint_input_periods(tmp_path: Path, template_per
     assert weights_only.input_periods == template_periods
     # Periods are static metadata, so they do not change the stored array structure.
     assert checkpointing_module._state_identifier(source) == checkpointing_module._state_identifier(target)
+
+
+def test_model_state_restores_without_optimizer_or_balancer_templates(tmp_path: Path) -> None:
+    """Verify a model-only restore needs only a model-state template, concrete or abstract.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+    directory = tmp_path / "checkpoints"
+    source = dataclasses.replace(_state(weight=2.0, slot=3.0, step=4), input_periods=((1, 0.84),))
+    with OrbaxCheckpointIO(directory, enable_async_checkpointing=False) as checkpoint_io:
+        checkpoint_io.save(source, 4)
+        manifest = checkpoint_io._active_manager().metadata(4).custom_metadata["phijax"]
+        concrete = checkpoint_io.restore_model_state({"weight": jnp.asarray(9.0)})
+        sharding = jax.sharding.SingleDeviceSharding(jax.devices("cpu")[0])
+        abstract_template = {"weight": jax.ShapeDtypeStruct((), jnp.float32, sharding=sharding)}
+        abstract = checkpoint_io.restore_model_state(abstract_template, step=4)
+        periods = checkpoint_io.restore_input_periods()
+
+    assert manifest["model_state_identifier"] == checkpointing_module._state_identifier(source.model_state)
+    assert float(concrete["weight"]) == 2.0
+    assert float(abstract["weight"]) == 2.0
+    assert isinstance(abstract["weight"], jax.Array)
+    assert abstract["weight"].sharding == sharding
+    assert periods == ((1, 0.84),)
+    assert float(load_model_state(directory, {"weight": jnp.asarray(0.0)})["weight"]) == 2.0
+    with pytest.raises(FileNotFoundError):
+        load_model_state(tmp_path / "missing", {"weight": jnp.asarray(0.0)})
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        {"weight": jnp.zeros(3)},
+        {"weight": jnp.asarray(0.0, jnp.float16)},
+        {"weight": jnp.asarray(0.0), "bias": jnp.asarray(0.0)},
+    ],
+    ids=["shape", "dtype", "structure"],
+)
+def test_model_state_restore_rejects_a_different_model(tmp_path: Path, template: dict[str, jax.Array]) -> None:
+    """Verify a model-only restore rejects a template whose shape, dtype, or structure differs from the stored model.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+        template: Mismatched model-state template.
+    """
+    with OrbaxCheckpointIO(tmp_path / "checkpoints", enable_async_checkpointing=False) as checkpoint_io:
+        checkpoint_io.save(_state(weight=2.0, slot=3.0, step=4), 4)
+        with pytest.raises(ValueError, match="model-state template"):
+            checkpoint_io.restore_model_state(template)
+
+
+def test_schema_2_checkpoint_restores_model_state_without_an_identifier(tmp_path: Path) -> None:
+    """Verify checkpoints written before the model-state identifier still restore model-only and report no periods.
+
+    Args:
+        tmp_path: Temporary checkpoint root.
+    """
+    directory = tmp_path / "checkpoints"
+    _write_schema_2_checkpoint(directory, _state(weight=2.0, slot=3.0, step=4), 4)
+
+    with OrbaxCheckpointIO(directory, enable_async_checkpointing=False) as checkpoint_io:
+        restored = checkpoint_io.restore_model_state({"weight": jnp.asarray(9.0)})
+        periods = checkpoint_io.restore_input_periods()
+
+    assert float(restored["weight"]) == 2.0
+    assert periods is None

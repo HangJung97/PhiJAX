@@ -1,7 +1,7 @@
 from phijax.core import BasePhiModule, PhiModule, PhiModuleContext
 from phijax.metrics import TrainingOutput
 from phijax.training.assembly import build_training_plan
-from phijax.training.checkpointing import OrbaxCheckpointIO, load_input_statistics, restore_checkpoint
+from phijax.training.checkpointing import OrbaxCheckpointIO, load_input_statistics, load_model_state, restore_checkpoint
 from phijax.training.loggers import (
     ConsoleLogger,
     CSVLogger,
@@ -67,6 +67,7 @@ __all__ = [
     "initialize_distributed",
     "initialize_train_state",
     "load_input_statistics",
+    "load_model_state",
     "make_train_step",
     "restore_checkpoint",
 ]

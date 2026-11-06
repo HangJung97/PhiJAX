@@ -98,7 +98,7 @@ class in the same order when resuming.
 | Mode                | Restored state                                                           | Input statistics |
 | ------------------- | ------------------------------------------------------------------------ | ---------------- |
 | Full resume         | Model, optimizer, balancer, all PRNG streams, step, and precision fields | Checkpoint       |
-| `weights_only=True` | Model state only; all other template state remains fresh                 | Target           |
+| `weights_only=True` | Model state only; the template's optimizer and balancer may differ       | Target           |
 | `ckpt_path=None`    | Target is returned unchanged                                             | Target           |
 
 Training accepts `ckpt_path=None` for fresh initialization. Standalone prediction requires a checkpoint root. An
@@ -109,6 +109,29 @@ weights, or set `ckpt_path="last"` to use the latest checkpoint from the configu
 restores the checkpoint's model state and input statistics into the supplied state template when a path is provided.
 The template must have the same model, optimizer, and balancer structure. Use `restore_checkpoint()` directly only when
 managing state outside the Trainer.
+
+### Model weights only
+
+A weights-only restore reads only `model_state`. The optimizer, balancer, and run state never leave the checkpoint, so
+`Trainer.fit(..., weights_only=True)` works after switching, for example, from Adam to SGD. The model itself must match:
+a different structure, shape, or dtype raises `ValueError`.
+
+To load trained weights outside the Trainer, pass a model-state template to
+[`load_model_state()`](#phijax.training.load_model_state):
+
+```python
+from dataclasses import replace
+
+from phijax.training import load_model_state
+
+# `state` is a fresh TrainState for the same model; only its `model_state` is replaced.
+state = replace(state, model_state=load_model_state("runs/source/checkpoints", state.model_state))
+```
+
+The template sets where the restored arrays live. Concrete arrays keep their sharding; abstract
+`jax.ShapeDtypeStruct` leaves need a `sharding`, or the result holds NumPy arrays.
+
+::: phijax.training.load_model_state
 
 ### Input normalization statistics
 
@@ -158,3 +181,6 @@ PhiJAX 0.2 checkpoints use schema version 3, which adds `TrainState.input_statis
 PhiJAX 0.2.0b5 and earlier, still restore. They do not contain statistics, so the restored state keeps the template's
 statistics, which the Trainer takes from the current DataModule, and PhiJAX emits a `UserWarning`. PhiJAX 0.1
 checkpoints remain readable by 0.1; 0.2 rejects them rather than partially restoring incompatible state.
+
+Each manifest also stores an identifier of the model-state structure, which model-only restores check. Checkpoints
+written before PhiJAX 0.2.0b6 lack it; Orbax still rejects a model whose stored shapes differ.

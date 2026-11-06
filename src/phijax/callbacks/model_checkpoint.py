@@ -7,6 +7,7 @@ import jax
 import numpy as np
 
 from phijax.callbacks.base import Callback, CallbackContext, MonitorMode, TrainerContext
+from phijax.types import InputStatistics, ResolvedInputPeriods
 
 if TYPE_CHECKING:
     from phijax.training.trainer import Trainer
@@ -99,15 +100,37 @@ class CheckpointIO(Protocol):
         """
         ...
 
-    def restore_weights(self, target: Any, step: int | None = None) -> Any:
-        """Restore model weights into a fresh state.
+    def restore_model_state(self, target: Any, step: int | None = None) -> Any:
+        """Restore only the model state, without optimizer, balancer, or run state.
 
         Args:
-            target: Fresh state whose non-model fields are preserved.
+            target: Model-state PyTree defining the expected structure, dtypes, and sharding.
             step: Checkpoint step, or `None` for the latest checkpoint.
 
         Returns:
-            State containing restored model weights.
+            Restored model state.
+        """
+        ...
+
+    def restore_input_statistics(self, step: int | None = None) -> InputStatistics | None:
+        """Read the stored model-input normalization statistics.
+
+        Args:
+            step: Checkpoint step, or `None` for the latest checkpoint.
+
+        Returns:
+            Stored statistics, or `None` when the checkpoint stores none.
+        """
+        ...
+
+    def restore_input_periods(self, step: int | None = None) -> ResolvedInputPeriods | None:
+        """Read the stored physical periods of periodic input axes.
+
+        Args:
+            step: Checkpoint step, or `None` for the latest checkpoint.
+
+        Returns:
+            Stored `(axis, period)` pairs, or `None` when the checkpoint stores none.
         """
         ...
 
