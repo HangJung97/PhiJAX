@@ -162,7 +162,6 @@ result = trainer.fit(
 The balancer diagnostics expose every current weight as `weight/<loss_name>`. `PhiModule` adds the `train/` prefix, so
 users see `train/weight/<loss_name>` in progress metrics and experiment logs. See
 [Logged metrics](../api/balancers.md#logged-metrics) for the additional diagnostics produced by adaptive built-ins.
-Advanced applications can initialize the balancer state directly and pass an explicit plan to `Trainer.fit_state()`.
 
 ## Adaptive custom balancers
 
@@ -229,8 +228,7 @@ The constructor validates numerical and scheduling options before fitting. When 
 first update occurs after one complete interval. The cadence is anchored to an explicit start: a start of `50` and an
 interval of `100` updates at steps `50`, `150`, and `250`. `build_update_plan()` converts that typed configuration into
 the single runtime contract consumed by the Trainer. A new adaptive balancer therefore needs no Trainer changes, and
-its numerical update stays outside callbacks. Advanced users place a complete `BalancerUpdatePlan` in
-`TrainingPlan.balancer_update`; no separate schedule wrapper is required.
+its numerical update stays outside callbacks.
 
 ## Testing a custom balancer
 

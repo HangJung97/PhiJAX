@@ -1,6 +1,6 @@
-# Training state and plans
+# Training state and results
 
-This page documents the explicit state and compiled-step contracts. Most applications can use
+This page documents the functional state and fit-result contracts. Most applications can use
 [`Trainer.fit()`](trainer.md#phijax.training.Trainer.fit) and do not need to construct these objects directly. See the
 [training guide](../guides/training.md) for the common workflow and the [Trainer reference](trainer.md) for runtime
 options.
@@ -14,25 +14,11 @@ field. The statistics are never differentiated; see
 
 ::: phijax.training.TrainState
 
-::: phijax.training.initialize_train_state
+## Fit results
 
-## Compiled update
-
-`make_train_step()` creates one JIT-compiled numerical update. It evaluates the objective, combines its losses,
-computes gradients, applies the Optax transformation, and returns the updated state and metrics.
-
-::: phijax.training.make_train_step
-
-## Fit results and plans
-
-`FitResult` returns the bound module and final functional state. `TrainingPlan` describes an explicit compiled update,
-loss balancer, and optional adaptive-balancer update. These contracts power `Trainer.fit_state()`.
+`FitResult` returns the bound module and final functional state. Pass it to `Trainer.predict()` to predict in memory.
 
 ::: phijax.training.FitResult
-
-::: phijax.training.TrainingPlan
-
-::: phijax.training.build_training_plan
 
 ## Training output
 

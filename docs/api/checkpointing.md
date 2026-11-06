@@ -166,10 +166,6 @@ class TransferDataModule(ApplicationDataModule):
         return mean, std
 ```
 
-`Trainer.fit_state()` trains a plan that is already compiled for the module, so it raises `ValueError` when the
-restored statistics differ from the module's. Rebuild the module and plan with the checkpoint statistics, or use
-`Trainer.fit()`.
-
 ::: phijax.types.InputStatistics
 
 ::: phijax.training.load_input_statistics

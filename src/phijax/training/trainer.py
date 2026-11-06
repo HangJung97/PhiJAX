@@ -11,7 +11,7 @@ import jax
 import numpy as np
 import optax
 
-from phijax.balancers import BalancerUpdatePlan, LossBalancer, StaticLossBalancer
+from phijax.balancers import AdaptiveBalancer, BalancerUpdatePlan, LossBalancer, StaticLossBalancer
 from phijax.callbacks import (
     Callback,
     CheckpointIO,
@@ -21,22 +21,20 @@ from phijax.callbacks import (
     ProgressBar,
     TQDMProgressBar,
 )
-from phijax.core import BasePhiModule, PhiModule
+from phijax.core import BasePhiModule
 from phijax.data import DataStage, PhiDataModule
-from phijax.training.assembly import build_training_plan
 from phijax.training.checkpointing import LegacyCheckpointError, OrbaxCheckpointIO
 from phijax.training.connectors.logger_connector import _LoggerConnector
 from phijax.training.connectors.signal_connector import _SignalConnector
 from phijax.training.loggers import ExperimentLogger, LoggerCollection
 from phijax.training.loops.fit_loop import _FitLoop, _state_step
 from phijax.training.loops.prediction_loop import _PredictionLoop
-from phijax.training.plans import TrainingPlan
 from phijax.training.precision import MatmulPrecision, PrecisionName, PrecisionPolicy, configure_precision
 from phijax.training.results import FitResult
 from phijax.training.state import TrainState, as_input_statistics, initialize_train_state
 from phijax.training.steps import TrainStep, make_train_step
 from phijax.training.strategies import Accelerator, DeviceSelection, Strategy, create_strategy
-from phijax.types import InputPeriods, InputStatistics, JaxDevice
+from phijax.types import JaxDevice
 
 type BatchSource = Iterable[Any] | Callable[[int], Any]
 
@@ -47,7 +45,7 @@ class Trainer:
     """Coordinate compiled JAX updates, callbacks, logging, and checkpointing on the host.
 
     The trainer never owns a mutable model object and never places Python hooks inside :func:`jax.jit`. Numerical
-    behavior remains in the configured training plan or supplied compiled step; this class orchestrates its lifecycle.
+    behavior remains in the module and its compiled train step; this class orchestrates their lifecycle.
 
     Attributes:
         prediction_writer: Configured prediction artifact callback, or `None`.
@@ -339,65 +337,6 @@ class Trainer:
         print(f"TPU available: {bool(available_tpus)}, using: {len(selected_tpus)} TPU cores", flush=True)
         print(flush=True)
 
-    def initialize_state(
-        self,
-        model_state: Any,
-        optimizer: optax.GradientTransformation,
-        balancer_state: Any,
-        key: jax.Array,
-        *,
-        sampling_key: jax.Array | None = None,
-        balancer_key: jax.Array | None = None,
-        input_statistics: InputStatistics | None = None,
-        input_periods: InputPeriods | None = None,
-    ) -> TrainState:
-        """Initialize functional state with this trainer's precision policy.
-
-        Args:
-            model_state: Explicit differentiable model parameter PyTree.
-            optimizer: Optax transformation used to initialize optimizer slots.
-            balancer_state: Initial loss-balancer state.
-            key: Root training key, or model-runtime key when both persistent keys are supplied.
-            sampling_key: Optional explicit DataModule sampling key.
-            balancer_key: Optional explicit adaptive-balancer diagnostic key.
-            input_statistics: Optional normalization statistics the model was built with. When omitted,
-                :meth:`fit_state` takes them from the module.
-            input_periods: Optional physical input periods the model applies. When omitted, :meth:`fit_state` takes
-                them from the module.
-
-        Returns:
-            Complete precision-aware training state.
-        """
-        return initialize_train_state(
-            model_state,
-            optimizer,
-            balancer_state,
-            key,
-            self.precision,
-            sampling_key=sampling_key,
-            balancer_key=balancer_key,
-            input_statistics=input_statistics,
-            input_periods=input_periods,
-        )
-
-    def compile_train_step(
-        self,
-        module: BasePhiModule,
-        balancer: Any,
-        optimizer: optax.GradientTransformation,
-    ) -> TrainStep:
-        """Build a compiled update with this trainer's precision policy.
-
-        Args:
-            module: Application module exposing named unweighted losses.
-            balancer: Functional loss balancer.
-            optimizer: Optax gradient transformation used by initialized state.
-
-        Returns:
-            Reusable JIT-compiled training step.
-        """
-        return make_train_step(module, balancer, optimizer, self.precision)
-
     def prepare_batch_source[SourceT](self, source: SourceT) -> SourceT:
         """Prepare persistent sampler state for this Trainer's process-local root device.
 
@@ -439,7 +378,7 @@ class Trainer:
 
     def fit(
         self,
-        module: PhiModule,
+        module: BasePhiModule,
         *,
         datamodule: PhiDataModule,
         optimizer: optax.GradientTransformation,
@@ -450,10 +389,11 @@ class Trainer:
         ckpt_step: int | None = None,
         weights_only: bool = False,
     ) -> FitResult:
-        """Initialize and fit a module blueprint through the concise application API.
+        """Build a module's model, optionally restore a checkpoint, and fit it.
 
         Args:
-            module: Unbound :class:`PhiModule` containing a model factory and objective.
+            module: Module blueprint. The Trainer builds its model with
+                :meth:`~phijax.core.BasePhiModule.configure_model`, so the blueprint itself is not modified.
             datamodule: Application DataModule supplying training batches and normalization statistics. Its statistics
                 apply to fresh and weights-only runs; a full resume uses the statistics stored in the checkpoint.
             optimizer: Optax transformation used to initialize state and compile updates.
@@ -468,8 +408,9 @@ class Trainer:
             Bound module, final state, metrics, and termination status.
 
         Raises:
-            TypeError: If `seed` is not an integer or JAX key.
-            ValueError: If model, balancing, checkpoint, or DataModule options are inconsistent.
+            TypeError: If `seed` is not an integer or JAX key, or `balancer` does not implement `LossBalancer`.
+            ValueError: If the balancer's loss names differ from the module's, the module declares no batch keys, or
+                checkpoint options are inconsistent.
         """
         self._prepare_datamodule(datamodule, "fit")
         try:
@@ -478,7 +419,7 @@ class Trainer:
             statistics = datamodule.input_statistics()
             input_mean, input_std = (None, None) if statistics is None else statistics
             with jax.default_device(self.strategy.root_device):
-                bound_module, model_state = module.prepare_model(
+                bound_module, model_state = module.configure_model(
                     key=model_key,
                     input_mean=input_mean,
                     input_std=input_std,
@@ -486,11 +427,19 @@ class Trainer:
                     input_periods=datamodule.input_periods(),
                 )
                 resolved_balancer = StaticLossBalancer(bound_module.loss_names) if balancer is None else balancer
-                state = self.initialize_state(
+                if not isinstance(resolved_balancer, LossBalancer):
+                    raise TypeError("`balancer` must implement `LossBalancer`.")
+                if tuple(resolved_balancer.loss_names) != tuple(bound_module.loss_names):
+                    raise ValueError("Balancer loss names must exactly match the module loss-name ordering.")
+                batch_keys = tuple(bound_module.batch_keys)
+                if not batch_keys:
+                    raise ValueError("`Trainer.fit()` requires the module to expose at least one batch key.")
+                state = initialize_train_state(
                     model_state,
                     optimizer,
                     resolved_balancer.initialize(),
                     runtime_key,
+                    self.precision,
                     sampling_key=sampling_key,
                     balancer_key=balancer_key,
                     input_statistics=bound_module.input_statistics,
@@ -500,173 +449,101 @@ class Trainer:
                 state, ckpt_path, ckpt_step, weights_only=weights_only, restore_callbacks=True
             )
             with jax.default_device(self.strategy.root_device):
-                # A full resume restores the checkpoint's statistics and periods. Rebind before the training plan
-                # captures the module, because compiled steps and balancer updates close over its model application.
+                # A full resume restores the checkpoint's statistics and periods. Rebind before compiling, because the
+                # train step and balancer update close over the module's model application.
                 bound_module = bound_module.bind_inputs(state.input_statistics, state.input_periods)
-                plan = build_training_plan(self, bound_module, resolved_balancer, optimizer)
+                train_step = make_train_step(bound_module, resolved_balancer, optimizer, self.precision)
+                balancer_update = (
+                    resolved_balancer.build_update_plan(bound_module, batch_keys)
+                    if isinstance(resolved_balancer, AdaptiveBalancer)
+                    else None
+                )
             # Record what the model applies, so configured period overrides win over restored periods.
             state = replace(state, input_periods=bound_module.input_periods)
             return self._run_fit(
                 bound_module,
-                plan,
+                train_step,
                 state,
-                None,
-                hyperparameters=hyperparameters,
                 datamodule=datamodule,
+                batch_keys=batch_keys,
+                balancer_update=balancer_update,
+                hyperparameters=hyperparameters,
                 callback_states=callback_states,
             )
         finally:
             datamodule.teardown_stage("fit")
 
-    def fit_state(
-        self,
-        module: BasePhiModule,
-        training: TrainingPlan | TrainStep,
-        state: TrainState,
-        batches: BatchSource | None = None,
-        *,
-        hyperparameters: Mapping[str, Any] | None = None,
-        ckpt_path: str | Path | None = None,
-        ckpt_step: int | None = None,
-        weights_only: bool = False,
-        datamodule: PhiDataModule | None = None,
-    ) -> FitResult:
-        """Fit an explicitly initialized module, state, and resolved numerical plan.
-
-        Args:
-            module: Bound custom module owning model, objective, and lifecycle behavior.
-            training: Resolved training plan, or a compiled step when `batches` is supplied explicitly.
-            state: Initial functional training state and restore template.
-            batches: Optional explicit step-indexed callable or finite iterable source.
-            hyperparameters: Optional resolved configuration recorded before the first update.
-            ckpt_path: Optional Orbax checkpoint root, or `"last"` for the configured callback's latest checkpoint.
-            ckpt_step: Exact checkpoint step, or `None` for the latest committed step.
-            weights_only: Whether to restore only model weights into the fresh state.
-            datamodule: Optional DataModule supplying the source when `batches` is omitted.
-
-        Returns:
-            Bound module, final state, metrics, and termination status.
-
-        Raises:
-            ValueError: If checkpoint restoration or DataModule source options are incomplete or invalid, or the
-                restored input statistics differ from the statistics the module's model was built with.
-            RuntimeError: If a custom training step does not increment `TrainState.step` exactly once.
-            BaseException: Re-raises training lifecycle errors after cleanup.
-        """
-        try:
-            plan = training if isinstance(training, TrainingPlan) else TrainingPlan(training)
-            state, callback_states = self._restore_state(
-                _with_module_inputs(state, module),
-                ckpt_path,
-                ckpt_step,
-                weights_only=weights_only,
-                restore_callbacks=True,
-            )
-            # The plan was compiled for the module's statistics, so it cannot be rebound here.
-            if module.bind_inputs(state.input_statistics, state.input_periods) is not module:
-                raise ValueError(
-                    "The restored input statistics or periods differ from those the module's model was built with. "
-                    "Rebuild the module and training plan with the checkpoint values, or use `Trainer.fit()`."
-                )
-            state = replace(state, input_periods=module.input_periods)
-            return self._run_fit(
-                module,
-                plan,
-                state,
-                batches,
-                hyperparameters=hyperparameters,
-                datamodule=datamodule,
-                callback_states=callback_states,
-            )
-        finally:
-            if datamodule is not None:
-                datamodule.teardown_stage("fit")
-
     def _run_fit(
         self,
         module: BasePhiModule,
-        plan: TrainingPlan,
+        train_step: TrainStep,
         state: TrainState,
-        batches: BatchSource | None,
+        batches: BatchSource | None = None,
         *,
-        hyperparameters: Mapping[str, Any] | None,
-        datamodule: PhiDataModule | None,
-        callback_states: Mapping[str, Mapping[str, Any]] | None,
+        datamodule: PhiDataModule | None = None,
+        batch_keys: tuple[str, ...] = (),
+        balancer_update: BalancerUpdatePlan | None = None,
+        hyperparameters: Mapping[str, Any] | None = None,
+        callback_states: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> FitResult:
-        """Place a restored state and run the fit loop.
+        """Place a built state, resolve the training source, and run the fit loop.
 
-        Callers own DataModule teardown.
+        :meth:`fit` calls this after building, restoring, and compiling. A `datamodule` is set up for the fit stage when
+        it supplies the source, and torn down after the loop.
 
         Args:
             module: Bound module whose model applies `state.input_statistics`.
-            plan: Training plan compiled for `module`.
-            state: Restored or fresh functional training state.
-            batches: Optional explicit training source.
-            hyperparameters: Optional resolved configuration recorded before the first update.
+            train_step: Compiled update that increments `TrainState.step` exactly once.
+            state: Fresh or restored functional training state.
+            batches: Optional explicit step-indexed callable or finite iterable source.
             datamodule: Optional DataModule supplying the source when `batches` is omitted.
+            batch_keys: Objective batch keys requested from `datamodule`.
+            balancer_update: Optional host-scheduled adaptive-balancer update.
+            hyperparameters: Optional resolved configuration recorded before the first update.
             callback_states: Restored callback states loaded after callback setup, or `None`.
 
         Returns:
             Bound module, final state, metrics, and termination status.
-        """
-        state = self.strategy.place_state(state)
-        initial_step = _state_step(state)
-        sampling_key = self.strategy.process_key(state.sampling_key)
-        batches = self._training_batch_source(plan, batches, datamodule, sampling_key)
-        balancer_update = plan.balancer_update
-        draw_update_batches = (
-            None
-            if balancer_update is None
-            else self._diagnostic_batches(balancer_update, batches, self.strategy.process_key(state.balancer_key))
-        )
-        # Batches drawn with `all` hold the whole pool, so every device receives them in full.
-        full_pools = _full_pool_names(getattr(batches, "batch_sizes", None))
-        matmul = self.matmul_precision
-        with nullcontext() if matmul is None else jax.default_matmul_precision(matmul):
-            return self._fit_loop.run(
-                module,
-                plan.train_step,
-                state,
-                batches,
-                initial_step=initial_step,
-                balancer_update=balancer_update,
-                draw_update_batches=draw_update_batches,
-                hyperparameters=hyperparameters,
-                replicated_batches=full_pools,
-                callback_states=callback_states,
-            )
-
-    def _training_batch_source(
-        self,
-        plan: TrainingPlan,
-        batches: BatchSource | None,
-        datamodule: PhiDataModule | None,
-        sampling_key: jax.Array | None,
-    ) -> BatchSource:
-        """Resolve and place an explicit or DataModule-owned training source.
-
-        Args:
-            plan: Training plan declaring required named batch keys.
-            batches: Optional explicit training source.
-            datamodule: Optional DataModule owning the default source.
-            sampling_key: Explicit root sampling key for a DataModule-owned source.
-
-        Returns:
-            Source prepared for the Trainer's process-local root device.
 
         Raises:
-            ValueError: If no explicit source is supplied and DataModule requirements are incomplete.
+            ValueError: If neither `batches` nor a `datamodule` with `batch_keys` supplies a source.
+            RuntimeError: If a custom training step does not increment `TrainState.step` exactly once.
         """
-        if batches is not None:
-            return self.prepare_batch_source(batches)
-        if datamodule is None:
-            raise ValueError("`Trainer.fit_state()` requires either explicit `batches` or a `datamodule`.")
-        if not plan.batch_keys:
-            raise ValueError("A DataModule-owned training source requires non-empty `TrainingPlan.batch_keys`.")
-        if sampling_key is None:
-            raise ValueError("A DataModule-owned training source requires an explicit `sampling_key`.")
-        self._prepare_datamodule(datamodule, "fit")
-        return self.prepare_batch_source(datamodule.train_batch_source(plan.batch_keys, sampling_key))
+        try:
+            state = self.strategy.place_state(state)
+            initial_step = _state_step(state)
+            if batches is None:
+                if datamodule is None or not batch_keys:
+                    raise ValueError("Training requires explicit `batches`, or a `datamodule` with `batch_keys`.")
+                if state.sampling_key is None:
+                    raise ValueError("A DataModule-owned training source requires `TrainState.sampling_key`.")
+                self._prepare_datamodule(datamodule, "fit")
+                batches = datamodule.train_batch_source(batch_keys, self.strategy.process_key(state.sampling_key))
+            batches = self.prepare_batch_source(batches)
+            draw_update_batches = (
+                None
+                if balancer_update is None
+                else self._diagnostic_batches(balancer_update, batches, self.strategy.process_key(state.balancer_key))
+            )
+            # Batches drawn with `all` hold the whole pool, so every device receives them in full.
+            full_pools = _full_pool_names(getattr(batches, "batch_sizes", None))
+            matmul = self.matmul_precision
+            with nullcontext() if matmul is None else jax.default_matmul_precision(matmul):
+                return self._fit_loop.run(
+                    module,
+                    train_step,
+                    state,
+                    batches,
+                    initial_step=initial_step,
+                    balancer_update=balancer_update,
+                    draw_update_batches=draw_update_batches,
+                    hyperparameters=hyperparameters,
+                    replicated_batches=full_pools,
+                    callback_states=callback_states,
+                )
+        finally:
+            if datamodule is not None:
+                datamodule.teardown_stage("fit")
 
     def _prepare_datamodule(self, datamodule: PhiDataModule, stage: DataStage) -> None:
         """Prepare a DataModule stage, running `prepare_data()` only on global process zero.
@@ -731,7 +608,7 @@ class Trainer:
 
     def predict(
         self,
-        model: PhiModule | FitResult,
+        model: BasePhiModule | FitResult,
         batches: Iterable[Mapping[str, Any]] | None = None,
         *,
         datamodule: PhiDataModule | None = None,
@@ -805,7 +682,7 @@ class Trainer:
 
     def _load_prediction_model(
         self,
-        model: PhiModule | FitResult,
+        model: BasePhiModule | FitResult,
         ckpt_path: str | Path,
         ckpt_step: int | None,
         datamodule: PhiDataModule | None,
@@ -855,7 +732,7 @@ class Trainer:
                 else:
                     input_mean, input_std = (None, None) if statistics is None else statistics
                     # The key only shapes the template; every model-state leaf is restored from the checkpoint.
-                    module, template = model.prepare_model(
+                    module, template = model.configure_model(
                         key=jax.random.key(0),
                         input_mean=input_mean,
                         input_std=input_std,
@@ -940,42 +817,6 @@ class Trainer:
                 return replace(state, model_state=checkpoint_io.restore_model_state(state.model_state, step)), None
             restored = checkpoint_io.restore(state, step)
             return restored, checkpoint_io.restore_callback_states(step) if restore_callbacks else None
-
-    def load_weights(self, state: TrainState, step: int | None = None) -> TrainState:
-        """Load model weights while preserving fresh optimizer and run state.
-
-        Args:
-            state: Fresh target training state.
-            step: Checkpoint step, or `None` for the latest checkpoint.
-
-        Returns:
-            Fresh state with restored model weights.
-
-        Raises:
-            ValueError: If checkpointing is not configured.
-        """
-        if self.checkpoint_callback is None:
-            raise ValueError("`load_weights()` requires a configured `ModelCheckpoint` callback.")
-        with self._checkpoint_backend("last", step) as (checkpoint_io, resolved_step):
-            return replace(state, model_state=checkpoint_io.restore_model_state(state.model_state, resolved_step))
-
-    def latest_checkpoint(self) -> tuple[Path, int]:
-        """Resolve the latest committed filesystem checkpoint.
-
-        Returns:
-            Checkpoint-root path and latest committed step.
-
-        Raises:
-            FileNotFoundError: If the checkpoint backend contains no committed state.
-            ValueError: If checkpointing is disabled or its backend has no filesystem directory.
-        """
-        if self.checkpoint_callback is None:
-            raise ValueError("Resolving the latest checkpoint requires a configured `ModelCheckpoint` callback.")
-        with self._checkpoint_backend("last", None) as (checkpoint_io, checkpoint_step):
-            checkpoint_directory = getattr(checkpoint_io, "directory", None)
-            if checkpoint_directory is None:
-                raise ValueError("The configured checkpoint backend does not expose a filesystem `directory`.")
-            return Path(checkpoint_directory).expanduser().resolve(), checkpoint_step
 
     def close(self) -> None:
         """Release any checkpoint resources opened outside a Trainer task.
@@ -1112,26 +953,6 @@ def _callback_identifiers(callbacks: Sequence[Callback]) -> tuple[str, ...]:
         counts[base] = index + 1
         identifiers.append(f"{base}:{index}")
     return tuple(identifiers)
-
-
-def _with_module_inputs(state: TrainState, module: BasePhiModule) -> TrainState:
-    """Fill a state's missing input statistics and periods from what the module's model applies.
-
-    Restore templates built without them, such as downstream prediction scripts, then still describe the module's
-    inputs instead of "no normalization" and "no periods".
-
-    Args:
-        state: Fresh state or restore template.
-        module: Bound module.
-
-    Returns:
-        `state`, with input statistics and periods taken from `module` where it had none.
-    """
-    if state.input_statistics is None and module.input_statistics is not None:
-        state = replace(state, input_statistics=as_input_statistics(module.input_statistics))
-    if state.input_periods is None and module.input_periods is not None:
-        state = replace(state, input_periods=module.input_periods)
-    return state
 
 
 __all__ = ["BatchSource", "FitResult", "TrainStep", "Trainer"]

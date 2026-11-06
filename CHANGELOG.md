@@ -103,6 +103,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `Trainer.predict_state()` is removed. Use `predict(fit_result, ...)` in memory, or `predict(module, ckpt_path=...)`
   from a checkpoint without building a state template.
 
+- The Trainer has two public tasks, `fit()` and `predict()`, as in Lightning. `Trainer.fit_state()`,
+  `initialize_state()`, `compile_train_step()`, `load_weights()`, `latest_checkpoint()`, `TrainingPlan`, and
+  `build_training_plan()` are removed, and `make_train_step()` and `initialize_train_state()` are no longer exported
+  from `phijax.training`. A custom `BasePhiModule` trains with `fit()` by overriding the new `configure_model()` hook,
+  which replaces `PhiModule.prepare_model()`. See the
+  [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#two-trainer-tasks).
+
 - `ProgressBar`, `TQDMProgressBar`, and `RichProgressBar` no longer take `total`. As in Lightning, a progress bar
   counts to its Trainer's `max_steps`. Remove `total=...` from constructors and `total: ${trainer.max_steps}` from
   Hydra callback configs.

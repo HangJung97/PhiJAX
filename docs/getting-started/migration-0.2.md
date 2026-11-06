@@ -6,20 +6,20 @@ under names that describe its state-level contract.
 
 ## API replacements
 
-| PhiJAX 0.1                                                       | PhiJAX 0.2                                                             |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `PhiModule(model_apply, objective, model_summary=...)`           | `PhiModule(model_factory, objective)`                                  |
-| `initialize_state()` + `compile_train_step()` + `TrainingPlan()` | `Trainer.fit(..., optimizer=..., seed=...)`                            |
-| `Trainer.fit(module, plan, state, ...)`                          | `Trainer.fit_state(module, plan, state, ...)`                          |
-| `Trainer.predict(module, state, ...)`                            | `Trainer.predict(fit_result, ...)` or `predict(module, ckpt_path=...)` |
-| Explicit post-fit module and state                               | `Trainer.predict(fit_result, ...)`                                     |
-| `resume_latest(...)`                                             | `fit(..., ckpt_path="last")`                                           |
-| `MetricRoute` and `configure_metric_routes()`                    | `self.log(..., logger=..., prog_bar=...)` in `on_train_batch_end()`    |
-| `from phijax.module import PhiModule`                            | `from phijax import PhiModule`                                         |
-| `from phijax.module import BasePhiModule`                        | `from phijax.core import BasePhiModule`                                |
-| `from phijax.training.trainer import FitResult`                  | `from phijax.training import FitResult`                                |
-| `trainer.set_logger(instantiate_loggers(cfg.logger, trainer))`   | `instantiate_trainer(cfg.trainer, callbacks, logger=loggers)`          |
-| `batch["mask"]` in prediction batches                            | `batch["valid_predict_mask"]`                                          |
+| PhiJAX 0.1                                                       | PhiJAX 0.2                                                              |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `PhiModule(model_apply, objective, model_summary=...)`           | `PhiModule(model_factory, objective)`                                   |
+| `initialize_state()` + `compile_train_step()` + `TrainingPlan()` | `Trainer.fit(..., optimizer=..., seed=...)`                             |
+| `Trainer.fit(module, plan, state, ...)`                          | `Trainer.fit(module, ...)`; custom modules override `configure_model()` |
+| `Trainer.predict(module, state, ...)`                            | `Trainer.predict(fit_result, ...)` or `predict(module, ckpt_path=...)`  |
+| Explicit post-fit module and state                               | `Trainer.predict(fit_result, ...)`                                      |
+| `resume_latest(...)`                                             | `fit(..., ckpt_path="last")`                                            |
+| `MetricRoute` and `configure_metric_routes()`                    | `self.log(..., logger=..., prog_bar=...)` in `on_train_batch_end()`     |
+| `from phijax.module import PhiModule`                            | `from phijax import PhiModule`                                          |
+| `from phijax.module import BasePhiModule`                        | `from phijax.core import BasePhiModule`                                 |
+| `from phijax.training.trainer import FitResult`                  | `from phijax.training import FitResult`                                 |
+| `trainer.set_logger(instantiate_loggers(cfg.logger, trainer))`   | `instantiate_trainer(cfg.trainer, callbacks, logger=loggers)`           |
+| `batch["mask"]` in prediction batches                            | `batch["valid_predict_mask"]`                                           |
 
 Top-level imports are the recommended application API. PhiJAX 0.2 removes the old `phijax.module` path; custom module
 implementations that need a deep import should use `phijax.core`.
@@ -152,6 +152,22 @@ template instead of a full state.
 
 Outside the Trainer, `load_model_state(ckpt_path, state.model_state)` opens the checkpoint, restores the model
 state, and closes it.
+
+### Two Trainer tasks
+
+From PhiJAX 0.2.0b6, the Trainer has two public tasks, `fit()` and `predict()`, as Lightning's does. The explicit
+state and plan APIs are removed, and a custom module joins `fit()` through the `configure_model()` hook.
+
+| PhiJAX 0.2.0b5 and earlier                           | PhiJAX 0.2.0b6 and later                                                               |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `PhiModule.prepare_model(...)`                       | `PhiModule.configure_model(...)`                                                       |
+| `Trainer.fit_state(module, plan, state, ...)`        | `Trainer.fit(module, ...)` with `BasePhiModule.configure_model()` overridden           |
+| `Trainer.initialize_state()`, `compile_train_step()` | Built inside `fit()`                                                                   |
+| `TrainingPlan`, `build_training_plan()`              | Removed; `fit()` compiles the train step and the balancer's update plan                |
+| `Trainer.load_weights(state)`                        | `fit(..., ckpt_path="last", weights_only=True)`, or `load_model_state()` outside a fit |
+| `Trainer.latest_checkpoint()`                        | `ModelCheckpoint.checkpoint_io.latest_step` and `checkpoint_path(step)`                |
+| `from phijax.training import make_train_step`        | `from phijax.training.steps import make_train_step`                                    |
+| `from phijax.training import initialize_train_state` | `from phijax.training.state import initialize_train_state`                             |
 
 ### Prediction from a checkpoint
 

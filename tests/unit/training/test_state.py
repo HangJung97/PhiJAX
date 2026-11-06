@@ -8,8 +8,8 @@ import optax
 import pytest
 
 from phijax.balancers import BalancerState
-from phijax.training import InputStatistics, initialize_train_state
-from phijax.training.state import as_input_statistics
+from phijax.training import InputStatistics
+from phijax.training.state import as_input_statistics, initialize_train_state
 
 
 def test_initialize_train_state_uses_stable_independent_prng_streams() -> None:

@@ -4,6 +4,7 @@ import os
 import signal
 import warnings
 from collections.abc import Mapping
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -17,7 +18,7 @@ import pytest
 
 import phijax.training.loops.fit_loop as fit_loop_module
 import phijax.training.trainer as trainer_module
-from phijax.balancers import BalancerState, BalancerUpdatePlan, StaticLossBalancer
+from phijax.balancers import BalancerState, BalancerUpdatePlan, ExactNTKBalancer, StaticLossBalancer
 from phijax.callbacks import (
     Callback,
     CallbackContext,
@@ -45,11 +46,11 @@ from phijax.training import (
     SingleDeviceStrategy,
     Strategy,
     Trainer,
-    TrainingPlan,
     TrainState,
-    build_training_plan,
 )
 from phijax.training.connectors.signal_connector import _SignalConnector
+from phijax.training.state import initialize_train_state
+from phijax.training.steps import make_train_step
 from phijax.types import ArrayMapping, InputStatistics, NamedBatches, ResolvedInputPeriods
 
 
@@ -927,11 +928,12 @@ def test_trainer_schedules_adaptive_balancer_updates_from_host_steps(
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
 
-    result = trainer.fit_state(
+    result = trainer._run_fit(
         _RecordingModule(),
-        TrainingPlan(_balancer_train_step, balancer_update=update_plan),
+        _balancer_train_step,
         state,
         lambda step: {"increment": jnp.asarray(1.0), "source_step": jnp.asarray(step)},
+        balancer_update=update_plan,
     )
 
     assert update_steps == expected_updates
@@ -986,7 +988,7 @@ def test_fit_trains_until_global_max_steps(
     state = dataclasses.replace(_state(), step=jnp.asarray(initial_step, jnp.int32))
 
     with caplog.at_level(logging.INFO, logger="phijax.training.loops.fit_loop"):
-        result = trainer.fit_state(_RecordingModule(), _train_step, state, batches)
+        result = trainer._run_fit(_RecordingModule(), _train_step, state, batches)
 
     final_step = max(initial_step, 8)
     assert requested_steps == expected_steps
@@ -1077,12 +1079,7 @@ def test_trainer_samples_fixed_balancer_diagnostics_once_from_restored_state(ini
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
 
-    result = trainer.fit_state(
-        _RecordingModule(),
-        TrainingPlan(_balancer_train_step, balancer_update=update_plan),
-        state,
-        source,
-    )
+    result = trainer._run_fit(_RecordingModule(), _balancer_train_step, state, source, balancer_update=update_plan)
 
     assert diagnostic_values == [9.0, 9.0]
     assert len(source.sample_calls) == 1
@@ -1152,7 +1149,7 @@ def _record_diagnostic_batches(*, resample: bool, initial_step: int) -> dict[int
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
     state = dataclasses.replace(_state(), step=jnp.asarray(initial_step, jnp.int32))
-    trainer.fit_state(_RecordingModule(), TrainingPlan(train_step, balancer_update=update_plan), state, source)
+    trainer._run_fit(_RecordingModule(), train_step, state, source, balancer_update=update_plan)
     return recorded
 
 
@@ -1207,7 +1204,7 @@ def test_trainer_reads_device_step_only_at_fit_boundaries(monkeypatch: pytest.Mo
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
 
-    result = trainer.fit_state(
+    result = trainer._run_fit(
         _RecordingModule(),
         _train_step,
         _state(),
@@ -1249,7 +1246,7 @@ def test_trainer_does_not_synchronize_unused_metrics_at_logging_cadence(monkeypa
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
 
-    trainer.fit_state(
+    trainer._run_fit(
         _RecordingModule(),
         _train_step,
         _state(),
@@ -1284,7 +1281,7 @@ def test_trainer_rejects_custom_step_without_one_step_increment() -> None:
     )
 
     with pytest.raises(RuntimeError, match=r"must increment `TrainState\.step` exactly once"):
-        trainer.fit_state(
+        trainer._run_fit(
             _RecordingModule(),
             invalid_step,
             _state(),
@@ -1379,7 +1376,7 @@ def test_trainer_should_stop_ends_fit_after_the_requesting_step(
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
 
-    result = trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+    result = trainer._run_fit(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
 
     assert result.stopped_early is True
     assert result.iterations == expected_steps
@@ -1406,7 +1403,7 @@ def test_checkpoints_store_early_stopping_state_of_the_same_step(tmp_path: Path)
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
 
-    trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+    trainer._run_fit(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
     identifier = dict(zip(trainer.callbacks, trainer._callback_identifiers, strict=True))[early_stopping]
     with OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False) as checkpoint_io:
         stored = {step: checkpoint_io.restore_callback_states(step)[identifier] for step in (1, 2, 3)}
@@ -1452,7 +1449,7 @@ def test_callback_state_is_collected_only_for_checkpoint_saves(tmp_path: Path) -
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
 
-    trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+    trainer._run_fit(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
 
     with OrbaxCheckpointIO(tmp_path, enable_async_checkpointing=False) as checkpoint_io:
         assert checkpoint_io.steps == (2, 4, 6)
@@ -1474,7 +1471,7 @@ def test_trainer_runs_callbacks_multiple_loggers_and_early_stopping() -> None:
         loggers=(first_logger, second_logger),
         log_every_n_steps=1,
     )
-    result = trainer.fit_state(
+    result = trainer._run_fit(
         module,
         _train_step,
         _state(),
@@ -1542,7 +1539,7 @@ def test_learning_rate_monitor_contributes_fit_and_logger_metrics() -> None:
         log_every_n_steps=1,
     )
 
-    result = trainer.fit_state(
+    result = trainer._run_fit(
         _RecordingModule(),
         _train_step,
         _state(),
@@ -1578,7 +1575,7 @@ def test_learning_rate_monitor_defaults_to_trainer_logging_cadence() -> None:
         log_every_n_steps=3,
     )
 
-    result = trainer.fit_state(
+    result = trainer._run_fit(
         _RecordingModule(),
         _train_step,
         _state(),
@@ -1617,7 +1614,7 @@ def test_learning_rate_monitor_stops_fit_before_first_update_without_logger() ->
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
     with pytest.raises(RuntimeError, match="Cannot use `LearningRateMonitor` with a Trainer that has no logger"):
-        trainer.fit_state(_RecordingModule(), _train_step, _state(), batches)
+        trainer._run_fit(_RecordingModule(), _train_step, _state(), batches)
 
     assert requested_steps == []
 
@@ -1652,7 +1649,7 @@ def test_trainer_routes_causal_diagnostics_to_logger_not_default_progress() -> N
         enable_model_summary=False,
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
-    trainer.fit_state(
+    trainer._run_fit(
         _RecordingModule(),
         diagnostic_step,
         _state(),
@@ -1703,7 +1700,7 @@ def test_module_log_overrides_destinations_and_adds_host_metrics() -> None:
         enable_model_summary=False,
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
-    trainer.fit_state(
+    trainer._run_fit(
         _LoggingModule(),
         diagnostic_step,
         _state(),
@@ -1758,7 +1755,7 @@ def test_module_log_validates_host_declarations(
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
     with pytest.raises(error, match=message):
-        trainer.fit_state(module, _train_step, _state(), ({"increment": jnp.asarray(1.0)},))
+        trainer._run_fit(module, _train_step, _state(), ({"increment": jnp.asarray(1.0)},))
     with pytest.raises(RuntimeError, match="only during `on_train_batch_end`"):
         module.log("outside", jnp.asarray(1.0))
 
@@ -1772,7 +1769,7 @@ def test_callbacks_observe_incoming_values_before_module_replacements() -> None:
         callbacks=(callback,),
     )
 
-    result = trainer.fit_state(
+    result = trainer._run_fit(
         _TransformingModule(),
         _train_step,
         _state(),
@@ -1828,7 +1825,7 @@ def test_fit_keeps_the_step_error_when_cleanup_hooks_fail() -> None:
     )
 
     with pytest.raises(RuntimeError, match="synthetic step failure") as raised:
-        trainer.fit_state(
+        trainer._run_fit(
             _RecordingModule(timeline), _failing_train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)}
         )
 
@@ -1858,7 +1855,7 @@ def test_callback_exception_and_teardown_hooks_run_before_module_hooks() -> None
     data_module = MagicMock()
 
     with pytest.raises(RuntimeError, match="synthetic step failure"):
-        trainer.fit_state(
+        trainer._run_fit(
             module,
             _failing_train_step,
             _state(),
@@ -1911,7 +1908,7 @@ def test_keyboard_interrupt_returns_last_valid_state_and_interrupted_status() ->
             raise KeyboardInterrupt
         return {"increment": jnp.asarray(1.0)}
 
-    result = trainer.fit_state(module, _train_step, _state(), batches)
+    result = trainer._run_fit(module, _train_step, _state(), batches)
 
     assert result.interrupted is True
     assert result.stopped_early is False
@@ -1956,7 +1953,7 @@ def test_sigterm_terminates_fit_after_interrupted_lifecycle_cleanup() -> None:
         raise SystemExit(128 + signal.SIGTERM)
 
     with pytest.raises(SystemExit) as exception:
-        trainer.fit_state(module, _train_step, _state(), terminated_batch_source)
+        trainer._run_fit(module, _train_step, _state(), terminated_batch_source)
 
     assert exception.value.code == 128 + signal.SIGTERM
     assert trainer.interrupted is True
@@ -2058,7 +2055,7 @@ def test_sigint_mid_step_stops_after_that_step_with_a_matching_checkpoint(tmp_pa
     """
     trainer = _signal_trainer(_SignalCallback(signal.SIGINT, step=2), tmp_path)
 
-    result = trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+    result = trainer._run_fit(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
 
     assert result.interrupted is True
     assert result.iterations == 3
@@ -2078,7 +2075,7 @@ def test_sigterm_mid_step_exits_after_that_step_with_a_matching_checkpoint(tmp_p
     trainer = _signal_trainer(_SignalCallback(signal.SIGTERM, step=2), tmp_path)
 
     with pytest.raises(SystemExit) as exception:
-        trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+        trainer._run_fit(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
 
     assert exception.value.code == 128 + signal.SIGTERM
     assert trainer.interrupted is True
@@ -2094,7 +2091,7 @@ def test_repeated_sigint_interrupts_immediately_with_the_last_completed_state(tm
     """
     trainer = _signal_trainer(_SignalCallback(signal.SIGINT, step=2, count=2), tmp_path)
 
-    result = trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+    result = trainer._run_fit(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
 
     assert result.interrupted is True
     assert int(result.state.step) == 2
@@ -2177,7 +2174,7 @@ def test_multi_process_fit_stops_with_a_request_from_another_process(
         Returns:
             Fit result.
         """
-        return trainer.fit_state(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
+        return trainer._run_fit(_RecordingModule(), _train_step, _state(), lambda _: {"increment": jnp.asarray(1.0)})
 
     if request_kind in {"SIGTERM", "preemption"}:
         with pytest.raises(SystemExit) as exception:
@@ -2321,7 +2318,7 @@ def test_trainer_applies_and_restores_matmul_precision_for_fit_and_prediction() 
         matmul_precision="highest",
         strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
     )
-    trainer.fit_state(_RecordingModule(), recording_step, _state(), ({"increment": jnp.asarray(1.0)},))
+    trainer._run_fit(_RecordingModule(), recording_step, _state(), ({"increment": jnp.asarray(1.0)},))
     state = dataclasses.replace(_state(), model_state={"weight": jnp.asarray(2.0)})
     trainer.predict(_fit_result(RecordingPredictionModule(), state), ({"inputs": jnp.asarray([[1.0]])},))
 
@@ -2348,7 +2345,7 @@ def test_trainer_null_matmul_precision_preserves_external_policy() -> None:
 
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
     with jax.default_matmul_precision("high"):
-        trainer.fit_state(_RecordingModule(), recording_step, _state(), ({"increment": jnp.asarray(1.0)},))
+        trainer._run_fit(_RecordingModule(), recording_step, _state(), ({"increment": jnp.asarray(1.0)},))
 
     assert observed == ["high"]
 
@@ -2441,28 +2438,21 @@ def test_trainer_prepares_sources_and_batches_for_its_strategy() -> None:
     assert batch["valid_predict_mask"].devices() == {device}
 
     fit_source = _PreparableSource()
-    result = trainer.fit_state(_RecordingModule(), _train_step, _state(), fit_source)
+    result = trainer._run_fit(_RecordingModule(), _train_step, _state(), fit_source)
     assert fit_source.device == device
     assert fit_source.steps == [0]
     assert int(result.state.step) == 1
 
 
 def test_trainer_builds_training_source_from_data_module() -> None:
-    """Verify a training plan lets the Trainer own DataModule source construction and placement."""
+    """Verify the fit seam lets the Trainer own DataModule source construction and placement."""
     device = jax.devices("cpu")[0]
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(device))
     source = _PreparableSource()
     data_module = MagicMock(spec=PhiDataModule)
     data_module.train_batch_source.return_value = source
     state = _state()
-    plan = TrainingPlan(_train_step, ("train",))
-
-    result = trainer.fit_state(
-        _RecordingModule(),
-        plan,
-        state,
-        datamodule=data_module,
-    )
+    result = trainer._run_fit(_RecordingModule(), _train_step, state, datamodule=data_module, batch_keys=("train",))
 
     data_module.prepare_stage.assert_called_once_with("fit", run_prepare_data=True, wait_for_prepare_data=ANY)
     requested_keys, requested_sampling_key = data_module.train_batch_source.call_args.args
@@ -2492,12 +2482,14 @@ def test_trainer_restores_sampling_state_before_building_data_module_source(
     trainer = Trainer(max_steps=6, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
     monkeypatch.setattr(trainer, "_restore_state", lambda *args, **kwargs: (restored_state, None))
 
-    result = trainer.fit_state(
+    result = _fit_from_checkpoint(
+        trainer,
         _RecordingModule(),
-        TrainingPlan(_train_step, ("train",)),
+        _train_step,
         _state(),
         ckpt_path=tmp_path,
         datamodule=data_module,
+        batch_keys=("train",),
     )
 
     _, sampling_key = data_module.train_batch_source.call_args.args
@@ -2658,38 +2650,7 @@ def test_concise_fit_is_deterministic_for_integer_and_typed_key_seeds() -> None:
         optimizer=optax.sgd(1.0e-2),
         seed=jax.random.key(7),
     )
-    model_key, runtime_key, sampling_key, balancer_key = jax.random.split(jax.random.key(7), 4)
-    explicit_blueprint = _concise_module()
-    explicit_module, model_state = explicit_blueprint.prepare_model(
-        key=model_key,
-        input_mean=None,
-        input_std=None,
-        precision=trainer.precision,
-    )
-    explicit_balancer = StaticLossBalancer(explicit_module.loss_names)
-    explicit_optimizer = optax.sgd(1.0e-2)
-    explicit_plan = build_training_plan(
-        trainer,
-        explicit_module,
-        explicit_balancer,
-        explicit_optimizer,
-    )
-    explicit_state = trainer.initialize_state(
-        model_state,
-        explicit_optimizer,
-        explicit_balancer.initialize(),
-        runtime_key,
-        sampling_key=sampling_key,
-        balancer_key=balancer_key,
-    )
-    explicit = trainer.fit_state(
-        explicit_module,
-        explicit_plan,
-        explicit_state,
-        datamodule=_ConciseDataModule(),
-    )
-
-    for comparison in (second, explicit):
+    for comparison in (second,):
         for first_leaf, comparison_leaf in zip(
             jax.tree.leaves(first.state),
             jax.tree.leaves(comparison.state),
@@ -2700,7 +2661,7 @@ def test_concise_fit_is_deterministic_for_integer_and_typed_key_seeds() -> None:
             else:
                 np.testing.assert_array_equal(first_leaf, comparison_leaf)
         assert first.metrics == comparison.metrics
-    assert first.iterations == second.iterations == explicit.iterations == 2
+    assert first.iterations == second.iterations == 2
     assert first.module is not first_blueprint
     with pytest.raises(RuntimeError, match="uninitialized"):
         first_blueprint.forward(first.state.model_state, jnp.ones((1, 1)))
@@ -2761,6 +2722,126 @@ def test_concise_fit_tears_down_data_after_model_initialization_failure() -> Non
     assert data_module.prepared_stage is None
 
 
+def test_concise_fit_compiles_the_module_and_builds_the_adaptive_update_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify `fit` hands the fit seam the module's batch keys and the balancer's host-scheduled update.
+
+    Args:
+        monkeypatch: Fixture capturing the fit-seam call.
+    """
+    captured: dict[str, Any] = {}
+
+    def run_fit(module: BasePhiModule, train_step: Any, state: TrainState, **kwargs: Any) -> str:
+        """Capture the fit-seam arguments.
+
+        Args:
+            module: Bound module.
+            train_step: Compiled update.
+            state: Built state.
+            **kwargs: Source, schedule, and restore options.
+
+        Returns:
+            A placeholder result.
+        """
+        captured.update(module=module, train_step=train_step, **kwargs)
+        return "fitted"
+
+    trainer = _quiet_trainer()
+    monkeypatch.setattr(trainer, "_run_fit", run_fit)
+    balancer = ExactNTKBalancer(("loss",), update_every_n_steps=25, update_start_step=5, kernel_size=2)
+
+    result = trainer.fit(
+        _concise_module(), datamodule=_ConciseDataModule(), optimizer=optax.sgd(1.0e-2), seed=0, balancer=balancer
+    )
+
+    assert result == "fitted"
+    assert captured["batch_keys"] == ("data",)
+    assert callable(captured["train_step"])
+    assert captured["balancer_update"].every_n_steps == 25
+    assert captured["balancer_update"].update_start_step == 5
+    assert captured["balancer_update"].batch_sizes == {"data": 2}
+
+
+class _CustomScalarModule(BasePhiModule):
+    """Train one scalar weight without a model factory, through the `configure_model` hook."""
+
+    def __init__(self, *, build: bool = True) -> None:
+        """Choose whether the module builds its own model.
+
+        Args:
+            build: Whether `configure_model` is available.
+        """
+        super().__init__()
+        self.build = build
+
+    @property
+    def loss_names(self) -> tuple[str, ...]:
+        """Return the scalar loss name.
+
+        Returns:
+            One loss name.
+        """
+        return ("loss",)
+
+    @property
+    def batch_keys(self) -> tuple[str, ...]:
+        """Return the DataModule batch name.
+
+        Returns:
+            One batch key.
+        """
+        return ("data",)
+
+    def forward(self, model_state: Any, inputs: jax.Array) -> jax.Array:
+        """Scale inputs by the weight.
+
+        Args:
+            model_state: Scalar weight mapping.
+            inputs: Input array.
+
+        Returns:
+            Weighted inputs.
+        """
+        return model_state["weight"] * inputs
+
+    def training_step(self, model_state: Any, batches: NamedBatches) -> dict[str, jax.Array]:
+        """Evaluate a squared prediction loss.
+
+        Args:
+            model_state: Scalar weight mapping.
+            batches: Named batches with `data` inputs.
+
+        Returns:
+            Named scalar loss.
+        """
+        return {"loss": jnp.mean(self.forward(model_state, batches["data"]["inputs"]) ** 2)}
+
+    def configure_model(self, **kwargs: Any) -> tuple[Any, Any]:
+        """Return this module and a unit weight, or defer to the base hook.
+
+        Args:
+            **kwargs: Initialization inputs from the Trainer.
+
+        Returns:
+            This module and its model state.
+        """
+        if not self.build:
+            return super().configure_model(**kwargs)
+        return self, {"weight": jnp.asarray(1.0)}
+
+
+def test_fit_trains_a_custom_module_through_configure_model() -> None:
+    """Verify a custom module joins `fit` by overriding `configure_model`, and the default hook explains itself."""
+    trainer = _quiet_trainer()
+    fit = partial(trainer.fit, datamodule=_ConciseDataModule(), optimizer=optax.sgd(1.0e-2), seed=0)
+
+    result = fit(_CustomScalarModule())
+
+    assert int(result.state.step) == 1
+    assert float(result.state.model_state["weight"]) < 1.0
+    with pytest.raises(NotImplementedError, match="must implement `configure_model\\(\\)`"):
+        fit(_CustomScalarModule(build=False))
+
+
 def test_concise_fit_validates_seed_and_balancer_contracts() -> None:
     """Verify invalid root keys and balancer loss-name ordering fail before updates."""
     trainer = Trainer(max_steps=1, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
@@ -2803,20 +2884,17 @@ def test_trainer_builds_consistent_mixed_precision_state_and_step() -> None:
     )
     balancer = StaticLossBalancer(("loss",))
     optimizer = optax.sgd(1.0e-2)
-    state = trainer.initialize_state(
-        {"weight": jnp.asarray(1.0)},
-        optimizer,
-        balancer.initialize(),
-        jax.random.key(4),
+    state = initialize_train_state(
+        {"weight": jnp.asarray(1.0)}, optimizer, balancer.initialize(), jax.random.key(4), trainer.precision
     )
     blueprint = PhiModule(InitializedModel(model_apply, {}), _ScalarObjective())
-    module, _ = blueprint.prepare_model(
+    module, _ = blueprint.configure_model(
         key=jax.random.key(0),
         input_mean=jnp.zeros(1),
         input_std=jnp.ones(1),
         precision=trainer.precision,
     )
-    train_step = trainer.compile_train_step(module, balancer, optimizer)
+    train_step = make_train_step(module, balancer, optimizer, trainer.precision)
     state, metrics = train_step(state, {"data": {"inputs": jnp.ones((2,), jnp.float32)}})
     assert int(state.step) == 1
     assert float(state.loss_scale) == 32768.0
@@ -2848,19 +2926,13 @@ def test_trainer_routes_restore_and_close_through_model_checkpoint() -> None:
         requested_batch_steps.append(step)
         return {"increment": jnp.asarray(1.0)}
 
-    result = trainer.fit_state(
-        _RecordingModule(),
-        _train_step,
-        _state(),
-        batch_source,
-        ckpt_path="last",
-    )
-    loaded = trainer.load_weights(_state(), step=3)
+    result = _fit_from_checkpoint(trainer, _RecordingModule(), _train_step, _state(), batch_source, ckpt_path="last")
+    loaded, _ = trainer._restore_state(_state(), "last", None, weights_only=True)
     trainer.close()
 
     assert checkpoint_io.restore_steps == [4]
     assert requested_batch_steps == [4]
-    assert checkpoint_io.weight_steps == [3]
+    assert checkpoint_io.weight_steps == [4]
     assert int(result.state.step) == 5
     # A weights-only load replaces only the model state and keeps the fresh run state.
     assert loaded.model_state is restored_state.model_state
@@ -2894,8 +2966,8 @@ def test_trainer_automatically_closes_and_reopens_checkpoint_resources() -> None
         callbacks=(ModelCheckpoint(checkpoint_io, save_last=False),),
     )
 
-    first = trainer.fit_state(_RecordingModule(), _train_step, _state(), ({"increment": jnp.asarray(1.0)},))
-    second = trainer.fit_state(_RecordingModule(), _train_step, first.state, ({"increment": jnp.asarray(1.0)},))
+    first = trainer._run_fit(_RecordingModule(), _train_step, _state(), ({"increment": jnp.asarray(1.0)},))
+    second = trainer._run_fit(_RecordingModule(), _train_step, first.state, ({"increment": jnp.asarray(1.0)},))
 
     assert int(second.state.step) == 2
     assert checkpoint_io.open_calls == 2
@@ -2929,30 +3001,11 @@ def test_trainer_closes_checkpoint_resources_after_fit_failure() -> None:
         return {"increment": jnp.asarray(1.0)}
 
     with pytest.raises(RuntimeError, match="batch failure"):
-        trainer.fit_state(_RecordingModule(), _train_step, _state(), failing_source)
+        trainer._run_fit(_RecordingModule(), _train_step, _state(), failing_source)
 
     assert checkpoint_io.open_calls == 1
     assert checkpoint_io.close_calls == 1
     assert checkpoint_io.closed is True
-
-
-def test_trainer_resolves_the_latest_checkpoint_root(tmp_path: Path) -> None:
-    """Verify post-fit orchestration can retrieve the latest committed checkpoint.
-
-    Args:
-        tmp_path: Temporary checkpoint-root path.
-    """
-    checkpoint_io = _MemoryCheckpointIO(_state(), tmp_path / "checkpoints")
-    trainer = Trainer(
-        max_steps=1,
-        strategy=SingleDeviceStrategy(jax.devices("cpu")[0]),
-        callbacks=(ModelCheckpoint(checkpoint_io),),
-    )
-
-    checkpoint_path, checkpoint_step = trainer.latest_checkpoint()
-
-    assert checkpoint_path == (tmp_path / "checkpoints").resolve()
-    assert checkpoint_step == 4
 
 
 def test_trainer_fit_restores_checkpoint_state_internally(
@@ -3031,7 +3084,8 @@ def test_trainer_fit_restores_checkpoint_state_internally(
         requested_steps.append(step)
         return {"increment": jnp.asarray(1.0)}
 
-    fit_result = trainer.fit_state(
+    fit_result = _fit_from_checkpoint(
+        trainer,
         _RecordingModule(),
         _train_step,
         _state(),
@@ -3228,7 +3282,7 @@ def test_trainer_prediction_context_exposes_source_pool_and_rank() -> None:
         callbacks=(callback,),
     )
     blueprint = PhiModule(InitializedModel(model_apply, {}), _ScalarObjective())
-    module, _ = blueprint.prepare_model(
+    module, _ = blueprint.configure_model(
         key=jax.random.key(0),
         input_mean=jnp.zeros(1),
         input_std=jnp.ones(1),
@@ -3268,7 +3322,7 @@ def test_trainer_predict_can_stream_without_retaining_predictions() -> None:
         callbacks=(callback,),
     )
     blueprint = PhiModule(InitializedModel(model_apply, {}), _ScalarObjective())
-    module, _ = blueprint.prepare_model(
+    module, _ = blueprint.configure_model(
         key=jax.random.key(0),
         input_mean=jnp.zeros(1),
         input_std=jnp.ones(1),
@@ -3321,6 +3375,48 @@ class _CountingCallback(Callback):
 
 class _OtherCountingCallback(_CountingCallback):
     """Provide a second stateful callback class with its own identifier."""
+
+
+def _fit_from_checkpoint(
+    trainer: Trainer,
+    module: BasePhiModule,
+    train_step: Any,
+    state: TrainState,
+    batches: Any = None,
+    *,
+    ckpt_path: str | Path,
+    ckpt_step: int | None = None,
+    datamodule: PhiDataModule | None = None,
+    batch_keys: tuple[str, ...] = (),
+) -> FitResult:
+    """Restore a checkpoint and run the fit loop, as :meth:`Trainer.fit` does around a custom train step.
+
+    Args:
+        trainer: Trainer under test.
+        module: Bound module.
+        train_step: Compiled update.
+        state: Restore template.
+        batches: Optional explicit training source.
+        ckpt_path: Checkpoint root, or `"last"`.
+        ckpt_step: Exact checkpoint step, or `None` for the latest.
+        datamodule: Optional DataModule supplying the source.
+        batch_keys: Batch keys requested from `datamodule`.
+
+    Returns:
+        Fit result.
+    """
+    state, callback_states = trainer._restore_state(
+        state, ckpt_path, ckpt_step, weights_only=False, restore_callbacks=True
+    )
+    return trainer._run_fit(
+        module,
+        train_step,
+        state,
+        batches,
+        datamodule=datamodule,
+        batch_keys=batch_keys,
+        callback_states=callback_states,
+    )
 
 
 def _fit_result(module: BasePhiModule, state: TrainState) -> FitResult:
@@ -3385,10 +3481,10 @@ def test_failed_restore_closes_the_backend_and_leaves_callback_state_fresh(monke
     batches = ({"increment": jnp.asarray(1.0)},)
 
     with pytest.raises(RuntimeError, match="unreadable checkpoint"):
-        trainer.fit_state(_RecordingModule(), _train_step, _state(), batches, ckpt_path="last")
+        _fit_from_checkpoint(trainer, _RecordingModule(), _train_step, _state(), batches, ckpt_path="last")
     assert checkpoint_io.closed is True
 
-    trainer.fit_state(_RecordingModule(), _train_step, _state(), batches)
+    trainer._run_fit(_RecordingModule(), _train_step, _state(), batches)
     assert counter.count == 0
 
 
@@ -3415,13 +3511,10 @@ def test_trainer_rejects_inconsistent_restore_options(
         message: Expected error fragment.
     """
     with pytest.raises(ValueError, match=message):
-        _quiet_trainer().fit_state(
-            _RecordingModule(),
-            _train_step,
+        _quiet_trainer()._restore_state(
             _state(),
-            ({"increment": jnp.asarray(1.0)},),
-            ckpt_path=ckpt_path,
-            ckpt_step=ckpt_step,
+            ckpt_path,
+            ckpt_step,
             weights_only=weights_only,
         )
 

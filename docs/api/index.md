@@ -64,7 +64,7 @@ from phijax.equations import burgers_1d, polar_navier_stokes, residual_equation
 from phijax.models import MLP, ModifiedMLP, PirateNet, build_mlp, build_modified_mlp, build_pirate_net
 from phijax.models import initialize_nnx_model
 from phijax.objectives import CompositeObjective, ResidualTerm
-from phijax.training import OrbaxCheckpointIO, TrainState, TrainingPlan
+from phijax.training import OrbaxCheckpointIO, TrainState, load_model_state
 from phijax.utils import RankedLogger, resolve_seed, seed_everything
 ```
 

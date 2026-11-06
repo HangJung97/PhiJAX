@@ -4,7 +4,6 @@ from functools import partial
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import jax
 import numpy as np
@@ -13,14 +12,13 @@ import orbax.checkpoint as ocp
 import pytest
 
 from phijax import InputStatistics, PhiModule, Trainer
-from phijax.balancers import StaticLossBalancer
 from phijax.callbacks import Callback, ModelCheckpoint, TrainerContext
 from phijax.data import ChunkedPredictionSource, HostPool, NamedBatchSource, PhiDataModule, input_statistics
 from phijax.data.datamodule import DataStage
 from phijax.equations import base_data_fidelity
 from phijax.models import build_mlp
 from phijax.objectives import CompositeObjective
-from phijax.training import OrbaxCheckpointIO, TrainState, build_training_plan, load_input_statistics
+from phijax.training import OrbaxCheckpointIO, TrainState, load_input_statistics
 from phijax.training import checkpointing as checkpointing_module
 from phijax.training import trainer as trainer_module
 
@@ -175,28 +173,27 @@ def test_fit_stores_statistics_and_resume_keeps_them(
     Args:
         source_run: Source checkpoint, trainer, result, and statistics.
         tmp_path: Temporary directory for trainer outputs.
-        monkeypatch: Pytest fixture used to observe the module given to the training plan.
+        monkeypatch: Pytest fixture used to observe the module the train step compiles.
     """
     checkpoints, _, source_result, source_statistics = source_run
     target_statistics = _statistics_of(_ShiftedDataModule(5.0))
-    planned_statistics: list[InputStatistics | None] = []
-    original_build = trainer_module.build_training_plan
+    compiled_statistics: list[InputStatistics | None] = []
+    original_make = trainer_module.make_train_step
 
-    def recording_build(trainer: Trainer, module: PhiModule, *args: Any) -> Any:
-        """Record the statistics of the module captured by the training plan.
+    def recording_make(module: PhiModule, *args: Any) -> Any:
+        """Record the statistics of the module the train step compiles.
 
         Args:
-            trainer: Owning trainer.
-            module: Module the plan compiles.
-            *args: Balancer and optimizer.
+            module: Module the step compiles.
+            *args: Balancer, optimizer, and precision.
 
         Returns:
-            Training plan from the original builder.
+            Train step from the original factory.
         """
-        planned_statistics.append(module.input_statistics)
-        return original_build(trainer, module, *args)
+        compiled_statistics.append(module.input_statistics)
+        return original_make(module, *args)
 
-    monkeypatch.setattr(trainer_module, "build_training_plan", recording_build)
+    monkeypatch.setattr(trainer_module, "make_train_step", recording_make)
     # The resuming trainer has no checkpoint callback, so the stored callback state is skipped with a warning.
     with pytest.warns(UserWarning, match="callbacks this Trainer does not have"):
         resumed = _trainer(tmp_path, max_steps=4).fit(
@@ -212,7 +209,7 @@ def test_fit_stores_statistics_and_resume_keeps_them(
     _assert_statistics(resumed.state.input_statistics, source_statistics)
     _assert_statistics(resumed.module.input_statistics, source_statistics)
     assert int(resumed.state.step) == 4
-    _assert_statistics(planned_statistics[0], source_statistics)
+    _assert_statistics(compiled_statistics[0], source_statistics)
     assert not np.allclose(target_statistics["mean"], source_statistics["mean"])
 
 
@@ -384,37 +381,6 @@ def test_prediction_from_a_legacy_checkpoint_takes_inputs_from_the_datamodule(
     np.testing.assert_allclose(np.asarray(from_module), in_memory, rtol=1e-6)
     np.testing.assert_allclose(np.asarray(from_result), in_memory, rtol=1e-6)
     assert data.stages == ["fit", "predict"]
-
-
-def test_fit_state_rejects_statistics_that_differ_from_the_compiled_module(
-    source_run: tuple[Path, Trainer, Any, Mapping[str, Any]],
-    tmp_path: Path,
-) -> None:
-    """Verify the explicit API refuses to train a plan compiled for statistics other than the restored ones.
-
-    Args:
-        source_run: Source checkpoint, trainer, result, and statistics.
-        tmp_path: Temporary directory for trainer outputs.
-    """
-    checkpoints, _, _, _ = source_run
-    trainer = _trainer(tmp_path)
-    target_statistics = _statistics_of(_ShiftedDataModule(5.0))
-    module, model_state = _module().prepare_model(
-        key=jax.random.key(3),
-        input_mean=target_statistics["mean"],
-        input_std=target_statistics["std"],
-        precision=trainer.precision,
-    )
-    balancer = StaticLossBalancer(module.loss_names)
-    optimizer = optax.adam(1e-2)
-    plan = build_training_plan(trainer, module, balancer, optimizer)
-    template = trainer.initialize_state(model_state, optimizer, balancer.initialize(), jax.random.key(4))
-    data_module = MagicMock()
-
-    with pytest.raises(ValueError, match="restored input statistics or periods differ"):
-        trainer.fit_state(module, plan, template, ckpt_path=checkpoints, datamodule=data_module)
-
-    data_module.teardown_stage.assert_called_once_with("fit")
 
 
 def test_fit_tears_down_when_checkpoint_restore_fails(tmp_path: Path) -> None:

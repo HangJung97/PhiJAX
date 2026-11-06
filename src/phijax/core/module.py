@@ -63,8 +63,8 @@ class BasePhiModule(_ModuleHooks, ABC):
     def batch_keys(self) -> Sequence[str]:
         """Return batch names required by the module's training computation.
 
-        Advanced modules used with :meth:`phijax.Trainer.fit_state` may leave this empty when their explicit
-        :class:`phijax.TrainingPlan` already defines the batch routing.
+        :meth:`phijax.Trainer.fit` requests these batches from the DataModule, so it rejects a module that declares
+        none.
 
         Returns:
             Ordered unique DataModule batch names, or an empty sequence when they cannot be inferred.
@@ -110,6 +110,39 @@ class BasePhiModule(_ModuleHooks, ABC):
         """
         del statistics, periods
         return self
+
+    def configure_model(
+        self,
+        *,
+        key: jax.Array,
+        input_mean: jax.typing.ArrayLike | None,
+        input_std: jax.typing.ArrayLike | None,
+        precision: PrecisionPolicy,
+        input_periods: InputPeriods | None = None,
+    ) -> tuple[Self, Any]:
+        """Build the model and return a module bound to it.
+
+        This is the counterpart of Lightning's `configure_model` hook. Lightning builds layers in place; a JAX model's
+        state is explicit, so this hook receives the initialization inputs and returns the bound module with its
+        model state. :meth:`phijax.training.Trainer.fit` calls it once before training, and
+        :meth:`phijax.training.Trainer.predict` calls it to build the restore template of a checkpoint.
+        :class:`PhiModule` builds its model from a model factory; a custom module overrides this hook.
+
+        Args:
+            key: Model-parameter initialization key.
+            input_mean: Optional per-coordinate normalization mean.
+            input_std: Optional per-coordinate normalization standard deviation.
+            precision: Trainer precision policy.
+            input_periods: Optional physical period per input axis.
+
+        Returns:
+            Bound module, which may be this module or a copy, and its initialized model state.
+
+        Raises:
+            NotImplementedError: If the module does not build its own model.
+        """
+        del key, input_mean, input_std, precision, input_periods
+        raise NotImplementedError(f"{type(self).__name__} must implement `configure_model()` to be fitted.")
 
     def __call__(self, model_state: Any, inputs: jax.Array) -> jax.Array:
         """Evaluate one model input.
@@ -285,9 +318,9 @@ class BasePhiModule(_ModuleHooks, ABC):
 class PhiModule(BasePhiModule):
     """Describe a model factory and objective before Trainer-owned initialization.
 
-    The user-facing instance is an immutable-in-practice blueprint. :class:`phijax.Trainer` calls :meth:`prepare_model`
-    after the DataModule has exposed normalization statistics, producing a shallow bound copy with a pure model
-    application and explicit model state. The original blueprint is never mutated.
+    The user-facing instance is an immutable-in-practice blueprint. :class:`phijax.Trainer` calls
+    :meth:`configure_model` after the DataModule has exposed normalization statistics, producing a shallow bound copy
+    with a pure model application and explicit model state. The original blueprint is never mutated.
     """
 
     def __init__(
@@ -331,7 +364,7 @@ class PhiModule(BasePhiModule):
         self._batch_keys = resolved_batch_keys
         self._model_apply: ModelApply | None = None
         self._model_summary: ModelSummaryFunction | None = None
-        # Build inputs recorded by `prepare_model` so `bind_inputs` can rebuild the apply closure.
+        # Build inputs recorded by `configure_model` so `bind_inputs` can rebuild the apply closure.
         self._model_key: jax.Array | None = None
         self._precision: PrecisionPolicy | None = None
         self._input_statistics: InputStatistics | None = None
@@ -355,7 +388,7 @@ class PhiModule(BasePhiModule):
         """
         return self._batch_keys
 
-    def prepare_model(
+    def configure_model(
         self,
         *,
         key: jax.Array,
@@ -441,20 +474,20 @@ class PhiModule(BasePhiModule):
             :class:`phijax.InitializedModel`, otherwise a rebound copy. This module is never mutated.
 
         Raises:
-            RuntimeError: If this blueprint has not been bound by :meth:`prepare_model`.
+            RuntimeError: If this blueprint has not been bound by :meth:`configure_model`.
         """
         from phijax.models.contracts import InitializedModel
 
         if isinstance(self.model, InitializedModel):
             return self
         if self._model_apply is None or self._model_key is None or self._precision is None:
-            raise RuntimeError("`bind_inputs()` requires a module bound by `prepare_model()`.")
+            raise RuntimeError("`bind_inputs()` requires a module bound by `configure_model()`.")
         requested_statistics = None if statistics is None else _host_statistics(*statistics)
         requested_periods = as_input_periods(periods)
         if _same_statistics(self._input_statistics, requested_statistics) and requested_periods == self._input_periods:
             return self
         input_mean, input_std = (None, None) if requested_statistics is None else requested_statistics
-        bound, _ = self.prepare_model(
+        bound, _ = self.configure_model(
             key=self._model_key,
             input_mean=input_mean,
             input_std=input_std,
@@ -594,7 +627,7 @@ class PhiModule(BasePhiModule):
         """Return the bound pure model application.
 
         Returns:
-            Pure model application created by :meth:`prepare_model`.
+            Pure model application created by :meth:`configure_model`.
 
         Raises:
             RuntimeError: If this blueprint has not been bound by a Trainer.

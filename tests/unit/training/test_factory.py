@@ -1,4 +1,3 @@
-from collections.abc import Mapping
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -7,7 +6,6 @@ import numpy as np
 import pytest
 from omegaconf import OmegaConf
 
-from phijax.balancers import BalancerUpdatePlan
 from phijax.callbacks import EarlyStopping, ModelSummary, TQDMProgressBar
 from phijax.core import BasePhiModule, PhiModule
 from phijax.data import PhiDataModule
@@ -29,8 +27,6 @@ from phijax.training import (
     PrecisionName,
     PrecisionPolicy,
     Trainer,
-    TrainingPlan,
-    build_training_plan,
 )
 from phijax.types import InputPeriods, NamedBatches
 
@@ -78,85 +74,6 @@ class _TestObjective:
 
 class _CustomPhiModule(PhiModule):
     """Represent an application-defined module selected through Hydra."""
-
-
-class _AdaptiveBalancer:
-    """Record adaptive update-plan construction for assembly tests."""
-
-    def __init__(self) -> None:
-        """Initialize an empty build-call record."""
-        self.build_call: tuple[object, tuple[str, ...]] | None = None
-        self.loss_names: tuple[str, ...] = ("loss",)
-
-    def initialize(self) -> jax.Array:
-        """Create one scalar synthetic balancer state.
-
-        Returns:
-            Unit scalar state.
-        """
-        return jax.numpy.ones(1)
-
-    def combine(self, losses: Mapping[str, jax.Array], state: Any) -> jax.Array:
-        """Return the fixture's single scalar loss.
-
-        Args:
-            losses: Scalar loss mapping.
-            state: Unused synthetic balancer state.
-
-        Returns:
-            Configured scalar loss.
-        """
-        del state
-        return losses["loss"]
-
-    def diagnostics(self, state: jax.Array) -> dict[str, jax.Array]:
-        """Expose no additional diagnostics.
-
-        Args:
-            state: Unused synthetic balancer state.
-
-        Returns:
-            Empty diagnostic mapping.
-        """
-        del state
-        return {}
-
-    def build_update_plan(
-        self,
-        module: object,
-        batch_keys: tuple[str, ...],
-    ) -> BalancerUpdatePlan:
-        """Return one fixed-diagnostic update plan.
-
-        Args:
-            module: Configured application module.
-            batch_keys: Required named training batches.
-
-        Returns:
-            Synthetic update plan using two diagnostic rows per batch.
-        """
-        self.build_call = (module, batch_keys)
-
-        def update(model_state: Any, batches: NamedBatches, balancer_state: Any) -> Any:
-            """Preserve synthetic balancer state.
-
-            Args:
-                model_state: Explicit model state unused by the fixture.
-                batches: Diagnostic batches unused by the fixture.
-                balancer_state: Synthetic balancer state.
-
-            Returns:
-                Unchanged balancer state.
-            """
-            del model_state, batches
-            return balancer_state
-
-        return BalancerUpdatePlan(
-            update,
-            every_n_steps=25,
-            update_start_step=5,
-            batch_sizes=dict.fromkeys(batch_keys, 2),
-        )
 
 
 def _model_apply(model_state: Any, inputs: jax.Array) -> jax.Array:
@@ -235,28 +152,6 @@ def test_instantiate_model_factory_remains_lazy_until_runtime_values_are_availab
     assert isinstance(initialized, InitializedModel)
     assert initialized.summary is None
     np.testing.assert_allclose(initialized.apply(initialized.state, jax.numpy.asarray([[3.0]])), [[2.0]])
-
-
-def test_core_assembly_returns_data_independent_adaptive_plan() -> None:
-    """Verify core assembly declares source requirements without constructing or sampling a DataModule."""
-    train_step = MagicMock()
-    trainer = MagicMock(spec=Trainer)
-    trainer.compile_train_step.return_value = train_step
-    module = MagicMock(spec=BasePhiModule)
-    module.loss_names = ("loss",)
-    module.batch_keys = ("initial", "pde")
-    balancer = _AdaptiveBalancer()
-    optimizer = MagicMock()
-    plan = build_training_plan(trainer, module, balancer, optimizer)
-
-    assert isinstance(plan, TrainingPlan)
-    assert plan.train_step is train_step
-    assert plan.batch_keys == ("initial", "pde")
-    assert plan.balancer_update is not None
-    assert plan.balancer_update.every_n_steps == 25
-    assert plan.balancer_update.update_start_step == 5
-    assert plan.balancer_update.batch_sizes == {"initial": 2, "pde": 2}
-    assert balancer.build_call == (module, ("initial", "pde"))
 
 
 def test_instantiate_balancer_accepts_a_flat_hydra_target() -> None:

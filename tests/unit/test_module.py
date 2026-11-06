@@ -132,7 +132,7 @@ def _bind(module: PhiModule) -> PhiModule:
     Returns:
         Bound shallow copy ready for numerical evaluation.
     """
-    bound, _ = module.prepare_model(
+    bound, _ = module.configure_model(
         key=jax.random.key(0),
         input_mean=jnp.zeros(1),
         input_std=jnp.ones(1),
@@ -330,7 +330,7 @@ def test_phi_module_records_and_rebinds_input_statistics() -> None:
     """Verify bound statistics are recorded on the host and rebinding rebuilds only the model application."""
     precision = PrecisionPolicy.from_name("32-true")
     blueprint = _normalized_mlp_module()
-    module, model_state = blueprint.prepare_model(
+    module, model_state = blueprint.configure_model(
         key=jax.random.key(0),
         input_mean=jnp.asarray([0.5, 1.0]),
         input_std=jnp.asarray([2.0, 4.0]),
@@ -376,7 +376,7 @@ def test_input_statistics_rebinding_edge_cases() -> None:
 
     assert prebuilt.input_statistics is None
     assert prebuilt.bind_inputs(statistics, None) is prebuilt
-    with pytest.raises(RuntimeError, match="prepare_model"):
+    with pytest.raises(RuntimeError, match="configure_model"):
         _normalized_mlp_module().bind_inputs(statistics, None)
 
     class _CustomModule(BasePhiModule):
@@ -426,7 +426,7 @@ def test_phi_module_records_and_rebinds_input_periods() -> None:
     """Verify modules record the periods their model applies and rebind only when the applied periods change."""
     precision = PrecisionPolicy.from_name("32-true")
     model = partial(build_mlp, input_dim=2, output_dim=1, hidden=(8,), periodic_features=True)
-    module, _ = PhiModule(model, _ConfiguredObjective()).prepare_model(
+    module, _ = PhiModule(model, _ConfiguredObjective()).configure_model(
         key=jax.random.key(0),
         input_mean=None,
         input_std=None,
@@ -441,7 +441,7 @@ def test_phi_module_records_and_rebinds_input_periods() -> None:
     assert rebound.input_periods == ((1, 0.5),)
 
     overridden_model = partial(model, periodic_features_kwargs={"periods": {1: 0.5}})
-    overridden, _ = PhiModule(overridden_model, _ConfiguredObjective()).prepare_model(
+    overridden, _ = PhiModule(overridden_model, _ConfiguredObjective()).configure_model(
         key=jax.random.key(0),
         input_mean=None,
         input_std=None,
