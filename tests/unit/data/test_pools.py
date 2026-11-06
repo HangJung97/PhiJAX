@@ -164,6 +164,25 @@ def test_chunked_prediction_source_validates_batch_size_and_handles_empty_pools(
     assert not bool(jnp.any(chunks[0]["valid_predict_mask"]))
 
 
+def test_chunked_prediction_source_all_yields_one_chunk_on_any_device_count() -> None:
+    """Verify `"all"` yields every row in one unpadded chunk, is not scaled by devices, and keeps empty pools valid."""
+    host_pool = _pool()
+    source = ChunkedPredictionSource(host_pool, "all")
+    (chunk,) = tuple(source)
+
+    assert len(source) == 1
+    assert source.for_devices(4) is source
+    np.testing.assert_array_equal(chunk["inputs"], host_pool.inputs)
+    assert bool(np.all(chunk["valid_predict_mask"]))
+    with pytest.raises(ValueError, match="positive integer or `all`"):
+        ChunkedPredictionSource(host_pool, "every")
+
+    empty_pool = HostPool(inputs=np.empty((0, 3), dtype=np.float32))
+    (empty_chunk,) = tuple(ChunkedPredictionSource(empty_pool, "all"))
+    assert empty_chunk["inputs"].shape == (1, 3)
+    assert not bool(np.any(empty_chunk["valid_predict_mask"]))
+
+
 def test_chunked_prediction_source_keeps_a_mask_field_and_rejects_the_reserved_name() -> None:
     """Verify a pool's own `mask` field is padded like other fields, while `valid_predict_mask` is reserved."""
     inputs = np.zeros((2, 1), dtype=np.float32)

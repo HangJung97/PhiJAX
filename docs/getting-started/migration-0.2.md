@@ -224,6 +224,32 @@ in Lightning. Runs on one device are unchanged.
 
 To keep the same global batch on `n` devices, divide each integer size by `n`. The `"all"` policy keeps its meaning.
 
+## DataModule defaults
+
+From PhiJAX 0.2.0b6, a DataModule that only builds pools needs to override only `setup()`. Pass the source sizes to the
+base initializer, and delete source hooks that match the defaults:
+
+```python
+class HeatDataModule(PhiDataModule):
+    def __init__(self, batch_sizes):
+        super().__init__(batch_sizes=batch_sizes)  # for example {"pde": 4096, "predict": 4096}
+
+    def setup(self, stage):
+        self.pools = ...
+```
+
+The Trainer now keeps the stage bookkeeping:
+
+| PhiJAX 0.2.0b5                                | PhiJAX 0.2.0b6                                    |
+| --------------------------------------------- | ------------------------------------------------- |
+| `data_module.prepare_stage("fit")`            | `data_module.setup("fit")`                        |
+| `data_module.teardown_stage("fit")`           | `data_module.teardown("fit")`                     |
+| `data_module.prepared_stage`                  | Removed; `fit()` and `predict()` manage the stage |
+| `prediction_pool()` returns `None` by default | Returns `self.pools.get("predict")`               |
+
+A DataModule with a pool named `predict` and no `prediction_pool()` override now excludes that pool from the default
+`normalization_pools()`. Override `normalization_pools()` to keep the old selection.
+
 ## Optional Hydra and IO extras
 
 From PhiJAX 0.2.0b6, Hydra and MATLAB or HDF5 support are optional extras. Add them to projects that use these features:

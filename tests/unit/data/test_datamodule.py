@@ -75,35 +75,6 @@ class _MinimalDataModule(PhiDataModule):
         return self._require_setup("predict")["predict"]
 
 
-class _FailingDataModule(_MinimalDataModule):
-    """Raise during setup while recording best-effort lifecycle cleanup."""
-
-    def __init__(self) -> None:
-        """Initialize the base lifecycle and teardown record."""
-        super().__init__()
-        self.torn_down_stage: DataStage | None = None
-
-    def setup(self, stage: DataStage) -> None:
-        """Raise one synthetic setup error.
-
-        Args:
-            stage: Requested lifecycle stage.
-
-        Raises:
-            RuntimeError: Always.
-        """
-        del stage
-        raise RuntimeError("synthetic setup failure")
-
-    def teardown(self, stage: DataStage) -> None:
-        """Record cleanup after failed setup.
-
-        Args:
-            stage: Failed lifecycle stage.
-        """
-        self.torn_down_stage = stage
-
-
 class _FitOnlyDataModule(PhiDataModule):
     """Provide training data without implementing prediction hooks."""
 
@@ -137,32 +108,24 @@ def test_phi_data_module_is_a_minimal_abstract_lifecycle() -> None:
         PhiDataModule()  # type: ignore[abstract]
 
 
-def test_phi_data_module_default_lifecycle_selects_non_prediction_pools() -> None:
+def test_phi_data_module_hooks_select_non_prediction_pools() -> None:
     """Verify default preparation, optional normalization, teardown, and application delegation."""
     data_module = _MinimalDataModule()
     assert data_module.prepare_data() is None
-    data_module.prepare_stage("fit")
-    prepared_pools = data_module.pools
-    data_module.prepare_stage("fit")
-    assert data_module.pools is prepared_pools
-    assert data_module.prepared_stage == "fit"
-    with pytest.raises(RuntimeError, match="still active"):
-        data_module.prepare_stage("predict")
+    data_module.setup("fit")
+
     assert tuple(data_module.normalization_pools()) == ("train",)
     assert data_module.input_statistics() is None
+    assert data_module.input_periods() is None
     assert data_module.train_batch_source(("train",), jax.random.key(1))(0)["train"]["inputs"].shape == (2, 2)
     assert len(data_module.predict_batch_source()) == 2
-    assert data_module.teardown_stage("fit") is None
-    assert data_module.prepared_stage is None
-    data_module.prepare_stage("predict")
-    assert data_module.prepared_stage == "predict"
-    data_module.teardown_stage("predict")
+    assert data_module.teardown("fit") is None
 
 
 def test_phi_data_module_supports_fit_without_prediction_data() -> None:
     """Verify prediction hooks are optional and all fit pools contribute to normalization."""
     data_module = _FitOnlyDataModule()
-    data_module.prepare_stage("fit")
+    data_module.setup("fit")
 
     assert data_module.predict_batch_source() is None
     assert data_module.prediction_pool() is None
@@ -178,53 +141,53 @@ def test_phi_data_module_sources_require_setup() -> None:
         data_module.predict_batch_source()
 
 
-def test_phi_data_module_tears_down_after_stage_setup_failure() -> None:
-    """Verify lifecycle preparation performs best-effort cleanup and leaves no active stage."""
-    data_module = _FailingDataModule()
-
-    with pytest.raises(RuntimeError, match="synthetic setup failure"):
-        data_module.prepare_stage("fit")
-
-    assert data_module.torn_down_stage == "fit"
-    assert data_module.prepared_stage is None
-
-
-class _RecordingDataModule(_MinimalDataModule):
-    """Record the order of data preparation, synchronization, and setup."""
-
-    def __init__(self) -> None:
-        """Initialize an empty event list."""
-        super().__init__()
-        self.events: list[str] = []
-
-    def prepare_data(self) -> None:
-        """Record data preparation."""
-        self.events.append("prepare_data")
+class _DefaultDataModule(PhiDataModule):
+    """Use only the default source hooks."""
 
     def setup(self, stage: DataStage) -> None:
-        """Record setup and build the fixture pools.
+        """Populate two training pools and one prediction pool.
 
         Args:
             stage: Requested lifecycle stage.
         """
-        self.events.append(f"setup:{stage}")
-        super().setup(stage)
+        del stage
+        self.pools = {"a": _pool(), "b": _pool(5.0), "predict": _pool(10.0)}
 
 
-@pytest.mark.parametrize("run_prepare_data", [True, False], ids=["process-zero", "other-process"])
-def test_prepare_stage_waits_for_prepared_data_before_setup(run_prepare_data: bool) -> None:
-    """Verify only the selected process prepares data and every process waits before setup.
+def test_phi_data_module_default_sources_use_constructor_sizes() -> None:
+    """Verify the default sources sample with `batch_sizes`, whose `predict` entry chunks the `predict` pool."""
+    data_module = _DefaultDataModule(batch_sizes={"a": 3, "b": "all", "predict": 3})
+    data_module.setup("fit")
 
-    Args:
-        run_prepare_data: Whether this process prepares data.
-    """
-    data_module = _RecordingDataModule()
+    source = data_module.train_batch_source(("b", "a"), jax.random.key(0))
+    batch = source(0)
+    prediction = data_module.predict_batch_source()
 
-    data_module.prepare_stage(
-        "fit",
-        run_prepare_data=run_prepare_data,
-        wait_for_prepare_data=lambda: data_module.events.append("wait"),
-    )
+    assert isinstance(source, NamedBatchSource)
+    assert tuple(batch) == ("b", "a")
+    assert batch["a"]["inputs"].shape == (3, 2)
+    np.testing.assert_array_equal(np.sort(batch["b"]["inputs"], axis=0), _pool(5.0).inputs)
+    assert data_module.prediction_pool() is data_module.pools["predict"]
+    assert isinstance(prediction, ChunkedPredictionSource)
+    assert prediction.batch_size == 3
+    assert len(prediction) == 2
+    assert tuple(data_module.normalization_pools()) == ("a", "b")
 
-    expected = ["prepare_data", "wait", "setup:fit"] if run_prepare_data else ["wait", "setup:fit"]
-    assert data_module.events == expected
+
+def test_phi_data_module_default_sources_report_missing_sizes_and_keys() -> None:
+    """Verify each default source names what it is missing."""
+    data_module = _DefaultDataModule()
+    data_module.setup("fit")
+    with pytest.raises(ValueError, match="needs `batch_sizes`"):
+        data_module.train_batch_source(("a",), jax.random.key(0))
+    with pytest.raises(ValueError, match=r"needs `batch_sizes\['predict'\]`"):
+        data_module.predict_batch_source()
+
+    data_module = _DefaultDataModule(batch_sizes={"a": 2})
+    data_module.setup("fit")
+    with pytest.raises(KeyError, match=r"\['c'\] name no pool"):
+        data_module.train_batch_source(("a", "c"), jax.random.key(0))
+    with pytest.raises(KeyError, match=r"\['b'\] have no entry in `batch_sizes`"):
+        data_module.train_batch_source(("a", "b"), jax.random.key(0))
+    with pytest.raises(ValueError, match=r"needs `batch_sizes\['predict'\]`"):
+        data_module.predict_batch_source()

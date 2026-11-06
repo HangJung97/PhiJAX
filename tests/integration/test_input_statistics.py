@@ -391,7 +391,7 @@ def test_fit_tears_down_when_checkpoint_restore_fails(tmp_path: Path) -> None:
     """
     data_module = _ShiftedDataModule(0.0)
     teardown_stages: list[str] = []
-    data_module.teardown_stage = teardown_stages.append  # type: ignore[method-assign]
+    data_module.teardown = teardown_stages.append  # type: ignore[method-assign]
 
     with pytest.raises(FileNotFoundError):
         _trainer(tmp_path).fit(

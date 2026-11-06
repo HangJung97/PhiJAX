@@ -1,6 +1,6 @@
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, Self
+from typing import Any, Protocol, Self, cast
 
 import jax
 import numpy as np
@@ -246,11 +246,12 @@ class ChunkedPredictionSource:
 
     Attributes:
         pool: Immutable host prediction pool carrying dense reconstruction metadata.
-        batch_size: Positive fixed number of rows yielded per batch, for each device that shares it.
+        batch_size: Positive fixed number of rows yielded per batch, for each device that shares it, or `"all"` for one
+            batch holding every pool row, split over the devices that share it.
     """
 
     pool: HostPool
-    batch_size: int
+    batch_size: BatchSize
 
     def __post_init__(self) -> None:
         """Validate prediction row and fixed batch sizes and the reserved `valid_predict_mask` field.
@@ -259,7 +260,7 @@ class ChunkedPredictionSource:
             ValueError: If pool rows or `batch_size` are invalid, or if the pool has an array field named
                 `valid_predict_mask`.
         """
-        _chunk_layout(int(self.pool.inputs.shape[0]), self.batch_size)
+        _chunk_layout(int(self.pool.inputs.shape[0]), self._rows_per_batch)
         if "valid_predict_mask" in self.pool.fields():
             raise ValueError(
                 "Prediction pools cannot have an auxiliary array named `valid_predict_mask`; ChunkedPredictionSource "
@@ -276,9 +277,22 @@ class ChunkedPredictionSource:
             count: Positive number of devices that split each chunk.
 
         Returns:
-            This source when `count` is `1`, otherwise a copy with a scaled chunk size.
+            This source when `count` is `1` or `batch_size` is `"all"`, otherwise a copy with a scaled chunk size.
         """
-        return self if count == 1 else type(self)(self.pool, self.batch_size * count)
+        if count == 1 or self.batch_size == "all":
+            return self
+        return type(self)(self.pool, cast(int, self.batch_size) * count)
+
+    @property
+    def _rows_per_batch(self) -> int:
+        """Resolve `batch_size` to the fixed leading dimension of every yielded batch.
+
+        Returns:
+            `batch_size`, or the pool row count for `"all"`. An empty pool keeps one row, which is padding.
+        """
+        if self.batch_size == "all":
+            return max(1, int(self.pool.inputs.shape[0]))
+        return cast(int, self.batch_size)
 
     def __len__(self) -> int:
         """Return the finite number of padded prediction batches.
@@ -286,7 +300,7 @@ class ChunkedPredictionSource:
         Returns:
             At least one batch, including for an empty prediction pool.
         """
-        batch_count, _ = _chunk_layout(int(self.pool.inputs.shape[0]), self.batch_size)
+        batch_count, _ = _chunk_layout(int(self.pool.inputs.shape[0]), self._rows_per_batch)
         return batch_count
 
     def __iter__(self) -> Iterator[dict[str, np.ndarray]]:
@@ -297,18 +311,19 @@ class ChunkedPredictionSource:
             rows and `False` for padding.
         """
         row_count = int(self.pool.inputs.shape[0])
+        rows = self._rows_per_batch
         fields = self.pool.fields()
         for batch_index in range(len(self)):
-            start = batch_index * self.batch_size
-            stop = min(start + self.batch_size, row_count)
+            start = batch_index * rows
+            stop = min(start + rows, row_count)
             valid_count = stop - start
-            padding = self.batch_size - valid_count
+            padding = rows - valid_count
             batch: dict[str, np.ndarray] = {}
             for name, values in fields.items():
                 selected = np.asarray(values[start:stop])
                 pad_width = ((0, padding), *(((0, 0),) * (selected.ndim - 1)))
                 batch[name] = np.pad(selected, pad_width)
-            batch["valid_predict_mask"] = np.arange(self.batch_size) < valid_count
+            batch["valid_predict_mask"] = np.arange(rows) < valid_count
             yield batch
 
 

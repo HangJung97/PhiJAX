@@ -197,7 +197,8 @@ def test_instantiate_data_module_defers_stage_preparation_to_trainer(
     result = instantiate_data_module(OmegaConf.create({"_target_": "unused"}))
 
     assert result is data_module
-    data_module.prepare_stage.assert_not_called()
+    data_module.prepare_data.assert_not_called()
+    data_module.setup.assert_not_called()
 
 
 def test_instantiate_data_module_rejects_an_invalid_target(monkeypatch: pytest.MonkeyPatch) -> None:
