@@ -45,13 +45,13 @@ def test_inviscid_spherical_residuals_match_manufactured_fields(points: list[lis
 
     inputs = jnp.asarray(points, dtype=jnp.float32)
     pressure_coefficient = 0.5
-    groups = spherical_navier_stokes(
+    components = spherical_navier_stokes(
         predict_one,
         None,
         {"inputs": inputs},
         pressure_coefficient=pressure_coefficient,
     )
-    residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+    residuals = jnp.concatenate(components, axis=-1)
     radius, theta, phi, time = np.asarray(inputs).T
     sin_theta = np.sin(theta)
     cos_theta = np.cos(theta)
@@ -106,13 +106,13 @@ def test_viscous_spherical_residuals_include_vector_laplacian_corrections() -> N
         return jnp.stack((connected_zero, connected_zero, connected_zero + 1.0, connected_zero))
 
     inputs = jnp.asarray([[0.7, 0.6, 0.3, 0.0], [1.5, 1.2, 0.8, 0.4]], dtype=jnp.float32)
-    groups = spherical_navier_stokes(
+    components = spherical_navier_stokes(
         predict_one,
         None,
         {"inputs": inputs},
         viscosity_coefficient=1.0,
     )
-    residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+    residuals = jnp.concatenate(components, axis=-1)
     radius, theta, _, _ = np.asarray(inputs).T
     expected = np.stack(
         (
@@ -160,7 +160,7 @@ def test_spherical_residuals_have_finite_parameter_gradients_and_axis_values() -
         Returns:
             Mean squared spherical residual.
         """
-        groups = spherical_navier_stokes(
+        components = spherical_navier_stokes(
             predict_one,
             params,
             {"inputs": inputs},
@@ -168,11 +168,11 @@ def test_spherical_residuals_have_finite_parameter_gradients_and_axis_values() -
             radius_epsilon=1.0e-3,
             sine_epsilon=1.0e-3,
         )
-        residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+        residuals = jnp.concatenate(components, axis=-1)
         return jnp.mean(residuals**2)
 
     params = jnp.asarray([1.0, 0.5, -0.25], dtype=jnp.float32)
-    groups = spherical_navier_stokes(
+    components = spherical_navier_stokes(
         predict_one,
         params,
         {"inputs": inputs},
@@ -180,7 +180,7 @@ def test_spherical_residuals_have_finite_parameter_gradients_and_axis_values() -
         radius_epsilon=1.0e-3,
         sine_epsilon=1.0e-3,
     )
-    residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+    residuals = jnp.concatenate(components, axis=-1)
     gradients = jax.grad(residual_loss)(params)
     assert residuals.shape == (2, 4)
     assert bool(jnp.all(jnp.isfinite(residuals)))
@@ -204,10 +204,10 @@ def test_spherical_equation_returns_four_named_groups() -> None:
         return jnp.zeros((4,), dtype=point.dtype) + point[0] * 0.0
 
     batch = {"inputs": jnp.asarray([[0.7, 0.6, 0.3, 0.0]], dtype=jnp.float32)}
-    groups = spherical_navier_stokes(predict_one, None, batch)
+    components = spherical_navier_stokes(predict_one, None, batch)
 
-    assert len(groups) == 4
-    assert all(len(group) == 1 and group[0].shape == (1, 1) for group in groups)
+    assert len(components) == 4
+    assert all(residual.shape == (1, 1) for residual in components)
 
 
 def test_spherical_equation_rejects_invalid_settings_and_output_stream() -> None:

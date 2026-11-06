@@ -24,8 +24,8 @@ def test_zero_viscosity_polar_residuals_match_analytic_fields() -> None:
         return jnp.stack((radius**2 + time, radius * theta, radius + theta * time))
 
     inputs = jnp.asarray([[0.5, 0.2, 0.3], [0.8, -0.1, 0.7]], dtype=jnp.float32)
-    groups = polar_navier_stokes(predict_one, None, {"inputs": inputs})
-    residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+    components = polar_navier_stokes(predict_one, None, {"inputs": inputs})
+    residuals = jnp.concatenate(components, axis=-1)
     radius, theta, time = np.asarray(inputs).T
     expected = np.stack(
         (
@@ -57,15 +57,15 @@ def test_viscous_polar_residuals_include_vector_laplacian_terms() -> None:
 
     inputs = jnp.asarray([[0.5, 0.2, 0.3], [0.8, -0.1, 0.7]], dtype=jnp.float32)
     viscosity_coefficient = 0.25
-    inviscid_groups = polar_navier_stokes(predict_one, None, {"inputs": inputs})
-    viscous_groups = polar_navier_stokes(
+    inviscid_components = polar_navier_stokes(predict_one, None, {"inputs": inputs})
+    viscous_components = polar_navier_stokes(
         predict_one,
         None,
         {"inputs": inputs},
         viscosity_coefficient=viscosity_coefficient,
     )
-    inviscid = jnp.concatenate([group[0] for group in inviscid_groups], axis=-1)
-    viscous = jnp.concatenate([group[0] for group in viscous_groups], axis=-1)
+    inviscid = jnp.concatenate(inviscid_components, axis=-1)
+    viscous = jnp.concatenate(viscous_components, axis=-1)
     radius, theta, time = np.asarray(inputs).T
     viscous_r = 3.0 + (2.0 - theta**2 - time - 2.0 * radius - 4.0 * theta) / radius**2
     viscous_theta = (2.0 - theta**2 + 4.0 * theta) / radius**2
@@ -108,13 +108,13 @@ def test_viscous_polar_residuals_have_finite_parameter_gradients() -> None:
         Returns:
             Sum of squared viscous residual components.
         """
-        groups = polar_navier_stokes(
+        components = polar_navier_stokes(
             predict_one,
             params,
             {"inputs": inputs},
             viscosity_coefficient=0.2,
         )
-        residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+        residuals = jnp.concatenate(components, axis=-1)
         return jnp.sum(residuals**2)
 
     gradients = jax.grad(residual_loss)(jnp.asarray([1.0, 0.5], dtype=jnp.float32))
@@ -140,11 +140,10 @@ def test_polar_navier_stokes_returns_three_grouped_residual_components() -> None
         return jnp.stack((radius + time, radius * theta, theta))
 
     batch = {"inputs": jnp.asarray([[0.5, 0.2, 0.3], [0.8, -0.1, 0.7]], dtype=jnp.float32)}
-    groups = polar_navier_stokes(predict_one, None, batch)
+    components = polar_navier_stokes(predict_one, None, batch)
 
-    assert len(groups) == 3
-    assert all(len(group) == 1 for group in groups)
-    assert all(group[0].shape == (2, 1) for group in groups)
+    assert len(components) == 3
+    assert all(residual.shape == (2, 1) for residual in components)
 
 
 def test_polar_navier_stokes_rejects_output_stream_and_invalid_coefficients() -> None:

@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from phijax.derivatives import hessian_diagonal, value_and_jacobian
 from phijax.equations._common import validate_stream
 from phijax.equations.metadata import residual_equation
-from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
+from phijax.types import ArrayMapping, ModelApply, ResidualOutput, ResidualStream
 
 
 @residual_equation(names=("burgers",))
@@ -19,7 +19,7 @@ def burgers_1d(
     viscosity_coefficient: float = 0.01 / math.pi,
     output_index: int = 0,
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     """Evaluate a grouped one-dimensional Burgers equation residual.
 
     Coordinates are ordered as `[t, x]`. For the selected scalar model output `u`, the returned residual is
@@ -36,7 +36,7 @@ def burgers_1d(
         stream: Equation representation requested by the objective. Burgers supports only `"residual"`.
 
     Returns:
-        One single-array residual group.
+        Residuals with shape `[samples, 1]`.
 
     Raises:
         ValueError: If `stream` requests raw model outputs or the equation settings are invalid.
@@ -89,7 +89,7 @@ def burgers_1d(
         return residual
 
     residuals = jax.vmap(point_residual)(inputs)[:, None]
-    return ((residuals,),)
+    return residuals
 
 
 __all__ = ["burgers_1d"]

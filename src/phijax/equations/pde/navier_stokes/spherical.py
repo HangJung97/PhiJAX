@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from phijax.derivatives import hessian_diagonal, value_and_jacobian
 from phijax.equations._common import validate_stream
 from phijax.equations.metadata import residual_equation
-from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
+from phijax.types import ArrayMapping, ModelApply, ResidualOutput, ResidualStream
 
 
 @residual_equation(names=("continuity", "momentum_r", "momentum_th", "momentum_phi"))
@@ -20,7 +20,7 @@ def spherical_navier_stokes(
     radius_epsilon: float = 1.0e-12,
     sine_epsilon: float = 1.0e-12,
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     r"""Evaluate grouped weighted spherical Navier--Stokes residuals.
 
     The coordinate order is `[r, th, phi, t]`, model outputs are `[u_r, u_th, u_phi, p]`, and the returned groups
@@ -131,7 +131,7 @@ def spherical_navier_stokes(
         stream: Equation representation requested by the objective. Navier--Stokes supports only `"residual"`.
 
     Returns:
-        Four single-array groups ordered as continuity, radial momentum, polar momentum, and azimuthal momentum.
+        Four `[samples, 1]` residuals ordered as continuity, radial momentum, polar momentum, and azimuthal momentum.
 
     Raises:
         ValueError: If `stream` requests raw model outputs or the equation settings are invalid.
@@ -301,7 +301,7 @@ def spherical_navier_stokes(
         return jnp.stack((continuity, momentum_r, momentum_theta, momentum_phi))
 
     residuals = jax.vmap(point_residual)(inputs)
-    return tuple((residuals[..., index : index + 1],) for index in range(4))
+    return tuple(residuals[..., index : index + 1] for index in range(4))
 
 
 __all__ = ["spherical_navier_stokes"]

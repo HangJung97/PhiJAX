@@ -34,7 +34,7 @@ def test_burgers_residuals_match_manufactured_derivatives() -> None:
         parameters,
         {"inputs": inputs},
         viscosity_coefficient=viscosity,
-    )[0][0]
+    )
 
     time, position = np.asarray(inputs).T
     a, b = np.asarray(parameters)
@@ -43,10 +43,10 @@ def test_burgers_residuals_match_manufactured_derivatives() -> None:
     np.testing.assert_allclose(np.asarray(residuals[:, 0]), expected, rtol=1e-6, atol=1e-6)
 
 
-def test_burgers_grouped_residual_has_finite_parameter_gradients() -> None:
+def test_burgers_residual_has_finite_parameter_gradients() -> None:
     """Verify the framework-facing residual retains shape and finite gradients through `u_xx`."""
     batch = {"inputs": jnp.asarray([[0.2, -0.5], [0.7, 0.25]], dtype=jnp.float32)}
-    groups = burgers_1d(_polynomial_solution, jnp.asarray([1.5, 0.75]), batch)
+    residual = burgers_1d(_polynomial_solution, jnp.asarray([1.5, 0.75]), batch)
 
     def loss(parameters: jax.Array) -> jax.Array:
         """Reduce a grouped Burgers residual to a scalar.
@@ -57,12 +57,10 @@ def test_burgers_grouped_residual_has_finite_parameter_gradients() -> None:
         Returns:
             Sum of squared residual values.
         """
-        residual = burgers_1d(_polynomial_solution, parameters, batch)[0][0]
-        return jnp.sum(residual**2)
+        return jnp.sum(burgers_1d(_polynomial_solution, parameters, batch) ** 2)
 
     gradients = jax.grad(loss)(jnp.asarray([1.5, 0.75], dtype=jnp.float32))
-    assert len(groups) == 1
-    assert groups[0][0].shape == (2, 1)
+    assert residual.shape == (2, 1)
     assert gradients.shape == (2,)
     assert bool(jnp.all(jnp.isfinite(gradients)))
 
@@ -76,7 +74,7 @@ def test_inviscid_burgers_path_omits_diffusion() -> None:
         parameters,
         {"inputs": inputs},
         viscosity_coefficient=0.0,
-    )[0][0]
+    )
     value = 1.5 * 0.2 + 0.75 * 0.5**2
     np.testing.assert_allclose(residual, [[1.5 + value * 2.0 * 0.75 * -0.5]])
 

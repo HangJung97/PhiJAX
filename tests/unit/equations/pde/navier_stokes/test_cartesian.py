@@ -33,14 +33,14 @@ def test_cartesian_2d_residuals_match_manufactured_viscous_fields() -> None:
     inputs = jnp.asarray([[0.2, 0.3, 0.4], [0.7, -0.1, 0.8]], dtype=jnp.float32)
     pressure_coefficient = 0.5
     viscosity_coefficient = 0.2
-    groups = cartesian_2d_navier_stokes(
+    components = cartesian_2d_navier_stokes(
         predict_one,
         None,
         {"inputs": inputs},
         pressure_coefficient=pressure_coefficient,
         viscosity_coefficient=viscosity_coefficient,
     )
-    residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+    residuals = jnp.concatenate(components, axis=-1)
     x, y, time = np.asarray(inputs).T
     u_x = x**2 + y + time
     u_y = x * y + y**2
@@ -77,14 +77,14 @@ def test_cartesian_3d_residuals_match_manufactured_viscous_fields() -> None:
     inputs = jnp.asarray([[0.2, 0.3, 0.4, 0.5], [0.7, -0.1, 0.2, 0.8]], dtype=jnp.float32)
     pressure_coefficient = 0.25
     viscosity_coefficient = 0.1
-    groups = cartesian_3d_navier_stokes(
+    components = cartesian_3d_navier_stokes(
         predict_one,
         None,
         {"inputs": inputs},
         pressure_coefficient=pressure_coefficient,
         viscosity_coefficient=viscosity_coefficient,
     )
-    residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+    residuals = jnp.concatenate(components, axis=-1)
     x, y, z, time = np.asarray(inputs).T
     u_x = x**2 + time
     u_y = y**2 + x
@@ -117,7 +117,7 @@ def test_cartesian_equations_return_named_singleton_groups(
     Args:
         equation: Configurable Cartesian residual equation.
         input_size: Required coordinate width and model-output width.
-        group_count: Expected number of named residual groups.
+        group_count: Expected number of named residual components.
     """
 
     def predict_one(params: None, point: jax.Array) -> jax.Array:
@@ -134,10 +134,10 @@ def test_cartesian_equations_return_named_singleton_groups(
         return jnp.zeros((input_size,), dtype=point.dtype) + point[0] * 0.0
 
     batch = {"inputs": jnp.ones((1, input_size), dtype=jnp.float32)}
-    groups = equation(predict_one, None, batch)
+    components = equation(predict_one, None, batch)
 
-    assert len(groups) == group_count
-    assert all(len(group) == 1 and group[0].shape == (1, 1) for group in groups)
+    assert len(components) == group_count
+    assert all(residual.shape == (1, 1) for residual in components)
 
 
 def test_cartesian_viscous_residuals_have_finite_parameter_gradients() -> None:
@@ -167,13 +167,13 @@ def test_cartesian_viscous_residuals_have_finite_parameter_gradients() -> None:
         Returns:
             Mean squared Cartesian residual.
         """
-        groups = cartesian_3d_navier_stokes(
+        components = cartesian_3d_navier_stokes(
             predict_one,
             params,
             {"inputs": inputs},
             viscosity_coefficient=0.2,
         )
-        residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+        residuals = jnp.concatenate(components, axis=-1)
         return jnp.mean(residuals**2)
 
     gradients = jax.grad(residual_loss)(jnp.asarray([1.0, 0.5, -0.25], dtype=jnp.float32))
@@ -263,7 +263,7 @@ def test_cartesian_equations_can_be_jitted() -> None:
         return jnp.stack((params * x + time, params * y, x + y))
 
     compiled = jax.jit(partial(cartesian_2d_navier_stokes, predict_one))
-    groups = compiled(jnp.asarray(0.5), {"inputs": jnp.ones((2, 3), dtype=jnp.float32)})
-    residuals = jnp.concatenate([group[0] for group in groups], axis=-1)
+    components = compiled(jnp.asarray(0.5), {"inputs": jnp.ones((2, 3), dtype=jnp.float32)})
+    residuals = jnp.concatenate(components, axis=-1)
     assert residuals.shape == (2, 3)
     assert bool(jnp.all(jnp.isfinite(residuals)))

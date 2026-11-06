@@ -38,16 +38,16 @@ def test_no_slip_boundary_selected_components_and_gradients(dimensions: int, sam
     )
     state = jnp.asarray(2.0, dtype=jnp.float32)
     batch = {"inputs": inputs, "targets": targets}
-    ((residual,),) = jax.jit(evaluate)(state, batch)
+    residual = jax.jit(evaluate)(state, batch)
     expected = 2.0 * inputs[:, outputs] - targets[:, target_indices]
     np.testing.assert_allclose(residual, expected)
     assert residual.shape == (samples, dimensions)
     assert residual.dtype == jnp.float32
-    ((output,),) = jax.jit(partial(evaluate, stream="output"))(state, {"inputs": inputs})
+    output = jax.jit(partial(evaluate, stream="output"))(state, {"inputs": inputs})
     np.testing.assert_array_equal(output, 2.0 * inputs[:, outputs])
     gradient = jax.jit(
         jax.grad(
-            lambda params, points: jnp.sum(evaluate(params, {"inputs": points, "targets": targets})[0][0] ** 2),
+            lambda params, points: jnp.sum(evaluate(params, {"inputs": points, "targets": targets}) ** 2),
             argnums=(0, 1),
         )
     )(state, inputs)
@@ -62,7 +62,7 @@ def test_no_slip_boundary_selected_components_and_gradients(dimensions: int, sam
 def test_no_slip_boundary_defaults_and_metadata() -> None:
     """Verify stationary-wall defaults and automatic residual metadata."""
     batch = {"inputs": jnp.asarray([[2.0, -3.0, 9.0]]), "targets": jnp.zeros((1, 2))}
-    ((residual,),) = no_slip_boundary(lambda state, point: point, None, batch)
+    residual = no_slip_boundary(lambda state, point: point, None, batch)
     np.testing.assert_array_equal(residual, [[2.0, -3.0]])
     assert get_residual_names(no_slip_boundary) == ("no_slip",)
     assert get_default_ntk_stream(no_slip_boundary) == "output"
@@ -128,7 +128,7 @@ def test_free_slip_projects_velocity_error_onto_normal() -> None:
     np.testing.assert_allclose(free_slip_residual(velocity, target, normals), [[1.0], [-3.0]])
 
 
-def test_free_slip_boundary_exposes_residual_and_output_groups() -> None:
+def test_free_slip_boundary_exposes_residual_and_output_streams() -> None:
     """Verify the free-slip equation supports residual losses and output-based NTK diagnostics."""
 
     def predict_one(state: None, point: jax.Array) -> jax.Array:
@@ -149,11 +149,11 @@ def test_free_slip_boundary_exposes_residual_and_output_groups() -> None:
         "targets": jnp.asarray([[1.0, 1.0], [1.0, 2.0]]),
         "normals": jnp.asarray([[1.0, 0.0], [0.0, -1.0]]),
     }
-    residual_groups = free_slip_boundary(predict_one, None, batch)
-    output_groups = free_slip_boundary(predict_one, None, batch, stream="output")
+    residual = free_slip_boundary(predict_one, None, batch)
+    output = free_slip_boundary(predict_one, None, batch, stream="output")
 
-    np.testing.assert_allclose(residual_groups[0][0], [[1.0], [-3.0]])
-    np.testing.assert_allclose(output_groups[0][0], batch["inputs"])
+    np.testing.assert_allclose(residual, [[1.0], [-3.0]])
+    np.testing.assert_allclose(output, batch["inputs"])
 
 
 def test_free_slip_boundary_rejects_invalid_component_selection() -> None:
@@ -189,12 +189,12 @@ def test_free_slip_boundary_custom_normals_key(include_default_normals: bool) ->
         target_indices=(1, 0),
         normals_key="wall_normals",
     )
-    ((residual,),) = jax.jit(evaluate)(batch)
+    residual = jax.jit(evaluate)(batch)
     np.testing.assert_allclose(residual, [[2.0], [-3.0]])
     assert residual.shape == (2, 1)
     assert residual.dtype == jnp.float32
     output = jax.jit(partial(evaluate, stream="output"))(batch)
-    np.testing.assert_array_equal(output[0][0], batch["inputs"][:, (2, 0)])
+    np.testing.assert_array_equal(output, batch["inputs"][:, (2, 0)])
 
 
 def test_free_slip_boundary_missing_custom_normals_key() -> None:
@@ -207,4 +207,4 @@ def test_free_slip_boundary_missing_custom_normals_key() -> None:
     evaluate = partial(free_slip_boundary, lambda state, point: point, None, normals_key="wall_normals")
     with pytest.raises(KeyError, match="wall_normals"):
         evaluate(batch)
-    np.testing.assert_array_equal(evaluate(batch, stream="output")[0][0], batch["inputs"])
+    np.testing.assert_array_equal(evaluate(batch, stream="output"), batch["inputs"])

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from phijax.derivatives import hessian_diagonal, value_and_jacobian
 from phijax.equations._common import validate_stream
 from phijax.equations.metadata import residual_equation
-from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
+from phijax.types import ArrayMapping, ModelApply, ResidualOutput, ResidualStream
 
 
 @residual_equation(names=("continuity", "momentum_r", "momentum_th"))
@@ -19,7 +19,7 @@ def polar_navier_stokes(
     viscosity_coefficient: float = 0.0,
     radius_epsilon: float = 1.0e-12,
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     r"""Evaluate grouped polar Navier--Stokes equation residuals.
 
     The coordinate order is `[r, th, t]`, and model outputs are `[u_r, u_th, p]`. The returned groups represent
@@ -97,7 +97,7 @@ def polar_navier_stokes(
         stream: Equation representation requested by the objective. Polar Navier--Stokes supports only `"residual"`.
 
     Returns:
-        Three single-array groups ordered as continuity, radial momentum, and angular momentum.
+        Three `[samples, 1]` residuals ordered as continuity, radial momentum, and angular momentum.
 
     Raises:
         ValueError: If `stream` requests raw model outputs or the equation settings are invalid.
@@ -202,11 +202,7 @@ def polar_navier_stokes(
         return jnp.stack((continuity, momentum_r, momentum_theta))
 
     residuals = jax.vmap(point_residual)(inputs)
-    return (
-        (residuals[..., 0:1],),
-        (residuals[..., 1:2],),
-        (residuals[..., 2:3],),
-    )
+    return tuple(residuals[..., index : index + 1] for index in range(3))
 
 
 __all__ = ["polar_navier_stokes"]
