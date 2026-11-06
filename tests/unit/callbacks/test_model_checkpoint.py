@@ -231,6 +231,19 @@ def test_model_checkpoint_saves_on_sigterm_without_save_on_exception(received_si
     assert [saved[1] for saved in checkpoint_io.saved] == ([7] if received_sigterm else [])
 
 
+def test_model_checkpoint_saves_callback_states_from_connected_trainer() -> None:
+    """Verify a checkpoint stores the callback states that the connected Trainer reports at save time."""
+    checkpoint_io = _RecordingCheckpointIO()
+    callback = ModelCheckpoint(checkpoint_io, save_last=True)
+    states = {"phijax.callbacks.Example:0": {"count": 2}}
+    callback.connect(SimpleNamespace(received_sigterm=False, callback_state_dict=lambda: states))
+
+    callback.setup()
+    callback.on_fit_end(TrainerContext("final", 3, {}))
+
+    assert checkpoint_io.saved == [("final", 3, {}, True, states)]
+
+
 def test_model_checkpoint_retains_best_monitored_states() -> None:
     """Verify monitored top-k retention, deterministic ties, and public paths."""
     checkpoint_io = _RecordingCheckpointIO()

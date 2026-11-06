@@ -21,7 +21,6 @@ class TrainerContext:
         is_fit_end: Whether the context represents the terminal state of a fit pass.
         batch: Device-placed training batch during `on_train_batch_start`, or `None` for other fit hooks.
         has_logger: Whether the Trainer was configured with at least one experiment logger.
-        callback_states: Host callback states included in a checkpoint request.
     """
 
     state: Any
@@ -33,7 +32,6 @@ class TrainerContext:
     is_fit_end: bool = False
     batch: Any | None = None
     has_logger: bool = False
-    callback_states: Mapping[str, Mapping[str, Any]] | None = None
 
 
 @dataclass(frozen=True, slots=True)

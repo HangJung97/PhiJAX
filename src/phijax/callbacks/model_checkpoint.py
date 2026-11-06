@@ -389,7 +389,7 @@ class ModelCheckpoint(Callback):
         self._last_saved_step = context.step
         # Deletions queued by the previous save run only after that write has committed.
         self._flush_deletions()
-        callback_states = self._trainer.callback_state_dict() if self._trainer is not None else context.callback_states
+        callback_states = self._trainer.callback_state_dict() if self._trainer is not None else None
         saved = self.checkpoint_io.save(
             context.state,
             context.step,
