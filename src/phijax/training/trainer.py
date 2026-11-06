@@ -1,7 +1,7 @@
 import json
 import warnings
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from contextlib import nullcontext
+from collections.abc import Callable, Collection, Generator, Iterable, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -14,6 +14,7 @@ import optax
 from phijax.balancers import LossBalancer, StaticLossBalancer
 from phijax.callbacks import (
     Callback,
+    CheckpointIO,
     ModelCheckpoint,
     ModelSummary,
     PredictionWriter,
@@ -23,7 +24,7 @@ from phijax.callbacks import (
 from phijax.core import BasePhiModule, PhiModule
 from phijax.data import DataStage, PhiDataModule
 from phijax.training.assembly import build_training_plan
-from phijax.training.checkpointing import OrbaxCheckpointIO, restore_checkpoint
+from phijax.training.checkpointing import OrbaxCheckpointIO
 from phijax.training.connectors.logger_connector import _LoggerConnector
 from phijax.training.connectors.signal_connector import _SignalConnector
 from phijax.training.loggers import ExperimentLogger, LoggerCollection
@@ -175,7 +176,6 @@ class Trainer:
         self._signal_connector = _SignalConnector()
         self._fit_loop = _FitLoop(self)
         self._prediction_loop = _PredictionLoop(self)
-        self._pending_callback_states: Mapping[str, Mapping[str, Any]] | None = None
         for callback in self.callbacks:
             callback.connect(self)
         self.print_environment_info()
@@ -492,13 +492,8 @@ class Trainer:
                     input_statistics=bound_module.input_statistics,
                     input_periods=bound_module.input_periods,
                 )
-            self._pending_callback_states = None
-            state = self._restore_state(
-                state,
-                ckpt_path,
-                ckpt_step,
-                weights_only=weights_only,
-                restore_callbacks=not weights_only and ckpt_path is not None,
+            state, callback_states = self._restore_state(
+                state, ckpt_path, ckpt_step, weights_only=weights_only, restore_callbacks=True
             )
             with jax.default_device(self.strategy.root_device):
                 # A full resume restores the checkpoint's statistics and periods. Rebind before the training plan
@@ -508,7 +503,13 @@ class Trainer:
             # Record what the model applies, so configured period overrides win over restored periods.
             state = replace(state, input_periods=bound_module.input_periods)
             return self._run_fit(
-                bound_module, plan, state, None, hyperparameters=hyperparameters, datamodule=datamodule
+                bound_module,
+                plan,
+                state,
+                None,
+                hyperparameters=hyperparameters,
+                datamodule=datamodule,
+                callback_states=callback_states,
             )
         finally:
             datamodule.teardown_stage("fit")
@@ -550,13 +551,12 @@ class Trainer:
         """
         try:
             plan = training if isinstance(training, TrainingPlan) else TrainingPlan(training)
-            self._pending_callback_states = None
-            state = self._restore_state(
+            state, callback_states = self._restore_state(
                 _with_module_inputs(state, module),
                 ckpt_path,
                 ckpt_step,
                 weights_only=weights_only,
-                restore_callbacks=not weights_only and ckpt_path is not None,
+                restore_callbacks=True,
             )
             # The plan was compiled for the module's statistics, so it cannot be rebound here.
             if module.bind_inputs(state.input_statistics, state.input_periods) is not module:
@@ -565,7 +565,15 @@ class Trainer:
                     "Rebuild the module and training plan with the checkpoint values, or use `Trainer.fit()`."
                 )
             state = replace(state, input_periods=module.input_periods)
-            return self._run_fit(module, plan, state, batches, hyperparameters=hyperparameters, datamodule=datamodule)
+            return self._run_fit(
+                module,
+                plan,
+                state,
+                batches,
+                hyperparameters=hyperparameters,
+                datamodule=datamodule,
+                callback_states=callback_states,
+            )
         finally:
             if datamodule is not None:
                 datamodule.teardown_stage("fit")
@@ -579,21 +587,23 @@ class Trainer:
         *,
         hyperparameters: Mapping[str, Any] | None,
         datamodule: PhiDataModule | None,
+        callback_states: Mapping[str, Mapping[str, Any]] | None,
     ) -> FitResult:
         """Place a restored state and run the fit loop.
 
         Callers own DataModule teardown.
 
         Args:
-                    module: Bound module whose model applies `state.input_statistics`.
-                    plan: Training plan compiled for `module`.
-                    state: Restored or fresh functional training state.
-                    batches: Optional explicit training source.
-                    hyperparameters: Optional resolved configuration recorded before the first update.
-                    datamodule: Optional DataModule supplying the source when `batches` is omitted.
+            module: Bound module whose model applies `state.input_statistics`.
+            plan: Training plan compiled for `module`.
+            state: Restored or fresh functional training state.
+            batches: Optional explicit training source.
+            hyperparameters: Optional resolved configuration recorded before the first update.
+            datamodule: Optional DataModule supplying the source when `batches` is omitted.
+            callback_states: Restored callback states loaded after callback setup, or `None`.
 
         Returns:
-                    Bound module, final state, metrics, and termination status.
+            Bound module, final state, metrics, and termination status.
         """
         state = self.strategy.place_state(state)
         initial_step = _state_step(state)
@@ -615,6 +625,7 @@ class Trainer:
                 balancer_update=balancer_update,
                 hyperparameters=hyperparameters,
                 replicated_batches=full_pools,
+                callback_states=callback_states,
             )
 
     def _training_batch_source(
@@ -804,7 +815,7 @@ class Trainer:
             # Every process works through the same chunks, so a per-device chunk spans all devices.
             batches = _for_devices(batches, len(self.strategy.devices))
             # Prediction is not transfer learning: use the statistics the checkpointed model was trained with.
-            restored_state = self._restore_state(
+            restored_state, _ = self._restore_state(
                 _with_module_inputs(state, module), ckpt_path, ckpt_step, weights_only=False
             )
             with jax.default_device(self.strategy.root_device):
@@ -824,6 +835,44 @@ class Trainer:
             if datamodule is not None:
                 datamodule.teardown_stage("predict")
 
+    @contextmanager
+    def _checkpoint_backend(
+        self,
+        ckpt_path: str | Path,
+        step: int | None,
+    ) -> Generator[tuple[CheckpointIO, int], None, None]:
+        """Open the backend of an explicit checkpoint root or of the configured callback, and close it afterwards.
+
+        Args:
+            ckpt_path: Explicit checkpoint root, or `"last"` for the configured `ModelCheckpoint` backend.
+            step: Exact checkpoint step, or `None` for the latest committed step.
+
+        Yields:
+            Open backend and the resolved checkpoint step.
+
+        Raises:
+            ValueError: If `ckpt_path` is empty, `step` is invalid, or `"last"` has no configured `ModelCheckpoint`.
+            FileNotFoundError: If the backend contains no committed checkpoint.
+        """
+        if ckpt_path == "last":
+            if self.checkpoint_callback is None:
+                raise ValueError("`ckpt_path='last'` requires a configured `ModelCheckpoint` callback.")
+            checkpoint_io = self.checkpoint_callback.checkpoint_io
+        else:
+            if isinstance(ckpt_path, str) and not ckpt_path.strip():
+                raise ValueError("`ckpt_path` must be a non-empty checkpoint-root path or `None`.")
+            if step is not None and (isinstance(step, bool) or not isinstance(step, int) or step < 0):
+                raise ValueError("`ckpt_step` must be a nonnegative integer or `None`.")
+            checkpoint_io = OrbaxCheckpointIO(ckpt_path, enable_async_checkpointing=False)
+        try:
+            checkpoint_io.open()
+            resolved_step = checkpoint_io.latest_step if step is None else step
+            if resolved_step is None:
+                raise FileNotFoundError(f"No committed checkpoint exists below `{ckpt_path}`.")
+            yield checkpoint_io, resolved_step
+        finally:
+            checkpoint_io.close()
+
     def _restore_state(
         self,
         state: TrainState,
@@ -832,7 +881,7 @@ class Trainer:
         *,
         weights_only: bool,
         restore_callbacks: bool = False,
-    ) -> TrainState:
+    ) -> tuple[TrainState, Mapping[str, Mapping[str, Any]] | None]:
         """Restore an explicit checkpoint path or the configured callback's latest state.
 
         Args:
@@ -840,40 +889,27 @@ class Trainer:
             ckpt_path: Explicit checkpoint root, `"last"`, or `None`.
             ckpt_step: Optional explicit checkpoint step.
             weights_only: Whether to replace only `model_state`.
-            restore_callbacks: Whether to stage callback state for restoration before fit-start hooks.
+            restore_callbacks: Whether a full restore also returns the stored callback states.
 
         Returns:
-            Restored state, or `state` when no checkpoint is selected.
+            Restored state, or `state` when no checkpoint is selected, and the callback states to load before
+            fit-start hooks, or `None`.
 
         Raises:
-            ValueError: If `"last"` is combined with an explicit step or checkpointing is unavailable.
-            FileNotFoundError: If the configured callback has no committed checkpoint.
+            ValueError: If restore options are inconsistent or checkpointing is unavailable.
+            FileNotFoundError: If the selected backend has no committed checkpoint.
         """
-        if ckpt_path != "last":
-            if not restore_callbacks or ckpt_path is None:
-                return restore_checkpoint(state, ckpt_path, weights_only=weights_only, step=ckpt_step)
-            with OrbaxCheckpointIO(ckpt_path, enable_async_checkpointing=False) as checkpoint_io:
-                restored = checkpoint_io.restore(state, ckpt_step)
-                self._pending_callback_states = checkpoint_io.restore_callback_states(ckpt_step)
-                return restored
-        if ckpt_step is not None:
+        if ckpt_path is None:
+            if weights_only or ckpt_step is not None:
+                raise ValueError("`weights_only` and `ckpt_step` require a non-null `ckpt_path`.")
+            return state, None
+        if ckpt_path == "last" and ckpt_step is not None:
             raise ValueError("`ckpt_path='last'` cannot be combined with an explicit `ckpt_step`.")
-        if self.checkpoint_callback is None:
-            raise ValueError("`ckpt_path='last'` requires a configured `ModelCheckpoint` callback.")
-        checkpoint_io = self.checkpoint_callback.checkpoint_io
-        try:
-            checkpoint_io.open()
-            latest_step = checkpoint_io.latest_step
-            if latest_step is None:
-                raise FileNotFoundError("The configured checkpoint backend contains no committed state.")
+        with self._checkpoint_backend(ckpt_path, ckpt_step) as (checkpoint_io, step):
             if weights_only:
-                return checkpoint_io.restore_weights(state, latest_step)
-            restored = checkpoint_io.restore(state, latest_step)
-            if restore_callbacks:
-                self._pending_callback_states = checkpoint_io.restore_callback_states(latest_step)
-            return restored
-        finally:
-            checkpoint_io.close()
+                return checkpoint_io.restore_weights(state, step), None
+            restored = checkpoint_io.restore(state, step)
+            return restored, checkpoint_io.restore_callback_states(step) if restore_callbacks else None
 
     def load_weights(self, state: TrainState, step: int | None = None) -> TrainState:
         """Load model weights while preserving fresh optimizer and run state.
@@ -890,12 +926,8 @@ class Trainer:
         """
         if self.checkpoint_callback is None:
             raise ValueError("`load_weights()` requires a configured `ModelCheckpoint` callback.")
-        checkpoint_io = self.checkpoint_callback.checkpoint_io
-        try:
-            checkpoint_io.open()
-            return checkpoint_io.restore_weights(state, step)
-        finally:
-            checkpoint_io.close()
+        with self._checkpoint_backend("last", step) as (checkpoint_io, resolved_step):
+            return checkpoint_io.restore_weights(state, resolved_step)
 
     def latest_checkpoint(self) -> tuple[Path, int]:
         """Resolve the latest committed filesystem checkpoint.
@@ -909,18 +941,11 @@ class Trainer:
         """
         if self.checkpoint_callback is None:
             raise ValueError("Resolving the latest checkpoint requires a configured `ModelCheckpoint` callback.")
-        checkpoint_io = self.checkpoint_callback.checkpoint_io
-        try:
-            checkpoint_io.open()
-            checkpoint_step = checkpoint_io.latest_step
-            if checkpoint_step is None:
-                raise FileNotFoundError("The configured checkpoint backend contains no committed state.")
+        with self._checkpoint_backend("last", None) as (checkpoint_io, checkpoint_step):
             checkpoint_directory = getattr(checkpoint_io, "directory", None)
             if checkpoint_directory is None:
                 raise ValueError("The configured checkpoint backend does not expose a filesystem `directory`.")
             return Path(checkpoint_directory).expanduser().resolve(), checkpoint_step
-        finally:
-            checkpoint_io.close()
 
     def close(self) -> None:
         """Release any checkpoint resources opened outside a Trainer task.

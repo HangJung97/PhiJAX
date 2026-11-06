@@ -67,6 +67,7 @@ class _FitLoop:
         balancer_update: _BalancerUpdateRuntime | None = None,
         hyperparameters: Mapping[str, Any] | None = None,
         replicated_batches: Collection[str] = (),
+        callback_states: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> FitResult:
         """Run compiled training updates over a callable or finite iterable batch source.
 
@@ -80,6 +81,7 @@ class _FitLoop:
             balancer_update: Optional adaptive update and host-side schedule.
             hyperparameters: Optional resolved configuration recorded before the first update.
             replicated_batches: Top-level batch names placed in full on every device, such as `all` batches.
+            callback_states: Restored callback states loaded after callback setup and before fit-start hooks.
 
         Returns:
             Final state, metrics, stop status, and processed batch count.
@@ -124,9 +126,8 @@ class _FitLoop:
 
         try:
             lifecycle.setup()
-            if trainer._pending_callback_states is not None:
-                trainer.load_callback_state_dict(trainer._pending_callback_states)
-                trainer._pending_callback_states = None
+            if callback_states is not None:
+                trainer.load_callback_state_dict(callback_states)
             if trainer.strategy.is_global_zero:
                 metrics_connector.logger.log_hyperparams(dict(hyperparameters or {}))
             for callback in trainer.callbacks:

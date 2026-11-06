@@ -2426,7 +2426,7 @@ def test_trainer_restores_sampling_state_before_building_data_module_source(
     data_module = MagicMock(spec=PhiDataModule)
     data_module.train_batch_source.return_value = source
     trainer = Trainer(max_steps=6, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
-    monkeypatch.setattr(trainer, "_restore_state", lambda *args, **kwargs: restored_state)
+    monkeypatch.setattr(trainer, "_restore_state", lambda *args, **kwargs: (restored_state, None))
 
     result = trainer.fit_state(
         _RecordingModule(),
@@ -2924,7 +2924,6 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         restored = dataclasses.replace(target, model_state={"weight": jnp.asarray(3.0)})
         return restored if weights_only else dataclasses.replace(restored, step=jnp.asarray(4, jnp.int32))
 
-    monkeypatch.setattr(trainer_module, "restore_checkpoint", restore)
     trainer = Trainer(max_steps=5, strategy=SingleDeviceStrategy(jax.devices("cpu")[0]))
 
     def restore_state(
@@ -2934,8 +2933,8 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
         *,
         weights_only: bool,
         restore_callbacks: bool = False,
-    ) -> TrainState:
-        """Exercise the patched state loader without filesystem callback metadata.
+    ) -> tuple[TrainState, None]:
+        """Exercise the restore policy without filesystem callback metadata.
 
         Args:
             target: Fresh functional restore template.
@@ -2945,10 +2944,10 @@ def test_trainer_fit_and_predict_restore_checkpoint_state_internally(
             restore_callbacks: Whether callback state would be restored in production.
 
         Returns:
-            State returned by the patched checkpoint helper.
+            State returned by the recording restore helper, and no callback states.
         """
         del restore_callbacks
-        return restore(target, ckpt_path, weights_only=weights_only, step=ckpt_step)
+        return restore(target, ckpt_path, weights_only=weights_only, step=ckpt_step), None
 
     monkeypatch.setattr(trainer, "_restore_state", restore_state)
     fit_data_module = MagicMock()
@@ -3266,6 +3265,75 @@ def _quiet_trainer(*callbacks: Callback, progress_bar: bool = False, model_summa
         enable_model_summary=model_summary,
         callbacks=callbacks,
     )
+
+
+def test_failed_restore_closes_the_backend_and_leaves_callback_state_fresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify a failed `"last"` restore closes the backend, and a later fit restores no callback state from it.
+
+    Args:
+        monkeypatch: Fixture making the backend's full restore fail.
+    """
+    counter = _CountingCallback()
+    checkpoint_io = _MemoryCheckpointIO(_state())
+    checkpoint_io.callback_states = _quiet_trainer(_CountingCallback(3)).callback_state_dict()
+    trainer = _quiet_trainer(counter, ModelCheckpoint(checkpoint_io, save_last=False))
+
+    def fail_restore(target: Any, step: int | None = None) -> TrainState:
+        """Simulate an unreadable checkpoint.
+
+        Args:
+            target: Restore structure template.
+            step: Requested checkpoint step.
+
+        Raises:
+            RuntimeError: Always.
+        """
+        del target, step
+        raise RuntimeError("unreadable checkpoint")
+
+    monkeypatch.setattr(checkpoint_io, "restore", fail_restore)
+    batches = ({"increment": jnp.asarray(1.0)},)
+
+    with pytest.raises(RuntimeError, match="unreadable checkpoint"):
+        trainer.fit_state(_RecordingModule(), _train_step, _state(), batches, ckpt_path="last")
+    assert checkpoint_io.closed is True
+
+    trainer.fit_state(_RecordingModule(), _train_step, _state(), batches)
+    assert counter.count == 0
+
+
+@pytest.mark.parametrize(
+    ("ckpt_path", "ckpt_step", "weights_only", "message"),
+    [
+        (None, 1, False, "require a non-null `ckpt_path`"),
+        (None, None, True, "require a non-null `ckpt_path`"),
+        ("last", 1, False, "cannot be combined with an explicit `ckpt_step`"),
+        ("last", None, False, "requires a configured `ModelCheckpoint`"),
+        (" ", None, False, "non-empty checkpoint-root path"),
+        ("checkpoints", -1, False, "nonnegative integer"),
+    ],
+)
+def test_trainer_rejects_inconsistent_restore_options(
+    ckpt_path: str | None, ckpt_step: int | None, weights_only: bool, message: str
+) -> None:
+    """Verify checkpoint options are validated before any backend is opened.
+
+    Args:
+        ckpt_path: Requested checkpoint root, `"last"`, or `None`.
+        ckpt_step: Requested checkpoint step.
+        weights_only: Whether only model weights are requested.
+        message: Expected error fragment.
+    """
+    with pytest.raises(ValueError, match=message):
+        _quiet_trainer().fit_state(
+            _RecordingModule(),
+            _train_step,
+            _state(),
+            ({"increment": jnp.asarray(1.0)},),
+            ckpt_path=ckpt_path,
+            ckpt_step=ckpt_step,
+            weights_only=weights_only,
+        )
 
 
 def test_callback_state_restore_keeps_added_callbacks_fresh() -> None:
