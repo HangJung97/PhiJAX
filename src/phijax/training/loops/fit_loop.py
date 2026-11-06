@@ -3,14 +3,15 @@ from __future__ import annotations
 import logging
 import signal
 from collections.abc import Callable, Collection, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import replace
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import jax
 import numpy as np
 from jax.experimental import multihost_utils
 
-from phijax.balancers import BalancerUpdate
+from phijax.balancers import BalancerUpdatePlan
 from phijax.callbacks import TrainerContext
 from phijax.core import BasePhiModule, PhiModuleContext
 from phijax.metrics import _collect_module_metrics, _LoggedMetric, _metric_is_scalar
@@ -24,25 +25,6 @@ if TYPE_CHECKING:
     from phijax.training.trainer import BatchSource, Trainer
 
 log = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class _BalancerUpdateRuntime:
-    """Store the resolved host schedule for one adaptive balancer update.
-
-    Attributes:
-        update: Independently compiled functional balancer update.
-        batches: Fixed diagnostic batches, or `None` to use the current training batch or `sample_batches`.
-        every_n_steps: Positive interval between updates.
-        update_start_step: Nonnegative absolute step anchoring the update cadence.
-        sample_batches: Optional function drawing new diagnostic batches for the global step of each update.
-    """
-
-    update: BalancerUpdate
-    batches: Any | None
-    every_n_steps: int
-    update_start_step: int
-    sample_batches: Callable[[int], Any] | None = None
 
 
 class _FitLoop:
@@ -64,7 +46,8 @@ class _FitLoop:
         batches: BatchSource,
         *,
         initial_step: int,
-        balancer_update: _BalancerUpdateRuntime | None = None,
+        balancer_update: BalancerUpdatePlan | None = None,
+        draw_update_batches: Callable[[int], Any] | None = None,
         hyperparameters: Mapping[str, Any] | None = None,
         replicated_batches: Collection[str] = (),
         callback_states: Mapping[str, Mapping[str, Any]] | None = None,
@@ -78,7 +61,9 @@ class _FitLoop:
             batches: Step-indexed callable or finite batch iterable.
             initial_step: Restored optimizer step copied to the host before source construction. Training runs until
                 the global step reaches `trainer.max_steps`.
-            balancer_update: Optional adaptive update and host-side schedule.
+            balancer_update: Optional adaptive-balancer update and its host-side schedule.
+            draw_update_batches: Optional function returning the diagnostic batches for a global step. `None` reuses
+                the current training batch.
             hyperparameters: Optional resolved configuration recorded before the first update.
             replicated_batches: Top-level batch names placed in full on every device, such as `all` batches.
             callback_states: Restored callback states loaded after callback setup and before fit-start hooks.
@@ -94,14 +79,13 @@ class _FitLoop:
         signal_connector = trainer._signal_connector
         metrics_connector.set_metrics({})
         batch_iterator = None if callable(batches) else iter(batches)
-        context = TrainerContext(
-            state=state,
-            step=initial_step,
-            metrics={},
+        fit_context = partial(
+            TrainerContext,
             module=module,
             is_global_zero=trainer.strategy.is_global_zero,
             has_logger=metrics_connector.has_logger,
         )
+        context = fit_context(state=state, step=initial_step, metrics={})
         module_context = PhiModuleContext(step=initial_step, metrics={})
         module_metrics: dict[str, Any] = {}
         module_logs: dict[str, _LoggedMetric] = {}
@@ -134,14 +118,7 @@ class _FitLoop:
                 callback.on_fit_start(context)
             model_state = module.on_fit_start(state.model_state, module_context)
             state = replace(state, model_state=model_state)
-            context = TrainerContext(
-                state=state,
-                step=initial_step,
-                metrics={},
-                module=module,
-                is_global_zero=trainer.strategy.is_global_zero,
-                has_logger=metrics_connector.has_logger,
-            )
+            context = fit_context(state=state, step=initial_step, metrics={})
 
             _synchronize_stop_requests(trainer, initial_step)
             # `max_steps` is a global target, so a resumed fit only runs the remaining updates.
@@ -161,60 +138,25 @@ class _FitLoop:
                 except StopIteration:
                     break
                 batch = trainer.prepare_batch(batch, replicated_batches)
-                context = TrainerContext(
-                    state=state,
-                    step=global_step,
-                    metrics=dict(module_context.metrics),
-                    module=module,
-                    is_global_zero=trainer.strategy.is_global_zero,
-                    batch=batch,
-                    has_logger=metrics_connector.has_logger,
-                )
+                context = fit_context(state=state, step=global_step, metrics=dict(module_context.metrics), batch=batch)
                 for callback in trainer.callbacks:
                     callback.on_train_batch_start(context)
                 model_state, batch = module.on_train_batch_start(state.model_state, batch, module_context)
                 state = replace(state, model_state=model_state)
-                context = TrainerContext(
-                    state=state,
-                    step=global_step,
-                    metrics=dict(module_context.metrics),
-                    module=module,
-                    is_global_zero=trainer.strategy.is_global_zero,
-                    has_logger=metrics_connector.has_logger,
-                )
+                context = fit_context(state=state, step=global_step, metrics=dict(module_context.metrics))
 
                 if balancer_update is not None:
-                    update_due = (
-                        global_step >= balancer_update.update_start_step
-                        and (global_step - balancer_update.update_start_step) % balancer_update.every_n_steps == 0
-                    )
-                    if update_due:
-                        if balancer_update.sample_batches is not None:
-                            update_batches = balancer_update.sample_batches(global_step)
-                        elif balancer_update.batches is not None:
-                            update_batches = balancer_update.batches
-                        else:
-                            update_batches = batch
-                        balancer_state = balancer_update.update(
-                            state.model_state,
-                            update_batches,
-                            state.balancer_state,
-                        )
+                    offset = global_step - balancer_update.update_start_step
+                    if offset >= 0 and offset % balancer_update.every_n_steps == 0:
+                        update_batches = batch if draw_update_batches is None else draw_update_batches(global_step)
+                        balancer_state = balancer_update.update(state.model_state, update_batches, state.balancer_state)
                         state = replace(state, balancer_state=balancer_state)
                 state, device_metrics = train_step(state, batch)
                 step = global_step + 1
                 module_context = PhiModuleContext(step=step, metrics=dict(device_metrics))
                 iterations += 1
                 should_log = iterations == 1 or step % trainer.log_every_n_steps == 0
-                context = TrainerContext(
-                    state=state,
-                    step=step,
-                    metrics=dict(device_metrics),
-                    module=module,
-                    is_global_zero=trainer.strategy.is_global_zero,
-                    should_log=should_log,
-                    has_logger=metrics_connector.has_logger,
-                )
+                context = fit_context(state=state, step=step, metrics=dict(device_metrics), should_log=should_log)
                 # Every callback runs its hook; a `True` return is the legacy way to set `should_stop`.
                 stop_requests = [callback.on_train_batch_end(context) for callback in trainer.callbacks]
                 if any(stop_requests):
@@ -227,31 +169,14 @@ class _FitLoop:
                 device_metrics = {**device_metrics, **{name: record.value for name, record in module_logs.items()}}
                 module_metrics = dict(device_metrics)
                 module_context = PhiModuleContext(step=step, metrics=dict(device_metrics))
-                context = TrainerContext(
-                    state=state,
-                    step=step,
-                    metrics=dict(device_metrics),
-                    module=module,
-                    is_global_zero=trainer.strategy.is_global_zero,
-                    should_log=should_log,
-                    has_logger=metrics_connector.has_logger,
-                )
+                context = fit_context(state=state, step=step, metrics=dict(device_metrics), should_log=should_log)
                 callback_metrics = metrics_connector.collect_callback_metrics(context, module_metrics)
                 if callback_metrics:
                     device_metrics = {**device_metrics, **callback_metrics}
                     module_context = PhiModuleContext(step=step, metrics=dict(device_metrics))
-                    context = TrainerContext(
-                        state=state,
-                        step=step,
-                        metrics=dict(device_metrics),
-                        module=module,
-                        is_global_zero=trainer.strategy.is_global_zero,
-                        should_log=should_log,
-                        has_logger=metrics_connector.has_logger,
-                    )
+                    context = fit_context(state=state, step=step, metrics=dict(device_metrics), should_log=should_log)
 
                 metrics_connector.set_metrics(device_metrics, module_logs, tuple(callback_metrics))
-                context = replace(context, callback_states=trainer.callback_state_dict())
                 for callback in trainer.callbacks:
                     callback.on_train_metrics(context)
                 _synchronize_stop_requests(trainer, step)
@@ -274,30 +199,13 @@ class _FitLoop:
                     "A custom `TrainStep` must increment `TrainState.step` exactly once per completed update; "
                     f"expected step {completed_step}, got {state_step}."
                 )
-            context = TrainerContext(
-                state=state,
-                step=completed_step,
-                metrics=module_metrics,
-                module=module,
-                is_global_zero=trainer.strategy.is_global_zero,
-                is_fit_end=True,
-                has_logger=metrics_connector.has_logger,
-            )
+            context = fit_context(state=state, step=completed_step, metrics=module_metrics, is_fit_end=True)
             final_callback_metrics = metrics_connector.collect_callback_metrics(context, module_metrics)
             terminal_metrics = {**module_metrics, **callback_metrics, **final_callback_metrics}
-            module_context = PhiModuleContext(step=context.step, metrics=terminal_metrics)
-            context = TrainerContext(
-                state=state,
-                step=context.step,
-                metrics=terminal_metrics,
-                module=module,
-                is_global_zero=trainer.strategy.is_global_zero,
-                is_fit_end=True,
-                has_logger=metrics_connector.has_logger,
-            )
+            module_context = PhiModuleContext(step=completed_step, metrics=terminal_metrics)
+            context = fit_context(state=state, step=completed_step, metrics=terminal_metrics, is_fit_end=True)
             callback_names = tuple({*callback_metrics, *final_callback_metrics})
             metrics_connector.set_metrics(terminal_metrics, module_logs, callback_names)
-            context = replace(context, callback_states=trainer.callback_state_dict())
             if context.metrics and (metrics_iteration != iterations or final_callback_metrics):
                 jax.block_until_ready(context.metrics)
                 final_metrics = _scalar_metric_values(context.metrics)

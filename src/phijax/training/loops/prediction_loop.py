@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sized
+from functools import partial
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import jax
@@ -65,14 +66,14 @@ class _PredictionLoop:
         task_metadata = dict(metadata or {})
         prediction_pool = getattr(batches, "pool", None)
         total_batches = len(batches) if isinstance(batches, Sized) else None
-        context = PredictionContext(
-            outputs=None,
-            batch_index=None,
+        predict_context = partial(
+            PredictionContext,
             metadata=task_metadata,
             total_batches=total_batches,
             pool=prediction_pool,
             is_global_zero=trainer.strategy.is_global_zero,
         )
+        context = predict_context(outputs=None, batch_index=None)
         module_context = PhiModuleContext(step=0, metrics={})
         lifecycle = TaskLifecycle(
             trainer.callbacks,
@@ -95,15 +96,7 @@ class _PredictionLoop:
             for batch_index, batch in enumerate(batches):
                 share = _process_share(batch, trainer.strategy) if multi_device else None
                 placed_batch = trainer.prepare_batch(batch if share is None else share.batch)
-                context = PredictionContext(
-                    outputs=None,
-                    batch=placed_batch,
-                    batch_index=batch_index,
-                    total_batches=total_batches,
-                    metadata=task_metadata,
-                    pool=prediction_pool,
-                    is_global_zero=trainer.strategy.is_global_zero,
-                )
+                context = predict_context(outputs=None, batch=placed_batch, batch_index=batch_index)
                 for callback in trainer.callbacks:
                     callback.on_predict_batch_start(context)
                 module.on_predict_batch_start(model_state, context)
@@ -113,15 +106,7 @@ class _PredictionLoop:
                 elif (valid_rows := placed_batch.get("valid_predict_mask")) is not None:
                     prediction = prediction[valid_rows]
                 batch_count += 1
-                context = PredictionContext(
-                    outputs=prediction,
-                    batch=placed_batch,
-                    batch_index=batch_index,
-                    total_batches=total_batches,
-                    metadata=task_metadata,
-                    pool=prediction_pool,
-                    is_global_zero=trainer.strategy.is_global_zero,
-                )
+                context = predict_context(outputs=prediction, batch=placed_batch, batch_index=batch_index)
                 for callback in trainer.callbacks:
                     callback.on_predict_batch_end(context)
                 module.on_predict_batch_end(model_state, context)
@@ -131,14 +116,7 @@ class _PredictionLoop:
             if batch_count == 0:
                 raise ValueError("Prediction requires at least one batch.")
             combined = np.concatenate(outputs, axis=0) if return_predictions else None
-            context = PredictionContext(
-                outputs=combined,
-                batch_index=None,
-                total_batches=total_batches,
-                metadata=task_metadata,
-                pool=prediction_pool,
-                is_global_zero=trainer.strategy.is_global_zero,
-            )
+            context = predict_context(outputs=combined, batch_index=None)
             for callback in trainer.callbacks:
                 callback.on_predict_epoch_end(context)
             module.on_predict_epoch_end(model_state, context)

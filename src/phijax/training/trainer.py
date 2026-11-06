@@ -11,7 +11,7 @@ import jax
 import numpy as np
 import optax
 
-from phijax.balancers import LossBalancer, StaticLossBalancer
+from phijax.balancers import BalancerUpdatePlan, LossBalancer, StaticLossBalancer
 from phijax.callbacks import (
     Callback,
     CheckpointIO,
@@ -28,7 +28,7 @@ from phijax.training.checkpointing import OrbaxCheckpointIO
 from phijax.training.connectors.logger_connector import _LoggerConnector
 from phijax.training.connectors.signal_connector import _SignalConnector
 from phijax.training.loggers import ExperimentLogger, LoggerCollection
-from phijax.training.loops.fit_loop import _BalancerUpdateRuntime, _FitLoop, _state_step
+from phijax.training.loops.fit_loop import _FitLoop, _state_step
 from phijax.training.loops.prediction_loop import _PredictionLoop
 from phijax.training.plans import TrainingPlan
 from phijax.training.precision import MatmulPrecision, PrecisionName, PrecisionPolicy, configure_precision
@@ -613,7 +613,12 @@ class Trainer:
         initial_step = _state_step(state)
         sampling_key = self.strategy.process_key(state.sampling_key)
         batches = self._training_batch_source(plan, batches, datamodule, sampling_key)
-        balancer_update = self._balancer_update_runtime(plan, batches, self.strategy.process_key(state.balancer_key))
+        balancer_update = plan.balancer_update
+        draw_update_batches = (
+            None
+            if balancer_update is None
+            else self._diagnostic_batches(balancer_update, batches, self.strategy.process_key(state.balancer_key))
+        )
         # Batches drawn with `all` hold the whole pool, so every device receives them in full.
         full_pools = _full_pool_names(getattr(batches, "batch_sizes", None))
         precision_context = (
@@ -627,6 +632,7 @@ class Trainer:
                 batches,
                 initial_step=initial_step,
                 balancer_update=balancer_update,
+                draw_update_batches=draw_update_batches,
                 hyperparameters=hyperparameters,
                 replicated_batches=full_pools,
                 callback_states=callback_states,
@@ -677,63 +683,53 @@ class Trainer:
             wait_for_prepare_data=partial(self.strategy.barrier, f"phijax_prepare_data_{stage}"),
         )
 
-    def _balancer_update_runtime(
+    def _diagnostic_batches(
         self,
-        plan: TrainingPlan,
+        update_plan: BalancerUpdatePlan,
         batches: BatchSource,
         balancer_key: jax.Array,
-    ) -> _BalancerUpdateRuntime | None:
-        """Resolve optional adaptive-balancer diagnostics for host scheduling.
+    ) -> Callable[[int], Any] | None:
+        """Build the source of adaptive-balancer diagnostic batches.
 
         Args:
-            plan: Training plan containing the compiled optimizer step and optional update schedule.
-            batches: Prepared training source used for fixed diagnostic sampling when requested.
+            update_plan: Balancer update whose `batch_sizes` and `resample` select the diagnostic batches.
+            batches: Prepared training source used to sample diagnostic batches.
             balancer_key: Persistent adaptive-balancer diagnostic key from the restored state.
 
         Returns:
-            Resolved adaptive update runtime, or `None` for static balancing.
+            Function returning the placed diagnostic batches for a global step, or `None` when the update reuses the
+            current training batch. Without `resample`, the function returns batches drawn once for this fit.
 
         Raises:
             TypeError: If diagnostic batches are requested from a source without explicit sampling support.
         """
-        update_plan = plan.balancer_update
-        if update_plan is None:
-            return None
-        update_batches = None
-        sample_batches: Callable[[int], Any] | None = None
         batch_sizes = update_plan.batch_sizes
-        if batch_sizes is not None:
-            full_pools = _full_pool_names(batch_sizes)
-            # Diagnostic sizes are per device, like training batch sizes; `all` keeps the whole pool.
-            devices = self.strategy.local_device_count
-            local_sizes = {name: size if size == "all" else size * devices for name, size in batch_sizes.items()}
-            sample = getattr(batches, "sample", None)
-            if not callable(sample):
-                raise TypeError("Adaptive-balancer diagnostic batches require a training source with `sample()`.")
+        if batch_sizes is None:
+            return None
+        full_pools = _full_pool_names(batch_sizes)
+        # Diagnostic sizes are per device, like training batch sizes; `all` keeps the whole pool.
+        devices = self.strategy.local_device_count
+        local_sizes = {name: size if size == "all" else size * devices for name, size in batch_sizes.items()}
+        sample = getattr(batches, "sample", None)
+        if not callable(sample):
+            raise TypeError("Adaptive-balancer diagnostic batches require a training source with `sample()`.")
 
-            def draw(step: int) -> Any:
-                """Draw diagnostic batches for one global step.
+        def draw(step: int) -> Any:
+            """Draw diagnostic batches for one global step.
 
-                Args:
-                    step: Global optimizer step folded into the persistent balancer key.
+            Args:
+                step: Global optimizer step folded into the persistent balancer key.
 
-                Returns:
-                    Diagnostic batches placed on the Trainer's device.
-                """
-                # Keys depend only on `balancer_key` and the global step, so resumed fits draw the same batches.
-                return self.prepare_batch(sample(jax.random.fold_in(balancer_key, step), local_sizes), full_pools)
+            Returns:
+                Diagnostic batches placed on the Trainer's device.
+            """
+            # Keys depend only on `balancer_key` and the global step, so resumed fits draw the same batches.
+            return self.prepare_batch(sample(jax.random.fold_in(balancer_key, step), local_sizes), full_pools)
 
-            if update_plan.resample:
-                sample_batches = draw
-            else:
-                update_batches = draw(0)
-        return _BalancerUpdateRuntime(
-            update=update_plan.update,
-            batches=update_batches,
-            every_n_steps=update_plan.every_n_steps,
-            update_start_step=update_plan.update_start_step,
-            sample_batches=sample_batches,
-        )
+        if update_plan.resample:
+            return draw
+        fixed = draw(0)
+        return lambda step: fixed
 
     def predict(
         self,
