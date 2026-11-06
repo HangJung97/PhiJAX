@@ -14,7 +14,7 @@ from jax.experimental import multihost_utils
 from phijax.balancers import BalancerUpdatePlan
 from phijax.callbacks import TrainerContext
 from phijax.core import BasePhiModule, PhiModuleContext
-from phijax.metrics import _collect_module_metrics, _LoggedMetric, _metric_is_scalar
+from phijax.core.outputs import _collect_module_metrics, _LoggedMetric, _metric_is_scalar
 from phijax.training.lifecycle import TaskLifecycle
 from phijax.training.loggers import scalar_metrics
 from phijax.training.results import FitResult

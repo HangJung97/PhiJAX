@@ -7,7 +7,7 @@ from jax.flatten_util import ravel_pytree
 
 from phijax.balancers.base import BalancerState, BalancerUpdatePlan
 from phijax.core import BasePhiModule
-from phijax.metrics import TrainingOutput
+from phijax.core.outputs import TrainingOutput
 from phijax.types import NamedBatches
 
 

@@ -6,9 +6,9 @@ from phijax._lazy import lazy_exports
 if TYPE_CHECKING:
     from phijax.balancers import LossBalancer
     from phijax.core import BasePhiModule, PhiModule, PhiModuleContext
+    from phijax.core.outputs import TrainingOutput
     from phijax.data import PhiDataModule
     from phijax.derivatives import hessian_diagonal, value_and_jacobian
-    from phijax.metrics import TrainingOutput
     from phijax.models import InitializedModel, ModelFactory
     from phijax.training import FitResult, Trainer
     from phijax.training.state import TrainState
@@ -33,7 +33,7 @@ __getattr__, __dir__ = lazy_exports(
         "PhiModuleContext": "phijax.core",
         "TrainState": "phijax.training.state",
         "Trainer": "phijax.training",
-        "TrainingOutput": "phijax.metrics",
+        "TrainingOutput": "phijax.core.outputs",
         "hessian_diagonal": "phijax.derivatives",
         "value_and_jacobian": "phijax.derivatives",
     },

@@ -10,7 +10,7 @@ import pytest
 from phijax import BasePhiModule, InputStatistics, PhiModule, PhiModuleContext
 from phijax.balancers import ExactNTKBalancer
 from phijax.callbacks import PredictionContext
-from phijax.metrics import _collect_module_metrics
+from phijax.core.outputs import _collect_module_metrics
 from phijax.models import InitializedModel, ModelFactory, build_mlp
 from phijax.training import PrecisionPolicy
 from phijax.types import ModelApply, NamedBatches
@@ -454,3 +454,17 @@ def test_phi_module_records_and_rebinds_input_periods() -> None:
 
     prebuilt = _bind(PhiModule(InitializedModel(_model_apply, {}, input_periods=((0, 1.0),)), _ConfiguredObjective()))
     assert prebuilt.input_periods == ((0, 1.0),)
+
+
+def test_training_output_is_exported_from_core_and_top_level_packages() -> None:
+    """Verify `TrainingOutput` lives in `phijax.core` and the old `phijax.metrics` module is gone."""
+    import importlib
+
+    import phijax
+    import phijax.core
+    import phijax.training
+
+    assert phijax.TrainingOutput is phijax.core.TrainingOutput is phijax.training.TrainingOutput
+    assert phijax.core.TrainingOutput.__module__ == "phijax.core.outputs"
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("phijax.metrics")

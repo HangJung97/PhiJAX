@@ -9,7 +9,7 @@ import jax
 import numpy as np
 
 from phijax.core.hooks import PhiModuleContext, _ModuleHooks
-from phijax.metrics import _ACTIVE_MODULE_METRICS, TrainingOutput, _metric_is_scalar
+from phijax.core.outputs import _ACTIVE_MODULE_METRICS, TrainingOutput, _metric_is_scalar
 from phijax.objectives import Objective, ResidualObjective
 from phijax.types import (
     ArrayMapping,
