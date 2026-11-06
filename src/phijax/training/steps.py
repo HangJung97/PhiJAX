@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import optax
 
 from phijax.core import BasePhiModule
-from phijax.metrics import TrainingOutput
+from phijax.core.outputs import TrainingOutput
 from phijax.training.precision import PrecisionName, PrecisionPolicy
 from phijax.training.state import TrainState
 from phijax.types import NamedBatches

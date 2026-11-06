@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from phijax.callbacks import Callback, TrainerContext
-from phijax.metrics import _LoggedMetric, _metric_is_scalar
+from phijax.core.outputs import _LoggedMetric, _metric_is_scalar
 from phijax.training.loggers import ExperimentLogger, LoggerCollection, create_default_logger
 
 

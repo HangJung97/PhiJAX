@@ -18,6 +18,7 @@ under names that describe its state-level contract.
 | `from phijax.module import PhiModule`                            | `from phijax import PhiModule`                                          |
 | `from phijax.module import BasePhiModule`                        | `from phijax.core import BasePhiModule`                                 |
 | `from phijax.training.trainer import FitResult`                  | `from phijax.training import FitResult`                                 |
+| `from phijax.metrics import TrainingOutput`                      | `from phijax import TrainingOutput`                                     |
 | `trainer.set_logger(instantiate_loggers(cfg.logger, trainer))`   | `instantiate_trainer(cfg.trainer, callbacks, logger=loggers)`           |
 | `batch["mask"]` in prediction batches                            | `batch["valid_predict_mask"]`                                           |
 

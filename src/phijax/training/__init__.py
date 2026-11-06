@@ -1,5 +1,5 @@
 from phijax.core import BasePhiModule, PhiModule, PhiModuleContext
-from phijax.metrics import TrainingOutput
+from phijax.core.outputs import TrainingOutput
 from phijax.training.checkpointing import (
     LegacyCheckpointError,
     OrbaxCheckpointIO,

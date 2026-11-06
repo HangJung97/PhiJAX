@@ -144,6 +144,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `result` or `result[i]` instead of `result[0][0]` or `result[i][0]`. `phase_wrapped_fidelity` still returns its
   `((cosine, sine),)` group. Objectives built with `ResidualTerm` are unaffected.
 
+- `phijax.metrics` moved to `phijax.core.outputs`, next to the module contract that returns `TrainingOutput`. Import
+  `TrainingOutput` from `phijax` or `phijax.training` as before, or from `phijax.core`.
+
 ### Changed
 
 - Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's

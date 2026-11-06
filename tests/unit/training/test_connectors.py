@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 
 from phijax.callbacks import Callback, TrainerContext
-from phijax.metrics import _LoggedMetric
+from phijax.core.outputs import _LoggedMetric
 from phijax.training.connectors.logger_connector import _LoggerConnector
 
 
