@@ -17,7 +17,7 @@ from phijax.equations import base_data_fidelity, residual_equation
 from phijax.evaluation import regression_metrics
 from phijax.models import build_mlp
 from phijax.objectives import CompositeObjective
-from phijax.training import Accelerator, PrecisionName, configure_precision
+from phijax.training import Accelerator, PrecisionName
 from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
 
 
@@ -238,12 +238,11 @@ def run_quickstart(
     Returns:
         Maximum absolute error against the analytical solution on the prediction grid.
     """
-    configure_precision(precision)
     # Print the initialized network architecture once before training starts.
     callbacks = (RichModelSummary(),)
     if enable_progress_bar:
         # Refresh the optional Rich display every 10 optimizer steps.
-        callbacks += (RichProgressBar(total=max_steps, refresh_rate=10),)
+        callbacks += (RichProgressBar(refresh_rate=10),)
     trainer = Trainer(
         max_steps=max_steps,
         accelerator=accelerator,

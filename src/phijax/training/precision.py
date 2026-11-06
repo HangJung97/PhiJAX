@@ -30,6 +30,7 @@ _ALIASES: dict[str, PrecisionMode] = {
     "16": "16-mixed",
     "bf16": "bf16-mixed",
 }
+_MODES = frozenset({"64-true", "32-true", "16-true", "bf16-true", "16-mixed", "bf16-mixed"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,10 +102,8 @@ class PrecisionPolicy:
         initial_loss_scale = 32768.0 if initial_loss_scale is None else initial_loss_scale
         growth_interval = 2000 if growth_interval is None else growth_interval
         mode = cast(PrecisionMode, _ALIASES.get(precision, precision))
-        supported = {"64-true", "32-true", "16-true", "bf16-true", "16-mixed", "bf16-mixed"}
-        if mode not in supported:
-            choices = ", ".join(sorted(supported))
-            raise ValueError(f"Unknown precision mode `{precision}`. Available modes: {choices}.")
+        if mode not in _MODES:
+            raise ValueError(f"Unknown precision mode `{precision}`. Available modes: {', '.join(sorted(_MODES))}.")
         if initial_loss_scale < 1.0:
             raise ValueError("`initial_loss_scale` must be at least `1.0`.")
         if growth_interval < 1:
@@ -178,6 +177,9 @@ class PrecisionPolicy:
 def configure_precision(precision: PrecisionName) -> None:
     """Apply process-wide JAX settings required before array initialization.
 
+    :class:`~phijax.training.Trainer` calls this for a precision name. Call it yourself only when you create JAX arrays
+    that must use the configured precision before you construct the Trainer.
+
     Args:
         precision: Canonical precision mode or supported alias.
 
@@ -185,8 +187,8 @@ def configure_precision(precision: PrecisionName) -> None:
         ValueError: If `precision` is unknown.
     """
     mode = _ALIASES.get(precision, precision)
-    if mode not in {"64-true", "32-true", "16-true", "bf16-true", "16-mixed", "bf16-mixed"}:
-        raise ValueError(f"Unknown precision mode `{precision}`.")
+    if mode not in _MODES:
+        raise ValueError(f"Unknown precision mode `{precision}`. Available modes: {', '.join(sorted(_MODES))}.")
     if mode == "64-true":
         jax.config.update("jax_enable_x64", True)
 

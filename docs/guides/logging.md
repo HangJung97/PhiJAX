@@ -56,7 +56,7 @@ from phijax.callbacks import RichModelSummary, RichProgressBar
 
 callbacks = (
     RichModelSummary(),
-    RichProgressBar(total=10_000, refresh_rate=10),
+    RichProgressBar(refresh_rate=10),
 )
 trainer = Trainer(
     max_steps=10_000,

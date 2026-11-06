@@ -16,11 +16,14 @@ if TYPE_CHECKING:
 
 
 class ProgressBar(Callback):
-    """Define shared enablement and metric selection for progress displays."""
+    """Define shared enablement and metric selection for progress displays.
+
+    The fit display counts global steps up to the connected Trainer's `max_steps`, so a resumed fit starts at the
+    restored step.
+    """
 
     def __init__(
         self,
-        total: int,
         *,
         refresh_rate: int = 10,
         metric_names: Sequence[str] | None = None,
@@ -32,7 +35,6 @@ class ProgressBar(Callback):
         """Initialize common progress display policy.
 
         Args:
-            total: Positive global step at which fitting stops, usually `Trainer.max_steps`.
             refresh_rate: Positive number of batches between metric refreshes.
             metric_names: Optional ordered exact metric names overriding module-selected display metrics.
             description: Non-empty fit progress label.
@@ -43,8 +45,6 @@ class ProgressBar(Callback):
         Raises:
             ValueError: If a size, label, metric name, or scalar format is invalid.
         """
-        if total < 1:
-            raise ValueError("`total` must be positive.")
         if refresh_rate < 1:
             raise ValueError("`refresh_rate` must be positive.")
         if not description.strip():
@@ -58,7 +58,6 @@ class ProgressBar(Callback):
             format(1.0, metrics_format)
         except ValueError as error:
             raise ValueError("`metrics_format` must be a valid scalar format specification.") from error
-        self.total = total
         self.refresh_rate = refresh_rate
         self.metric_names = names
         self.description = description
@@ -67,6 +66,18 @@ class ProgressBar(Callback):
         self.metrics_format = metrics_format
         self._enabled = True
         self._trainer: Trainer | None = None
+
+    @property
+    def total(self) -> int:
+        """Return the global step at which fitting stops.
+
+        Returns:
+            The connected Trainer's `max_steps`.
+
+        Raises:
+            RuntimeError: If no Trainer is connected.
+        """
+        return self._connected_trainer().max_steps
 
     @property
     def is_enabled(self) -> bool:
@@ -135,14 +146,7 @@ class ProgressBar(Callback):
         Raises:
             ValueError: If a selected metric is not scalar.
         """
-        if self._trainer is None:
-            metrics = dict(context.metrics)
-            if self.metric_names is None:
-                metrics = {"train/loss": metrics["train/loss"]} if "train/loss" in metrics else {}
-            else:
-                metrics = {name: metrics[name] for name in self.metric_names if name in metrics}
-        else:
-            metrics = self.get_metrics(self._trainer, context.module)
+        metrics = self.get_metrics(self._connected_trainer(), context.module)
         formatted: dict[str, str] = {}
         for name, value in metrics.items():
             if isinstance(value, str):
@@ -154,19 +158,31 @@ class ProgressBar(Callback):
             formatted[name] = format(float(array.reshape(())), self.metrics_format)
         return formatted
 
+    def _connected_trainer(self) -> Trainer:
+        """Return the Trainer that owns this display.
+
+        Returns:
+            Trainer passed to :meth:`connect`.
+
+        Raises:
+            RuntimeError: If no Trainer is connected.
+        """
+        if self._trainer is None:
+            raise RuntimeError(f"`{type(self).__name__}` must be connected to a `Trainer` before fitting.")
+        return self._trainer
+
 
 class TQDMProgressBar(ProgressBar):
     """Display compact Lightning-style fit and prediction progress with TQDM."""
 
-    def __init__(self, total: int, *, stream: TextIO | None = None, **kwargs: Any) -> None:
+    def __init__(self, *, stream: TextIO | None = None, **kwargs: Any) -> None:
         """Initialize a TQDM progress callback.
 
         Args:
-            total: Positive maximum optimizer updates in one fit call.
             stream: Optional output stream, defaulting to the current `sys.stderr` during setup.
             **kwargs: Common progress options forwarded to :class:`ProgressBar`.
         """
-        super().__init__(total, **kwargs)
+        super().__init__(**kwargs)
         self._configured_stream = stream
         self._stream: TextIO | None = None
         self._bar: Any | None = None

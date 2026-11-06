@@ -88,6 +88,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   files, and prediction artifacts need neither. See the
   [migration guide](https://hangjung97.github.io/PhiJAX/getting-started/migration-0.2/#optional-hydra-and-io-extras).
 
+- `ProgressBar`, `TQDMProgressBar`, and `RichProgressBar` no longer take `total`. As in Lightning, a progress bar
+  counts to its Trainer's `max_steps`. Remove `total=...` from constructors and `total: ${trainer.max_steps}` from
+  Hydra callback configs.
+
 ### Changed
 
 - Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's
@@ -171,6 +175,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   search for the project root from PhiJAX's installed source file. That found the right root only when PhiJAX was
   installed in a virtual environment inside the project. An editable PhiJAX checkout exported its own root, and an
   environment outside the project raised `FileNotFoundError`. The default search now starts in the working directory.
+- `Trainer(precision="64-true")` enables JAX x64 itself. Before, it raised `ValueError` unless the caller had run
+  `configure_precision()` first, so a Hydra config with `precision: 64-true` could not train.
 
 ## [0.2.0b5] - 2026-09-11
 
