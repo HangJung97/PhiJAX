@@ -3,8 +3,9 @@ import warnings
 from collections.abc import Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import replace
+from functools import wraps
 from pathlib import Path
-from typing import Any, Self, cast
+from typing import Any, Concatenate, Self, cast
 
 import jax
 import numpy as np
@@ -38,6 +39,38 @@ from phijax.types import JaxDevice
 type BatchSource = Iterable[Any] | Callable[[int], Any]
 
 _MATMUL_PRECISIONS = frozenset({"default", "high", "highest"})
+
+
+def _on_root_device[**P, R](method: Callable[Concatenate["Trainer", P], R]) -> Callable[Concatenate["Trainer", P], R]:
+    """Run a Trainer task with its Strategy's root device as the JAX default device.
+
+    State and batches are placed explicitly, but JAX puts arrays it creates implicitly, such as a Python step number
+    turned into an array, on the default device. Scoping the default device to the Trainer's own device keeps those
+    arrays there too, so `accelerator` decides placement for the whole task, whatever the process-wide default is.
+
+    Args:
+        method: Trainer method running one task.
+
+    Returns:
+        Method that runs under `jax.default_device(self.strategy.root_device)`.
+    """
+
+    @wraps(method)
+    def run(self: "Trainer", *args: P.args, **kwargs: P.kwargs) -> R:
+        """Call the task method under the root-device scope.
+
+        Args:
+            self: Trainer running the task.
+            *args: Positional task arguments.
+            **kwargs: Keyword task arguments.
+
+        Returns:
+            The task method's result.
+        """
+        with jax.default_device(self.strategy.root_device):
+            return method(self, *args, **kwargs)
+
+    return run
 
 
 class Trainer:
@@ -376,6 +409,7 @@ class Trainer:
         # Only pass `replicated` when needed, so custom strategies with the original signature keep working.
         return self.strategy.place_batch(batch, replicated) if replicated else self.strategy.place_batch(batch)
 
+    @_on_root_device
     def fit(
         self,
         module: BasePhiModule,
@@ -417,46 +451,44 @@ class Trainer:
             model_key, runtime_key, sampling_key, balancer_key = jax.random.split(root_key, 4)
             statistics = datamodule.input_statistics()
             input_mean, input_std = (None, None) if statistics is None else statistics
-            with jax.default_device(self.strategy.root_device):
-                bound_module, model_state = module.configure_model(
-                    key=model_key,
-                    input_mean=input_mean,
-                    input_std=input_std,
-                    precision=self.precision,
-                    input_periods=datamodule.input_periods(),
-                )
-                resolved_balancer = StaticLossBalancer(bound_module.loss_names) if balancer is None else balancer
-                if not isinstance(resolved_balancer, LossBalancer):
-                    raise TypeError("`balancer` must implement `LossBalancer`.")
-                if tuple(resolved_balancer.loss_names) != tuple(bound_module.loss_names):
-                    raise ValueError("Balancer loss names must exactly match the module loss-name ordering.")
-                batch_keys = tuple(bound_module.batch_keys)
-                if not batch_keys:
-                    raise ValueError("`Trainer.fit()` requires the module to expose at least one batch key.")
-                state = initialize_train_state(
-                    model_state,
-                    optimizer,
-                    resolved_balancer.initialize(),
-                    runtime_key,
-                    self.precision,
-                    sampling_key=sampling_key,
-                    balancer_key=balancer_key,
-                    input_statistics=bound_module.input_statistics,
-                    input_periods=bound_module.input_periods,
-                )
+            bound_module, model_state = module.configure_model(
+                key=model_key,
+                input_mean=input_mean,
+                input_std=input_std,
+                precision=self.precision,
+                input_periods=datamodule.input_periods(),
+            )
+            resolved_balancer = StaticLossBalancer(bound_module.loss_names) if balancer is None else balancer
+            if not isinstance(resolved_balancer, LossBalancer):
+                raise TypeError("`balancer` must implement `LossBalancer`.")
+            if tuple(resolved_balancer.loss_names) != tuple(bound_module.loss_names):
+                raise ValueError("Balancer loss names must exactly match the module loss-name ordering.")
+            batch_keys = tuple(bound_module.batch_keys)
+            if not batch_keys:
+                raise ValueError("`Trainer.fit()` requires the module to expose at least one batch key.")
+            state = initialize_train_state(
+                model_state,
+                optimizer,
+                resolved_balancer.initialize(),
+                runtime_key,
+                self.precision,
+                sampling_key=sampling_key,
+                balancer_key=balancer_key,
+                input_statistics=bound_module.input_statistics,
+                input_periods=bound_module.input_periods,
+            )
             state, callback_states = self._restore_state(
                 state, ckpt_path, ckpt_step, weights_only=weights_only, restore_callbacks=True
             )
-            with jax.default_device(self.strategy.root_device):
-                # A full resume restores the checkpoint's statistics and periods. Rebind before compiling, because the
-                # train step and balancer update close over the module's model application.
-                bound_module = bound_module.bind_inputs(state.input_statistics, state.input_periods)
-                train_step = make_train_step(bound_module, resolved_balancer, optimizer, self.precision)
-                balancer_update = (
-                    resolved_balancer.build_update_plan(bound_module, batch_keys)
-                    if isinstance(resolved_balancer, AdaptiveBalancer)
-                    else None
-                )
+            # A full resume restores the checkpoint's statistics and periods. Rebind before compiling, because the
+            # train step and balancer update close over the module's model application.
+            bound_module = bound_module.bind_inputs(state.input_statistics, state.input_periods)
+            train_step = make_train_step(bound_module, resolved_balancer, optimizer, self.precision)
+            balancer_update = (
+                resolved_balancer.build_update_plan(bound_module, batch_keys)
+                if isinstance(resolved_balancer, AdaptiveBalancer)
+                else None
+            )
             # Record what the model applies, so configured period overrides win over restored periods.
             state = replace(state, input_periods=bound_module.input_periods)
             return self._run_fit(
@@ -470,6 +502,7 @@ class Trainer:
                 callback_states=callback_states,
             )
 
+    @_on_root_device
     def _run_fit(
         self,
         module: BasePhiModule,
@@ -623,6 +656,7 @@ class Trainer:
         fixed = draw(0)
         return lambda step: fixed
 
+    @_on_root_device
     def predict(
         self,
         model: BasePhiModule | FitResult,
@@ -736,21 +770,20 @@ class Trainer:
                     )
                     with self._datamodule_stage(datamodule, "fit"):
                         statistics, periods = datamodule.input_statistics(), datamodule.input_periods()
-            with jax.default_device(self.strategy.root_device):
-                if isinstance(model, FitResult):
-                    module = model.module.bind_inputs(as_input_statistics(statistics), periods)
-                    template = model.state.model_state
-                else:
-                    input_mean, input_std = (None, None) if statistics is None else statistics
-                    # The key only shapes the template; every model-state leaf is restored from the checkpoint.
-                    module, template = model.configure_model(
-                        key=jax.random.key(0),
-                        input_mean=input_mean,
-                        input_std=input_std,
-                        precision=self.precision,
-                        input_periods=periods,
-                    )
-                    template = self.precision.cast_model_state(template)
+            if isinstance(model, FitResult):
+                module = model.module.bind_inputs(as_input_statistics(statistics), periods)
+                template = model.state.model_state
+            else:
+                input_mean, input_std = (None, None) if statistics is None else statistics
+                # The key only shapes the template; every model-state leaf is restored from the checkpoint.
+                module, template = model.configure_model(
+                    key=jax.random.key(0),
+                    input_mean=input_mean,
+                    input_std=input_std,
+                    precision=self.precision,
+                    input_periods=periods,
+                )
+                template = self.precision.cast_model_state(template)
             return module, checkpoint_io.restore_model_state(template, step)
 
     @contextmanager

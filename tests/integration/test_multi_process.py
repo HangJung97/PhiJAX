@@ -136,3 +136,32 @@ def test_single_process_fit_and_prediction_use_per_device_sizes(tmp_path: Path) 
     # Exact NTK on rows split over four devices runs without gathering rows and matches one device.
     assert results["ntk_layout"]["all_gathers"] == 0
     assert results["ntk_layout"]["max_difference"] < 1e-5
+
+
+def test_trainer_tasks_create_implicit_arrays_on_the_strategy_device(tmp_path: Path) -> None:
+    """Verify arrays created without explicit placement inside `fit` and `predict` land on the Trainer's device.
+
+    The worker trains on the second of two CPU devices while JAX's default device stays the first, the same split as
+    `accelerator="cpu"` on a machine whose default device is a GPU.
+
+    Args:
+        tmp_path: Directory for the worker's result file.
+    """
+    worker = Path(__file__).with_name("default_device_worker.py")
+    output = tmp_path / "devices.json"
+    environment = {**os.environ, "JAX_PLATFORMS": "cpu", "XLA_FLAGS": "--xla_force_host_platform_device_count=2"}
+    completed = subprocess.run(
+        [sys.executable, str(worker), str(output)],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    devices = json.loads(output.read_text())
+    assert devices["fit"] == devices["predict"] == 1
+    assert devices["state"] == [1]
+    # The scope ends with each task, so code outside the Trainer keeps the process-wide default device.
+    assert devices["after"] == 0
