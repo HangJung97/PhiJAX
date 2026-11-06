@@ -11,7 +11,7 @@ from phijax.equations._common import (
     validate_stream,
 )
 from phijax.equations.metadata import residual_equation
-from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
+from phijax.types import ArrayMapping, ModelApply, ResidualOutput, ResidualStream
 
 
 def _project_output(output: jax.Array, projection: jax.Array | None) -> jax.Array:
@@ -80,7 +80,7 @@ def base_data_fidelity(
     projection_key: str | None = "projection",
     target_negation: bool = False,
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     """Evaluate direct supervised residuals or selected model outputs.
 
     Args:
@@ -97,7 +97,7 @@ def base_data_fidelity(
         stream: `"residual"` for direct supervised errors or `"output"` for selected model outputs.
 
     Returns:
-        One residual or output group for scalar loss reduction or derivative-based balancing.
+        Residual, or the selected outputs for derivative-based balancing.
 
     Raises:
         ValueError: If the stream, component selection, or optional projection is invalid.
@@ -111,7 +111,7 @@ def base_data_fidelity(
         raise ValueError("`target_indices` must select one projected target or one target per selected model output.")
     output = evaluate_selected_outputs(model_apply, model_state, batch["inputs"], resolved_outputs)
     if stream == "output":
-        return ((output,),)
+        return output
     target = select_components(batch["targets"], resolved_targets, option="target_indices")
     residual = base_data_fidelity_residual(
         output,
@@ -120,7 +120,7 @@ def base_data_fidelity(
         projection=projection,
         target_negation=target_negation,
     )
-    return ((residual,),)
+    return residual
 
 
 def phase_wrapped_residuals(
@@ -172,7 +172,7 @@ def phase_wrapped_fidelity(
     period_key: str = "period",
     target_negation: bool = False,
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     """Evaluate grouped phase-wrapped fidelity residuals or supervised outputs.
 
     Args:
@@ -191,7 +191,7 @@ def phase_wrapped_fidelity(
         stream: `"residual"` for cosine and sine errors or `"output"` for selected model outputs.
 
     Returns:
-        One residual group containing cosine and sine arrays, or one selected-output group for output-based NTK
+        One residual group containing cosine and sine arrays, or the selected outputs for output-based NTK
         diagnostics.
 
     Raises:
@@ -207,7 +207,7 @@ def phase_wrapped_fidelity(
         raise ValueError("`target_indices` must select one projected target or one target per selected model output.")
     output = evaluate_selected_outputs(model_apply, model_state, batch["inputs"], resolved_outputs)
     if stream == "output":
-        return ((output,),)
+        return output
     target = select_components(batch["targets"], resolved_targets, option="target_indices")
     cosine, sine = phase_wrapped_residuals(
         output,

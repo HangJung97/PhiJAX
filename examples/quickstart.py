@@ -18,7 +18,7 @@ from phijax.evaluation import regression_metrics
 from phijax.models import build_mlp
 from phijax.objectives import CompositeObjective
 from phijax.training import Accelerator, PrecisionName
-from phijax.types import ArrayMapping, ModelApply, ResidualStream
+from phijax.types import ArrayMapping, ModelApply, ResidualOutput, ResidualStream
 
 
 @residual_equation(names=("heat",))
@@ -29,7 +29,7 @@ def heat_equation(
     *,
     diffusivity: float = 0.1,
     stream: ResidualStream = "residual",
-) -> jax.Array:
+) -> ResidualOutput:
     """Evaluate `du/dt - diffusivity * d2u/dx2 = 0`.
 
     Args:

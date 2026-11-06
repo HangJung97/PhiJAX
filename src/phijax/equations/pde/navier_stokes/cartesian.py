@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from phijax.derivatives import hessian_diagonal, value_and_jacobian
 from phijax.equations._common import validate_stream
 from phijax.equations.metadata import residual_equation
-from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
+from phijax.types import ArrayMapping, ModelApply, ResidualOutput, ResidualStream
 
 
 def _cartesian_navier_stokes_residuals(
@@ -109,7 +109,7 @@ def cartesian_2d_navier_stokes(
     pressure_coefficient: float = 1.0,
     viscosity_coefficient: float = 0.0,
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     r"""Evaluate grouped incompressible Navier--Stokes residuals in two Cartesian dimensions.
 
     The coordinate order is `[x, y, t]`, model outputs are `[u_x, u_y, p]`, and the returned groups represent
@@ -150,7 +150,7 @@ def cartesian_2d_navier_stokes(
         stream: Equation representation requested by the objective. Navier--Stokes supports only `"residual"`.
 
     Returns:
-        Three single-array groups ordered as continuity, x momentum, and y momentum.
+        Three `[samples, 1]` residuals ordered as continuity, x momentum, and y momentum.
 
     Raises:
         ValueError: If `stream` requests model outputs or the equation settings are invalid.
@@ -169,7 +169,7 @@ def cartesian_2d_navier_stokes(
         pressure_coefficient=pressure_coefficient,
         viscosity_coefficient=viscosity_coefficient,
     )
-    return tuple((residuals[..., index : index + 1],) for index in range(3))
+    return tuple(residuals[..., index : index + 1] for index in range(3))
 
 
 @residual_equation(names=("continuity", "momentum_x", "momentum_y", "momentum_z"))
@@ -181,7 +181,7 @@ def cartesian_3d_navier_stokes(
     pressure_coefficient: float = 1.0,
     viscosity_coefficient: float = 0.0,
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     r"""Evaluate grouped incompressible Navier--Stokes residuals in three Cartesian dimensions.
 
     The coordinate order is `[x, y, z, t]`, model outputs are `[u_x, u_y, u_z, p]`, and the returned groups represent
@@ -229,7 +229,7 @@ def cartesian_3d_navier_stokes(
         stream: Equation representation requested by the objective. Navier--Stokes supports only `"residual"`.
 
     Returns:
-        Four single-array groups ordered as continuity, x momentum, y momentum, and z momentum.
+        Four `[samples, 1]` residuals ordered as continuity, x momentum, y momentum, and z momentum.
 
     Raises:
         ValueError: If `stream` requests model outputs or the equation settings are invalid.
@@ -248,7 +248,7 @@ def cartesian_3d_navier_stokes(
         pressure_coefficient=pressure_coefficient,
         viscosity_coefficient=viscosity_coefficient,
     )
-    return tuple((residuals[..., index : index + 1],) for index in range(4))
+    return tuple(residuals[..., index : index + 1] for index in range(4))
 
 
 __all__ = ["cartesian_2d_navier_stokes", "cartesian_3d_navier_stokes"]

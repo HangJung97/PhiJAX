@@ -11,7 +11,7 @@ from phijax.equations._common import (
     validate_stream,
 )
 from phijax.equations.metadata import residual_equation
-from phijax.types import ArrayMapping, ModelApply, ResidualGroups, ResidualStream
+from phijax.types import ArrayMapping, ModelApply, ResidualOutput, ResidualStream
 
 
 def base_boundary_residual(output: jax.Array, target: jax.Array) -> jax.Array:
@@ -77,7 +77,7 @@ def no_slip_boundary(
     output_indices: Sequence[int] = (0, 1),
     target_indices: Sequence[int] = (0, 1),
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     """Constrain selected velocity components to a reference wall velocity.
 
     Args:
@@ -90,8 +90,8 @@ def no_slip_boundary(
         stream: `"residual"` for component-wise velocity errors or `"output"` for selected model outputs.
 
     Returns:
-        One group containing a vector residual with shape `(N, len(output_indices))`, or one selected-output
-        group for output-based NTK diagnostics. Target batch dimensions may broadcast against the outputs.
+        Vector residual with shape `(N, len(output_indices))`, or the selected outputs for output-based NTK
+        diagnostics. Target batch dimensions may broadcast against the outputs.
 
     Raises:
         ValueError: If the stream or component selection is invalid.
@@ -104,9 +104,9 @@ def no_slip_boundary(
         raise ValueError("`output_indices` and `target_indices` must have equal lengths.")
     output = evaluate_selected_outputs(model_apply, model_state, batch["inputs"], resolved_outputs)
     if stream == "output":
-        return ((output,),)
+        return output
     target = select_components(batch["targets"], resolved_targets, option="target_indices")
-    return ((no_slip_residual(output, target),),)
+    return no_slip_residual(output, target)
 
 
 @residual_equation(names=("free_slip",), default_ntk_stream="output")
@@ -119,7 +119,7 @@ def free_slip_boundary(
     target_indices: Sequence[int] = (0, 1),
     normals_key: str = "normals",
     stream: ResidualStream = "residual",
-) -> ResidualGroups:
+) -> ResidualOutput:
     """Evaluate grouped free-slip boundary residuals or constrained outputs.
 
     Args:
@@ -133,7 +133,7 @@ def free_slip_boundary(
         stream: `"residual"` for the normal-velocity error or `"output"` for selected model outputs.
 
     Returns:
-        One residual group for scalar loss reduction, or one selected-output group for output-based NTK diagnostics.
+        Normal residual with shape `(N, 1)`, or the selected outputs for output-based NTK diagnostics.
 
     Raises:
         ValueError: If the stream or component selection is invalid.
@@ -146,9 +146,9 @@ def free_slip_boundary(
         raise ValueError("`output_indices` and `target_indices` must have equal lengths.")
     output = evaluate_selected_outputs(model_apply, model_state, batch["inputs"], resolved_outputs)
     if stream == "output":
-        return ((output,),)
+        return output
     target = select_components(batch["targets"], resolved_targets, option="target_indices")
-    return ((free_slip_residual(output, target, batch[normals_key]),),)
+    return free_slip_residual(output, target, batch[normals_key])
 
 
 __all__ = ["base_boundary_residual", "free_slip_boundary", "free_slip_residual", "no_slip_boundary", "no_slip_residual"]

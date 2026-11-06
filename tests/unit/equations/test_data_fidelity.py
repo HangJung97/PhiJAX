@@ -15,6 +15,18 @@ from phijax.equations import (
 from phijax.types import ResidualStream
 
 
+def _loss_arrays(output: Any) -> tuple[jax.Array, ...]:
+    """Return the arrays that one-loss equation output contributes to its loss.
+
+    Args:
+        output: A residual array, or a tuple holding one residual group.
+
+    Returns:
+        The group's arrays, or the single residual array.
+    """
+    return output[0] if isinstance(output, tuple) else (output,)
+
+
 def test_base_data_fidelity_supports_weight_and_target_negation() -> None:
     """Verify unwrapped residuals apply target sign and weights before reduction."""
     output = jnp.asarray([[2.0], [4.0]], dtype=jnp.float32)
@@ -48,7 +60,7 @@ def test_base_data_fidelity_rejects_projection_shape_mismatch() -> None:
         base_data_fidelity_residual(jnp.ones((2, 3)), jnp.ones((2, 1)), projection=jnp.ones((2, 2)))
 
 
-def test_base_data_fidelity_exposes_direct_residual_and_output_groups() -> None:
+def test_base_data_fidelity_exposes_direct_residual_and_output_streams() -> None:
     """Verify direct supervised batches compose with generic residual terms and output-based balancing."""
 
     def predict_one(scale: jax.Array, point: jax.Array) -> jax.Array:
@@ -68,14 +80,14 @@ def test_base_data_fidelity_exposes_direct_residual_and_output_groups() -> None:
         "targets": jnp.asarray([[0.5], [1.5]], dtype=jnp.float32),
         "weight": jnp.asarray([[2.0], [0.5]], dtype=jnp.float32),
     }
-    residual_groups = base_data_fidelity(
+    residual = base_data_fidelity(
         predict_one,
         jnp.asarray(1.0),
         batch,
         output_indices=(0,),
         target_indices=(0,),
     )
-    output_groups = base_data_fidelity(
+    output = base_data_fidelity(
         predict_one,
         jnp.asarray(1.0),
         batch,
@@ -84,8 +96,8 @@ def test_base_data_fidelity_exposes_direct_residual_and_output_groups() -> None:
         stream="output",
     )
 
-    np.testing.assert_allclose(residual_groups[0][0], [[1.0], [0.75]])
-    np.testing.assert_allclose(output_groups[0][0], [[1.0], [3.0]])
+    np.testing.assert_allclose(residual, [[1.0], [0.75]])
+    np.testing.assert_allclose(output, [[1.0], [3.0]])
 
 
 def test_base_data_fidelity_projects_selected_vector_outputs() -> None:
@@ -102,7 +114,7 @@ def test_base_data_fidelity_projects_selected_vector_outputs() -> None:
         output_indices=(0, 1),
         target_indices=(0,),
     )
-    np.testing.assert_allclose(groups[0][0], [[0.0], [2.0]])
+    np.testing.assert_allclose(groups, [[0.0], [2.0]])
 
 
 def test_phase_wrapped_residuals_include_target_negation_and_weight() -> None:
@@ -148,7 +160,7 @@ def test_phase_wrapped_fidelity_exposes_residual_and_output_groups() -> None:
         output_indices=(0,),
         target_indices=(0,),
     )
-    output_groups = phase_wrapped_fidelity(
+    output = phase_wrapped_fidelity(
         predict_one,
         None,
         batch,
@@ -159,7 +171,7 @@ def test_phase_wrapped_fidelity_exposes_residual_and_output_groups() -> None:
 
     assert len(residual_groups) == 1
     assert len(residual_groups[0]) == 2
-    np.testing.assert_allclose(output_groups[0][0], [[0.5], [1.0]])
+    np.testing.assert_allclose(output, [[0.5], [1.0]])
 
 
 def test_phase_wrapped_fidelity_validates_static_component_policy() -> None:
@@ -260,14 +272,25 @@ def test_fidelity_projection_keys(wrapped: bool, projection_key: str, sample_cou
         )
     else:
         expected = (weight * (projected - target),)
-    for actual, reference in zip(groups[0], expected, strict=True):
+    for actual, reference in zip(_loss_arrays(groups), expected, strict=True):
         np.testing.assert_allclose(actual, reference, atol=1e-6)
         assert actual.shape == (sample_count, 1)
         assert actual.dtype == jnp.float32
-    np.testing.assert_allclose(evaluate(jnp.asarray(1.0), inputs, "output")[0][0], inputs[:, (2, 0)])
-    gradients = jax.jit(jax.grad(lambda scale, points: sum(jnp.sum(r**2) for r in evaluate(scale, points)[0]), (0, 1)))(
-        jnp.asarray(1.0), inputs
-    )
+    np.testing.assert_allclose(evaluate(jnp.asarray(1.0), inputs, "output"), inputs[:, (2, 0)])
+
+    def loss(scale: jax.Array, points: jax.Array) -> jax.Array:
+        """Sum the squared residual arrays of the configured fidelity.
+
+        Args:
+            scale: Trainable scalar multiplier.
+            points: Model input coordinates.
+
+        Returns:
+            Scalar sum of squared residuals.
+        """
+        return sum(jnp.sum(residual**2) for residual in _loss_arrays(evaluate(scale, points)))
+
+    gradients = jax.jit(jax.grad(loss, (0, 1)))(jnp.asarray(1.0), inputs)
     for gradient in gradients:
         assert gradient.dtype == jnp.float32
         assert bool(jnp.all(jnp.isfinite(gradient)))
@@ -298,7 +321,7 @@ def test_fidelity_can_skip_projection(wrapped: bool, projection_key: str | None)
         target_indices=(0, 1),
         projection_key=projection_key,
     )
-    for residual in groups[0]:
+    for residual in _loss_arrays(groups):
         np.testing.assert_array_equal(residual, jnp.zeros((1, 2)))
 
 
@@ -377,7 +400,7 @@ def test_phase_wrapped_fidelity_missing_custom_period_key() -> None:
     evaluate = partial(phase_wrapped_fidelity, lambda state, point: point, None, period_key="wrapping_period")
     with pytest.raises(KeyError, match="wrapping_period"):
         evaluate(batch)
-    np.testing.assert_array_equal(evaluate(batch, stream="output")[0][0], batch["inputs"])
+    np.testing.assert_array_equal(evaluate(batch, stream="output"), batch["inputs"])
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
@@ -412,9 +435,9 @@ def test_fidelity_weight_keys(wrapped: bool, weight_key: str | None) -> None:
     else:
         weight = np.ones((2, 1), dtype=np.float32)
     expected = (-weight, weight) if wrapped else (0.5 * weight,)
-    for actual, reference in zip(groups[0], expected, strict=True):
+    for actual, reference in zip(_loss_arrays(groups), expected, strict=True):
         np.testing.assert_allclose(actual, reference, atol=1e-6)
         assert actual.shape == (2, 1)
         assert actual.dtype == jnp.float32
     output = jax.jit(partial(evaluate, stream="output"))(batch)
-    np.testing.assert_array_equal(output[0][0], batch["inputs"])
+    np.testing.assert_array_equal(output, batch["inputs"])

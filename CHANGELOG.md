@@ -139,6 +139,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `residual_equation(..., default_ntk_stream="output")`. Residual-only equations no longer need to reject the
   `"output"` stream themselves.
 
+- Built-in equations return arrays instead of one-array groups, and are annotated as `ResidualOutput`. A direct call
+  returns `residual` for one loss and a tuple of `[samples, 1]` arrays for each Navier--Stokes component, so index
+  `result` or `result[i]` instead of `result[0][0]` or `result[i][0]`. `phase_wrapped_fidelity` still returns its
+  `((cosine, sine),)` group. Objectives built with `ResidualTerm` are unaffected.
+
 ### Changed
 
 - Checkpoints use schema version 3. Schema-2 checkpoints from 0.2.0b5 still restore, using the current DataModule's
