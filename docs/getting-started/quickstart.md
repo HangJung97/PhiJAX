@@ -121,7 +121,7 @@ callbacks = (
     RichModelSummary(),
     LearningRateMonitor(learning_rate, optimizer_name="Adam"),
     EarlyStopping(monitor="train/loss", patience=2_000),
-    RichProgressBar(total=max_steps, refresh_rate=10),
+    RichProgressBar(refresh_rate=10),
 )
 trainer = Trainer(max_steps=max_steps, callbacks=callbacks, logger=True)
 optimizer = optax.adam(learning_rate)

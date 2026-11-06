@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import Any, cast
 
 import jax
@@ -5,7 +6,21 @@ import jax.numpy as jnp
 import pytest
 
 from phijax.models import build_mlp
-from phijax.training import PrecisionName, PrecisionPolicy, Trainer
+from phijax.training import PrecisionName, PrecisionPolicy, Trainer, configure_precision
+
+
+@pytest.fixture
+def restore_x64() -> Iterator[None]:
+    """Restore the process-wide JAX x64 flag after a test changes it.
+
+    Yields:
+        Control to the test while the original flag is recorded.
+    """
+    enabled = jax.config.x64_enabled
+    try:
+        yield
+    finally:
+        jax.config.update("jax_enable_x64", enabled)
 
 
 @pytest.mark.parametrize(
@@ -101,6 +116,28 @@ def test_precision_policy_rejects_unknown_modes() -> None:
     """Verify an unsupported precision string fails before training begins."""
     with pytest.raises(ValueError, match="Unknown precision mode"):
         PrecisionPolicy.from_name(cast(Any, "fp8-magic"))
+
+
+@pytest.mark.usefixtures("restore_x64")
+def test_trainer_enables_x64_for_a_64_true_precision_name() -> None:
+    """Verify a `64-true` name works without a separate `configure_precision` call, as Hydra configs pass it."""
+    jax.config.update("jax_enable_x64", False)
+
+    trainer = Trainer(max_steps=1, precision="64-true", enable_progress_bar=False, logger=False)
+
+    assert jax.config.x64_enabled
+    assert trainer.precision.parameter_dtype == jnp.float64
+
+
+@pytest.mark.parametrize("configure", [configure_precision, PrecisionPolicy.from_name])
+def test_precision_entry_points_list_supported_modes_for_unknown_names(configure: Any) -> None:
+    """Verify both precision entry points name every supported mode in the same error.
+
+    Args:
+        configure: Precision entry point under test.
+    """
+    with pytest.raises(ValueError, match=r"Unknown precision mode `fp8`\. Available modes: 16-mixed, .*bf16-true\."):
+        configure("fp8")
 
 
 @pytest.mark.parametrize(

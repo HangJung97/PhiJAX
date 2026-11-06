@@ -161,7 +161,6 @@ class RichProgressBar(ProgressBar):
 
     def __init__(
         self,
-        total: int,
         *,
         refresh_rate: int = 10,
         metric_names: Sequence[str] | None = None,
@@ -175,7 +174,6 @@ class RichProgressBar(ProgressBar):
         """Initialize the Rich training progress display.
 
         Args:
-            total: Positive global step at which fitting stops, usually `Trainer.max_steps`.
             refresh_rate: Positive interval between device-to-host metric transfers.
             metric_names: Optional ordered exact names to display. `None` uses module-selected progress metrics.
             description: Non-empty label displayed before the progress bar.
@@ -186,11 +184,10 @@ class RichProgressBar(ProgressBar):
             console: Optional Rich console, primarily useful for embedding and tests.
 
         Raises:
-            ValueError: If `total`, `refresh_rate`, either description, or a metric name is invalid.
+            ValueError: If `refresh_rate`, either description, or a metric name is invalid.
         """
         resolved_theme = theme or RichProgressBarTheme()
         super().__init__(
-            total,
             refresh_rate=refresh_rate,
             metric_names=metric_names,
             description=description,
@@ -239,10 +236,11 @@ class RichProgressBar(ProgressBar):
         """
         if self._progress is None:
             return
+        total = self.total
         self._completed = self._start_step = context.step
         self._progress.start()
         self._task_id = self._progress.add_task(
-            self._step_description(context.step), total=self.total, completed=context.step, metrics=""
+            self._step_description(context.step), total=total, completed=context.step, metrics=""
         )
 
     def on_train_metrics(self, context: TrainerContext) -> None:

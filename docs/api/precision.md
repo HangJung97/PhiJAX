@@ -13,6 +13,9 @@ the independent JAX dot and convolution precision setting.
 | `16-mixed`   | float32         | float16       | float32      | Yes                  |
 | `bf16-mixed` | float32         | bfloat16      | float32      | No                   |
 
+`64-true` needs JAX x64. The Trainer enables it when it receives a precision name, so Hydra configs only set
+`precision: 64-true`. Call `configure_precision()` yourself only when you create JAX arrays before the Trainer.
+
 `initial_loss_scale` applies only to `16-mixed`. Non-finite gradients skip the optimizer update and reduce the scale.
 BFloat16 normally does not need dynamic scaling because it retains a float32-like exponent range.
 

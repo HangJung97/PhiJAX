@@ -31,7 +31,7 @@ from phijax.training.loggers import ExperimentLogger, LoggerCollection
 from phijax.training.loops.fit_loop import _BalancerUpdateRuntime, _FitLoop, _state_step
 from phijax.training.loops.prediction_loop import _PredictionLoop
 from phijax.training.plans import TrainingPlan
-from phijax.training.precision import MatmulPrecision, PrecisionName, PrecisionPolicy
+from phijax.training.precision import MatmulPrecision, PrecisionName, PrecisionPolicy, configure_precision
 from phijax.training.results import FitResult
 from phijax.training.state import TrainState, as_input_statistics, initialize_train_state
 from phijax.training.steps import TrainStep, make_train_step
@@ -85,8 +85,9 @@ class Trainer:
             devices: Positive device count per process, explicit local device indices, or `auto` for all matching
                 devices. A multi-process run selects the same local devices on every process.
             precision: Precision name or resolved policy. Supported names are `64-true`, `32-true`, `16-true`,
-                `bf16-true`, `16-mixed`, and `bf16-mixed`; common dtype aliases are also accepted. A resolved policy
-                cannot be combined with `derivative_dtype`, `initial_loss_scale`, or `loss_scale_growth_interval`.
+                `bf16-true`, `16-mixed`, and `bf16-mixed`; common dtype aliases are also accepted. The name `64-true`
+                enables JAX x64 for the whole process. A resolved policy cannot be combined with `derivative_dtype`,
+                `initial_loss_scale`, or `loss_scale_growth_interval`.
             matmul_precision: Optional `default`, `high`, or `highest` JAX matrix-multiplication precision override.
             derivative_dtype: Optional floating batch and coordinate-derivative dtype override.
             initial_loss_scale: Initial dynamic scale for `16-mixed` training. `None` uses `32768.0`.
@@ -118,6 +119,9 @@ class Trainer:
             choices = ", ".join(sorted(_MATMUL_PRECISIONS))
             raise ValueError(f"`matmul_precision` must be `None` or one of: {choices}.")
         self.max_steps = max_steps
+        if isinstance(precision, str):
+            # x64 is process-wide and must be enabled before the model and training state are created.
+            configure_precision(precision)
         self.precision = PrecisionPolicy.from_name(
             precision,
             derivative_dtype=derivative_dtype,
@@ -138,7 +142,7 @@ class Trainer:
         if len(progress_callbacks) > 1:
             raise ValueError("Only one progress-bar callback may be configured.")
         if enable_progress_bar and not progress_callbacks:
-            resolved_callbacks += (TQDMProgressBar(total=max_steps, refresh_rate=log_every_n_steps),)
+            resolved_callbacks += (TQDMProgressBar(refresh_rate=log_every_n_steps),)
         elif not enable_progress_bar:
             for progress_callback in progress_callbacks:
                 progress_callback.disable()
