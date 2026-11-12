@@ -2463,7 +2463,7 @@ wheels = [
 
 [[package]]
 name = "optax"
-version = "0.2.8"
+version = "0.2.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "absl-py" },
@@ -2471,14 +2471,14 @@ dependencies = [
     { name = "jaxlib" },
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/f9/e3d11ae6f298ee941a0690e353a323d158ba5dedc436e75621c310845c5c/optax-0.2.8.tar.gz", hash = "sha256:5b225b35066fc3eebaa4d798f1b4173b4d57d1a480610908981f8343b50af0b0", size = 301193, upload-time = "2026-03-20T23:30:05.465Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/45/103ec6ed4594cf8dec67e29ef3f72bb5530a86db4e28a354110e8fc8425b/optax-0.2.9.tar.gz", hash = "sha256:fcaa7e34c37ab2875c72d91e55374ff02a7ef6463b79fdb45bd3d65c6d4d61c5", size = 314052, upload-time = "2026-11-11T18:36:36.667Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/69/6a93d8600c339d7687a05857c7907bd4dd8cf88691a5ea106d7a50af90a1/optax-0.2.8-py3-none-any.whl", hash = "sha256:e3ca2d36c99daab1800ae9dbc0545034382d6bc780b24d969e1b0df65fa31cb4", size = 402960, upload-time = "2026-03-20T23:30:03.886Z" },
+    { url = "https://files.pythonhosted.org/packages/07/18/3ebc9263daccd4c41a5d90785f467eb24d450355f8c7089906d154677797/optax-0.2.9-py3-none-any.whl", hash = "sha256:ec037b3975685e2550f9cc4994feda1492162ff9b812a0ea5face18c8fdf2948", size = 416967, upload-time = "2026-11-11T18:36:35.084Z" },
 ]
 
 [[package]]
 name = "orbax-checkpoint"
-version = "0.12.9"
+version = "0.12.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "absl-py" },
@@ -2498,9 +2498,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uvloop", marker = "sys_platform != 'win32' or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-cuda13') or (extra == 'extra-6-phijax-cuda12' and extra == 'extra-6-phijax-tpu') or (extra == 'extra-6-phijax-cuda13' and extra == 'extra-6-phijax-tpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/2c/965827d651a1d86f110a74f4c1be6d602a04b99fa7b3e0ccb91beba88936/orbax_checkpoint-0.12.9.tar.gz", hash = "sha256:be2359210cd1d6582ff2b0ed2c261fcd7cce790ee23f9efe2d235a3c2abbc58f", size = 802369, upload-time = "2026-11-03T01:30:43.802Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/30/c7f2b1d9516392c20bd0e32f0c671cfc23afd2c1f639f81ebc42d74d78dc/orbax_checkpoint-0.12.10.tar.gz", hash = "sha256:5e179a12e4cd3fedbadb07a1265949b8650726621f390a76105a50cd62edb1fa", size = 815454, upload-time = "2026-11-12T23:40:48.676Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/20/7a866883e51fe3da634b3b9282e996105ab71baba240a1f706e6726ebeea/orbax_checkpoint-0.12.9-py3-none-any.whl", hash = "sha256:96acaecc0a4c1fb8b187ff3fcceb894d0fd6bbec8134a625bfc5dd4a585970a0", size = 1439065, upload-time = "2026-11-03T01:30:42.382Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/ee/11d3d0f02ee1171f7088922cc02ea9b9ca664f483cebae9e333ba4dd8571/orbax_checkpoint-0.12.10-py3-none-any.whl", hash = "sha256:71e78a2994501ac5834f4684c16351db1b0b319937e949e6117475a5b35a568d", size = 1454643, upload-time = "2026-11-12T23:40:47.218Z" },
 ]
 
 [[package]]
@@ -2634,8 +2634,8 @@ requires-dist = [
     { name = "mat73", marker = "extra == 'io'", specifier = ">=0.65,<1" },
     { name = "numpy", specifier = ">=2.4,<3" },
     { name = "omegaconf", marker = "extra == 'hydra'", specifier = "==2.3.1" },
-    { name = "optax", specifier = "==0.2.8" },
-    { name = "orbax-checkpoint", specifier = "==0.12.9" },
+    { name = "optax", specifier = "==0.2.9" },
+    { name = "orbax-checkpoint", specifier = "==0.12.10" },
     { name = "phijax", extras = ["hydra", "io", "tensorboard", "wandb"], marker = "extra == 'all'" },
     { name = "pyyaml", specifier = ">=6.0.3,<7" },
     { name = "rich", specifier = ">=15,<16" },
