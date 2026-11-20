@@ -142,6 +142,7 @@ def _fit(
     ntk: bool = False,
     full_pool: bool = False,
     devices: int | str = "auto",
+    checkpoint_every_n_steps: int | None = 2,
 ) -> dict[str, Any]:
     """Fit across every process and return host-readable results.
 
@@ -155,6 +156,7 @@ def _fit(
         ntk: Whether to balance with exact NTK on four diagnostic rows per process, updated at every step.
         full_pool: Whether to train on a whole six-row pool with the `all` policy.
         devices: Devices per process.
+        checkpoint_every_n_steps: Periodic checkpoint interval, or `None` to save only terminal checkpoints.
 
     Returns:
         Recorded batches, final step, flattened parameters, and metrics.
@@ -171,7 +173,9 @@ def _fit(
         callbacks=(
             recorder,
             *(() if stop_request is None else (_StopOnProcessOne(stop_request),)),
-            ModelCheckpoint(OrbaxCheckpointIO(directory, enable_async_checkpointing=False), every_n_steps=2),
+            ModelCheckpoint(
+                OrbaxCheckpointIO(directory, enable_async_checkpointing=False), every_n_steps=checkpoint_every_n_steps
+            ),
         ),
     )
     module = PhiModule(
@@ -240,7 +244,10 @@ def main(output: Path) -> None:
     results["sigint"] = _fit(output / "sigint", 10, stop_request="SIGINT")
     # JAX's preemption sync step stays fixed for the process, so the `SIGTERM` case runs last.
     try:
-        _fit(output / "sigterm", 10, stop_request="SIGTERM")
+        # JAX notices the signal on a polling thread, so training continues for an unknown number of steps until the
+        # agreed step. The large `max_steps` keeps the fit from ending first; without periodic saves, the only
+        # checkpoint on disk is the one `SIGTERM` writes.
+        _fit(output / "sigterm", 100_000, stop_request="SIGTERM", checkpoint_every_n_steps=None)
     except SystemExit as error:
         saved = sorted(int(path.name) for path in (output / "sigterm").iterdir() if path.name.isdigit())
         results["sigterm"] = {"exit_code": error.code, "saved_steps": saved}

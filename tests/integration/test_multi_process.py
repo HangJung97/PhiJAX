@@ -96,7 +96,10 @@ def test_data_parallel_fit_runs_across_processes(tmp_path: Path) -> None:
     # `SIGTERM` goes through JAX's preemption service: every process saves the agreed step and exits with 143.
     assert results[0]["sigterm"] == results[1]["sigterm"]
     assert results[0]["sigterm"]["exit_code"] == 143
-    assert results[0]["sigterm"]["saved_steps"][-1] > 2
+    # The agreed step depends on when JAX's background protocol runs, but it never precedes the signal after step 2.
+    saved_steps = results[0]["sigterm"]["saved_steps"]
+    assert len(saved_steps) == 1
+    assert saved_steps[0] >= 2
 
 
 @pytest.mark.slow
